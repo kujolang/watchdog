@@ -38,7 +38,7 @@ async function startServer(port, visibility) {
 		env.WDG_PROXY_CONFIG_VISIBILITY = visibility;
 	}
 
-	const child = spawn(KUJO_BIN, ['run', 'dashboard_server.kujo', '--interpreter'], {
+	const child = spawn(KUJO_BIN, ['run', '--interpreter', 'dashboard_server.kujo'], {
 		cwd: process.cwd(),
 		env,
 		stdio: ['ignore', 'pipe', 'pipe'],

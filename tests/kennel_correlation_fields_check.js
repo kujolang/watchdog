@@ -84,7 +84,7 @@ async function stopNodeServer(server) {
 }
 
 async function startWatchdog(port, dbPath, cfgPath) {
-	const child = spawn(KUJO_BIN, ['run', 'dashboard_server.kujo', '--interpreter'], {
+	const child = spawn(KUJO_BIN, ['run', '--interpreter', 'dashboard_server.kujo'], {
 		cwd: ROOT,
 		env: {
 			...process.env,

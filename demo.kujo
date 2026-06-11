@@ -3,7 +3,7 @@
 # Populates watchdog.db with realistic fake data so the dashboard
 # has something interesting to show right away.
 #
-# Run:  kujo run demo.kujo --interpreter
+# Run:  kujo run --interpreter demo.kujo
 #
 # Re-running drops and recreates all data.
 
@@ -296,5 +296,5 @@ print("  Tool calls:  " + to_string(tc_c[0]["n"]))
 print("  Agent steps: " + to_string(step_count[0]["n"]))
 print("")
 print("Run the Watchdog server:")
-print("  kujo run dashboard_server.kujo --interpreter")
+print("  kujo run --interpreter dashboard_server.kujo")
 print("Then open: http://localhost:7700")

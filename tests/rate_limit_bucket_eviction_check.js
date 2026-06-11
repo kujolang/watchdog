@@ -43,7 +43,7 @@ function httpGet(port, pathname, headers = {}) {
 }
 
 async function startWatchdog(port, dbPath) {
-	const child = spawn(KUJO_BIN, ['run', 'dashboard_server.kujo', '--interpreter'], {
+	const child = spawn(KUJO_BIN, ['run', '--interpreter', 'dashboard_server.kujo'], {
 		cwd: ROOT,
 		env: {
 			...process.env,

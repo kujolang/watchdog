@@ -41,7 +41,7 @@ Production profile startup policy:
 Start server:
 
 ```bash
-"$KUJO_BIN" run dashboard_server.kujo --interpreter
+"$KUJO_BIN" run --interpreter dashboard_server.kujo
 ```
 
 `dashboard_server.kujo` is the documented root compatibility entrypoint and mirrors `src/dashboard_server.kujo`.

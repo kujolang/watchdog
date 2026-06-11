@@ -2,7 +2,7 @@
 # Compatibility entrypoint mirrored from src/dashboard_server.kujo.
 #
 # Run:
-#   /path/to/kujo run dashboard_server.kujo --interpreter
+#   /path/to/kujo run --interpreter dashboard_server.kujo
 #
 # Default Watchdog URL:
 #   http://localhost:7700

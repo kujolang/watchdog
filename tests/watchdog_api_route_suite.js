@@ -72,7 +72,7 @@ function parseJson(text, context) {
 }
 
 async function startServer() {
-	const child = spawn(KUJO_BIN, ['run', 'dashboard_server.kujo', '--interpreter'], {
+	const child = spawn(KUJO_BIN, ['run', '--interpreter', 'dashboard_server.kujo'], {
 		cwd: ROOT,
 		env: { ...process.env, WDG_DB_PATH: DB_PATH },
 		stdio: ['ignore', 'pipe', 'pipe'],
@@ -126,7 +126,7 @@ async function run() {
 
 	let server = null;
 	try {
-		await runCommand(['run', 'demo.kujo', '--interpreter']);
+		await runCommand(['run', '--interpreter', 'demo.kujo']);
 		server = await startServer();
 
 		const health = await httpGet('/healthz');

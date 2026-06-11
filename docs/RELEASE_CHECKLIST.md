@@ -30,7 +30,7 @@ WDG_API_AUTH_MODE=token \
 WDG_API_AUTH_TOKEN='release-api-token' \
 WDG_PROXY_AUTHZ_MODE=token \
 WDG_PROXY_AUTHZ_TOKEN='release-proxy-token' \
-kujo run dashboard_server.kujo --interpreter
+kujo run --interpreter dashboard_server.kujo
 ```
 
 - Ensure docs reflect configuration and endpoint behavior changes.

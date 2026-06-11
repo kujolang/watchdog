@@ -10,7 +10,7 @@ Use a normal Watchdog startup flow:
 export WATCHDOG_ROOT=/path/to/kujo-watchdog
 cd "$WATCHDOG_ROOT"
 export KUJO_BIN=${KUJO_BIN:-kujo}
-"$KUJO_BIN" run dashboard_server.kujo --interpreter
+"$KUJO_BIN" run --interpreter dashboard_server.kujo
 ```
 
 Use `WDG_API_AUTH_MODE=token` and `WDG_API_AUTH_TOKEN=<token>` for non-local deployments.
@@ -68,7 +68,7 @@ WDG_PORT=7780 \
 WDG_API_AUTH_MODE=off \
 WDG_DB_PATH=tmp/kennel-guide.db \
 WDG_PROXY_CONFIG_PATH=tmp/kennel-guide-proxy.json \
-KUJO_BIN=${KUJO_BIN:-kujo} "$KUJO_BIN" run dashboard_server.kujo --interpreter
+KUJO_BIN=${KUJO_BIN:-kujo} "$KUJO_BIN" run --interpreter dashboard_server.kujo
 ```
 
 4. Send a Kennel-style proxy request with correlation headers:

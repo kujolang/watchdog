@@ -102,7 +102,7 @@ export WDG_RATE_LIMIT_MODE=basic
 export WDG_RATE_LIMIT_MAX_BUCKETS=5000
 export WDG_RATE_LIMIT_BUCKET_TTL_SECS=600
 export KUJO_BIN=${KUJO_BIN:-kujo}
-"$KUJO_BIN" run dashboard_server.kujo --interpreter
+"$KUJO_BIN" run --interpreter dashboard_server.kujo
 ```
 
 Health and diagnostics:

@@ -109,7 +109,7 @@ function writeProxyConfig(filePath, config) {
 }
 
 async function startWatchdog(port, dbPath, configPath, extraEnv = {}) {
-	const child = spawn(KUJO_BIN, ['run', 'dashboard_server.kujo', '--interpreter'], {
+	const child = spawn(KUJO_BIN, ['run', '--interpreter', 'dashboard_server.kujo'], {
 		cwd: ROOT,
 		env: {
 			...process.env,

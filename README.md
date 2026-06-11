@@ -36,13 +36,13 @@ key behavior) to use the proxy.
 ```bash
 cd /path/to/kujo-watchdog
 export KUJO_BIN=${KUJO_BIN:-kujo}
-"$KUJO_BIN" run dashboard_server.kujo --interpreter
+"$KUJO_BIN" run --interpreter dashboard_server.kujo
 ```
 
 If `kujo` is already on your `PATH`, this works too:
 
 ```bash
-kujo run dashboard_server.kujo --interpreter
+kujo run --interpreter dashboard_server.kujo
 ```
 
 ### 2) Open the dashboard
@@ -162,7 +162,7 @@ Example:
 ```bash
 WDG_API_AUTH_MODE=token \
 WDG_API_AUTH_TOKEN='replace-with-long-random-token' \
-kujo run dashboard_server.kujo --interpreter
+kujo run --interpreter dashboard_server.kujo
 ```
 
 Then call protected routes with:
@@ -189,7 +189,7 @@ Example:
 WDG_PROXY_AUTHZ_MODE=token \
 WDG_PROXY_AUTHZ_TOKEN='replace-with-long-random-proxy-token' \
 WDG_PROXY_AUTHZ_ALLOWLIST='/healthz,/readyz,/proxy/v1/models' \
-kujo run dashboard_server.kujo --interpreter
+kujo run --interpreter dashboard_server.kujo
 ```
 
 ## Non-local deployment hardening
