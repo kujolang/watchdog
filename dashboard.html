@@ -1,0 +1,1216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- Compatibility entrypoint mirrored from src/dashboard.html. -->
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Watchdog</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+  if (typeof window.Chart === 'undefined') {
+    document.write('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" crossorigin="anonymous" referrerpolicy="no-referrer"><\\/script>');
+  }
+  if (typeof window.Chart === 'undefined') {
+    document.write('<script src="/assets/vendor/chart.umd.min.js"><\\/script>');
+  }
+</script>
+<style>
+  /* ── Reset & tokens ─────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:          #070708;
+    --surface:     #0f1113;
+    --surface2:    #15181b;
+    --border:      #23262a;
+    --text:        #ebeef2;
+    --text-muted:  #9da6b0;
+    --accent:      #6bf1bf;
+    --accent-dim:  rgba(107, 241, 191, 0.12);
+    --green:       #6bf1bf;
+    --green-dim:   #2f7a63;
+    --red:         #ff7272;
+    --red-dim:     #6e2a2a;
+    --yellow:      #ffd166;
+    --purple:      #89a8ff;
+    --orange:      #f5a65b;
+    --radius:      12px;
+    --radius-lg:   16px;
+    --shadow:      0 8px 28px rgba(0,0,0,.38);
+    --font:        'Avenir Next', 'Segoe UI', 'Helvetica Neue', system-ui, sans-serif;
+    --font-mono:   'Menlo', 'SFMono-Regular', ui-monospace, monospace;
+    --transition:  .15s ease;
+  }
+
+  body {
+    background: radial-gradient(circle at top right, #10151b 0%, #070708 42%), var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  a { color: var(--accent); text-decoration: none; }
+
+  /* ── Layout ────────────────────────────────────────────────────── */
+  .app { display: flex; flex-direction: column; min-height: 100vh; }
+
+  /* ── Header ────────────────────────────────────────────────────── */
+  header {
+    background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0)), var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: -.2px;
+  }
+
+  .logo-icon {
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(145deg, #6bf1bf, #89a8ff);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+  }
+
+  .header-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .last-updated {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* ── Buttons ───────────────────────────────────────────────────── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 13px;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: background var(--transition), border-color var(--transition);
+  }
+
+  .btn:hover { background: #1d2126; border-color: #3f464e; }
+
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #08110e;
+    font-weight: 600;
+  }
+
+  .btn-primary:hover { background: #86f4cc; border-color: #86f4cc; }
+
+  .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+  /* ── Main ──────────────────────────────────────────────────────── */
+  main { padding: 28px; display: flex; flex-direction: column; gap: 24px; }
+
+  /* ── Stats cards ───────────────────────────────────────────────── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 14px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: border-color var(--transition), box-shadow var(--transition);
+  }
+
+  .stat-card:hover { border-color: var(--accent); box-shadow: var(--shadow); }
+
+  .stat-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
+  .stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -1px;
+    line-height: 1.1;
+  }
+
+  .stat-sub {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .stat-card.accent  .stat-value { color: var(--accent);  }
+  .stat-card.green   .stat-value { color: var(--green);   }
+  .stat-card.red     .stat-value { color: var(--red);     }
+  .stat-card.yellow  .stat-value { color: var(--yellow);  }
+  .stat-card.purple  .stat-value { color: var(--purple);  }
+  .stat-card.orange  .stat-value { color: var(--orange);  }
+
+  /* ── Chart grid ────────────────────────────────────────────────── */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 16px;
+  }
+
+  @media (max-width: 900px) { .charts-grid { grid-template-columns: 1fr; } }
+
+  .chart-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+  }
+
+  .chart-card.wide { grid-column: 1 / -1; }
+
+  .chart-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+
+  .chart-wrap { position: relative; height: 200px; }
+
+  /* ── Tabs ──────────────────────────────────────────────────────── */
+  .tabs-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+
+  .tabs-header {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+    overflow-x: auto;
+  }
+
+  .tab-btn {
+    padding: 12px 20px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    border: none;
+    background: none;
+    font-family: var(--font);
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    transition: color var(--transition), border-color var(--transition);
+  }
+
+  .tab-btn:hover { color: var(--text); }
+
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 9px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    margin-left: 6px;
+  }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ── Toolbar ───────────────────────────────────────────────────── */
+  .table-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .search-input {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 7px 12px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: var(--font);
+    outline: none;
+    transition: border-color var(--transition);
+  }
+
+  .search-input::placeholder { color: var(--text-muted); }
+  .search-input:focus { border-color: var(--accent); }
+
+  select.filter-select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 7px 10px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: var(--font);
+    outline: none;
+    cursor: pointer;
+  }
+
+  /* ── Table ─────────────────────────────────────────────────────── */
+  .table-wrap { overflow-x: auto; max-height: 460px; overflow-y: auto; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  thead th {
+    background: var(--surface2);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    padding: 10px 14px;
+    text-align: left;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  thead th:hover { color: var(--text); }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background var(--transition);
+  }
+
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface2); }
+
+  tbody td {
+    padding: 10px 14px;
+    vertical-align: top;
+    max-width: 280px;
+  }
+
+  .cell-mono {
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  .cell-truncate {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
+  }
+
+  /* ── Badges ────────────────────────────────────────────────────── */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .badge-success { background: #1a3a1e; color: var(--green);  border: 1px solid #238636; }
+  .badge-error   { background: #3d1212; color: var(--red);    border: 1px solid #6e1c1a; }
+  .badge-warning { background: #3d2e00; color: var(--yellow); border: 1px solid #4d3900; }
+  .badge-info    { background: #122438; color: var(--accent);  border: 1px solid #1f6feb; }
+  .badge-purple  { background: #2d1f4e; color: var(--purple); border: 1px solid #6e40c9; }
+
+  .badge-step-planning    { background: #1a2a3a; color: var(--accent);  border: 1px solid #1f6feb; }
+  .badge-step-model_call  { background: #2a1a3a; color: var(--purple); border: 1px solid #6e40c9; }
+  .badge-step-tool_call   { background: #1a3a2a; color: var(--green);  border: 1px solid #238636; }
+  .badge-step-tool_result { background: #2a2a1a; color: var(--yellow); border: 1px solid #4d3900; }
+  .badge-step-response    { background: #1a2a2a; color: #56d364;       border: 1px solid #2ea043; }
+
+  /* ── Agent trace viewer ────────────────────────────────────────── */
+  .trace-sessions { display: flex; flex-direction: column; gap: 16px; padding: 16px; }
+
+  .trace-session {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+
+  .trace-session-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--surface2);
+    cursor: pointer;
+    font-weight: 600;
+  }
+
+  .trace-session-header:hover { background: #2d333b; }
+
+  .trace-steps { padding: 16px; display: flex; flex-direction: column; gap: 0; }
+
+  .trace-step {
+    display: flex;
+    gap: 12px;
+    padding: 10px 0;
+    position: relative;
+  }
+
+  .trace-step:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    left: 15px;
+    top: 34px;
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+
+  .step-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    flex-shrink: 0;
+    z-index: 1;
+  }
+
+  .step-icon-planning    { background: #1a2a3a; }
+  .step-icon-model_call  { background: #2a1a3a; }
+  .step-icon-tool_call   { background: #1a3a2a; }
+  .step-icon-tool_result { background: #2a2a1a; }
+  .step-icon-response    { background: #1a3a1e; }
+
+  .step-body { flex: 1; }
+
+  .step-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .step-content {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    word-break: break-word;
+  }
+
+  /* ── Error panel ───────────────────────────────────────────────── */
+  .error-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    padding: 16px;
+  }
+
+  @media (max-width: 700px) { .error-grid { grid-template-columns: 1fr; } }
+
+  .error-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .error-code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--red);
+    font-weight: 600;
+  }
+
+  .error-count {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .error-msg { font-size: 12px; color: var(--text-muted); }
+
+  /* ── Empty state ───────────────────────────────────────────────── */
+  .empty {
+    padding: 48px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+
+  .empty-icon { font-size: 32px; margin-bottom: 12px; }
+
+  /* ── Spinner ───────────────────────────────────────────────────── */
+  .spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(13,17,23,.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+    backdrop-filter: blur(2px);
+    gap: 12px;
+    font-size: 15px;
+    color: var(--text-muted);
+  }
+
+  .loading-overlay.hidden { display: none; }
+
+  /* ── Scrollbar ─────────────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+
+  /* ── Tooltip ───────────────────────────────────────────────────── */
+  [title] { cursor: help; }
+
+  /* ── Footer ────────────────────────────────────────────────────── */
+  footer {
+    padding: 16px 28px;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  Loading watchdog data…
+</div>
+
+<div class="app">
+
+<!-- ═══════════════════════ HEADER ═════════════════════════════════ -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">📡</div>
+    <span>Watchdog</span>
+  </div>
+  <div class="header-right">
+    <span class="last-updated" id="lastUpdated">—</span>
+    <button class="btn btn-sm" onclick="loadAll()">↻ Refresh</button>
+    <button class="btn btn-primary btn-sm" onclick="exportData()">⬇ Export JSON</button>
+  </div>
+</header>
+
+<!-- ═══════════════════════ MAIN ════════════════════════════════════ -->
+<main>
+
+  <!-- Stats row -->
+  <div class="stats-grid" id="statsGrid">
+    <div class="stat-card accent"><div class="stat-label">Total Requests</div><div class="stat-value" id="statRequests">—</div><div class="stat-sub">all time</div></div>
+    <div class="stat-card green"><div class="stat-label">Total Cost</div><div class="stat-value" id="statCost">—</div><div class="stat-sub">USD estimated</div></div>
+    <div class="stat-card yellow"><div class="stat-label">Avg Latency</div><div class="stat-value" id="statLatency">—</div><div class="stat-sub">successful calls</div></div>
+    <div class="stat-card red"><div class="stat-label">Error Rate</div><div class="stat-value" id="statErrorRate">—</div><div class="stat-sub" id="statErrorSub">—</div></div>
+    <div class="stat-card purple"><div class="stat-label">Total Tokens</div><div class="stat-value" id="statTokens">—</div><div class="stat-sub">input + output</div></div>
+    <div class="stat-card orange"><div class="stat-label">Sessions</div><div class="stat-value" id="statSessions">—</div><div class="stat-sub">unique</div></div>
+    <div class="stat-card"><div class="stat-label">Tool Calls</div><div class="stat-value" id="statToolCalls">—</div><div class="stat-sub">logged</div></div>
+    <div class="stat-card"><div class="stat-label">Agent Steps</div><div class="stat-value" id="statAgentSteps">—</div><div class="stat-sub">traced</div></div>
+  </div>
+
+  <!-- Charts row -->
+  <div class="charts-grid">
+    <div class="chart-card wide">
+      <div class="chart-title">Requests over time (hourly)</div>
+      <div class="chart-wrap"><canvas id="chartRequests"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Latency distribution (ms)</div>
+      <div class="chart-wrap"><canvas id="chartLatency"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Status breakdown</div>
+      <div class="chart-wrap" style="height:200px"><canvas id="chartStatus"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs-section">
+    <div class="tabs-header">
+      <button class="tab-btn active" onclick="switchTab('requests',this)">Requests <span class="tab-badge" id="badgeRequests">0</span></button>
+      <button class="tab-btn" onclick="switchTab('toolcalls',this)">Tool Calls <span class="tab-badge" id="badgeToolCalls">0</span></button>
+      <button class="tab-btn" onclick="switchTab('traces',this)">Agent Traces <span class="tab-badge" id="badgeTraces">0</span></button>
+      <button class="tab-btn" onclick="switchTab('errors',this)">Errors <span class="tab-badge" id="badgeErrors">0</span></button>
+      <button class="tab-btn" onclick="switchTab('sessions',this)">Sessions <span class="tab-badge" id="badgeSessions">0</span></button>
+    </div>
+
+    <!-- ── Requests tab ───────────────────────── -->
+    <div class="tab-panel active" id="tab-requests">
+      <div class="table-toolbar">
+        <input class="search-input" id="reqSearch" placeholder="Filter by session, model, prompt…" oninput="renderRequestsTable()">
+        <input class="search-input" id="reqTenantFilter" placeholder="Tenant ID" oninput="renderRequestsTable()">
+        <input class="search-input" id="reqProjectFilter" placeholder="Project ID" oninput="renderRequestsTable()">
+        <select class="filter-select" id="reqStatusFilter" onchange="renderRequestsTable()">
+          <option value="">All statuses</option>
+          <option value="success">Success</option>
+          <option value="error">Error</option>
+        </select>
+        <select class="filter-select" id="reqProviderFilter" onchange="renderRequestsTable()">
+          <option value="">All providers</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th onclick="sortTable('requests','created_at')">Time ↕</th>
+              <th onclick="sortTable('requests','session_id')">Session</th>
+              <th onclick="sortTable('requests','user_id')">User</th>
+              <th onclick="sortTable('requests','tenant_id')">Tenant</th>
+              <th onclick="sortTable('requests','project_id')">Project</th>
+              <th onclick="sortTable('requests','provider')">Provider</th>
+              <th onclick="sortTable('requests','model')">Model</th>
+              <th onclick="sortTable('requests','workflow_id')">Workflow</th>
+              <th onclick="sortTable('requests','task_id')">Task</th>
+              <th onclick="sortTable('requests','correlation_id')">Correlation</th>
+              <th onclick="sortTable('requests','status')">Status</th>
+              <th onclick="sortTable('requests','latency_ms')">Latency</th>
+              <th onclick="sortTable('requests','total_tokens')">Tokens</th>
+              <th onclick="sortTable('requests','cost_usd')">Cost</th>
+              <th>Prompt</th>
+            </tr>
+          </thead>
+          <tbody id="reqBody"></tbody>
+        </table>
+      </div>
+      <div id="reqEmpty" class="empty hidden"><div class="empty-icon">🔍</div>No requests match your filter.</div>
+    </div>
+
+    <!-- ── Tool Calls tab ─────────────────────── -->
+    <div class="tab-panel" id="tab-toolcalls">
+      <div class="table-toolbar">
+        <input class="search-input" id="tcSearch" placeholder="Filter by tool name, session…" oninput="renderToolCallsTable()">
+        <select class="filter-select" id="tcStatusFilter" onchange="renderToolCallsTable()">
+          <option value="">All statuses</option>
+          <option value="success">Success</option>
+          <option value="error">Error</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Session</th>
+              <th>Tool</th>
+              <th>Args</th>
+              <th>Result</th>
+              <th>Status</th>
+              <th>Latency</th>
+            </tr>
+          </thead>
+          <tbody id="tcBody"></tbody>
+        </table>
+      </div>
+      <div id="tcEmpty" class="empty hidden"><div class="empty-icon">🔧</div>No tool calls found.</div>
+    </div>
+
+    <!-- ── Agent Traces tab ──────────────────── -->
+    <div class="tab-panel" id="tab-traces">
+      <div class="trace-sessions" id="traceContainer">
+        <div class="empty"><div class="empty-icon">🤖</div>No agent traces recorded.</div>
+      </div>
+    </div>
+
+    <!-- ── Errors tab ────────────────────────── -->
+    <div class="tab-panel" id="tab-errors">
+      <div class="error-grid" id="errorGrid">
+        <div class="empty" style="grid-column:1/-1"><div class="empty-icon">✅</div>No errors recorded.</div>
+      </div>
+    </div>
+
+    <!-- ── Sessions tab ──────────────────────── -->
+    <div class="tab-panel" id="tab-sessions">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Session ID</th>
+              <th>User</th>
+              <th>Requests</th>
+              <th>Errors</th>
+              <th>Tokens</th>
+              <th>Cost</th>
+              <th>Avg Latency</th>
+              <th>Started</th>
+              <th>Last Seen</th>
+            </tr>
+          </thead>
+          <tbody id="sessBody"></tbody>
+        </table>
+      </div>
+      <div id="sessEmpty" class="empty hidden"><div class="empty-icon">👤</div>No sessions found.</div>
+    </div>
+
+  </div><!-- /tabs-section -->
+
+</main>
+
+<footer>Watchdog · <a href="https://github.com/kujolang/kujo" target="_blank">github.com/kujolang/kujo</a></footer>
+
+</div><!-- /app -->
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   State
+   ════════════════════════════════════════════════════════════════════ */
+const state = {
+  requests:   [],
+  toolCalls:  [],
+  agentSteps: [],
+  errors:     [],
+  sessions:   [],
+  sortKey:    { requests: 'created_at', sessions: 'last_seen' },
+  sortAsc:    { requests: false, sessions: false },
+};
+
+let chartRequests = null;
+let chartLatency  = null;
+let chartStatus   = null;
+
+/* ════════════════════════════════════════════════════════════════════
+   API
+   ════════════════════════════════════════════════════════════════════ */
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  const j = await r.json();
+  return j.data;
+}
+
+async function loadAll() {
+  document.getElementById('loadingOverlay').classList.remove('hidden');
+  try {
+    const [stats, reqs, tools, steps, errs, sess,
+           chartReqData, chartLatData, chartStatusData] = await Promise.all([
+      fetchJSON('/api/stats'),
+      fetchJSON('/api/requests'),
+      fetchJSON('/api/tool-calls'),
+      fetchJSON('/api/agent-steps'),
+      fetchJSON('/api/errors'),
+      fetchJSON('/api/sessions'),
+      fetchJSON('/api/charts/requests-over-time'),
+      fetchJSON('/api/charts/latency-hist'),
+      fetchJSON('/api/charts/status-breakdown'),
+    ]);
+
+    state.requests   = reqs   || [];
+    state.toolCalls  = tools  || [];
+    state.agentSteps = steps  || [];
+    state.errors     = errs   || [];
+    state.sessions   = sess   || [];
+
+    renderStats(stats);
+    renderCharts(chartReqData, chartLatData, chartStatusData);
+    populateProviderFilter();
+    renderRequestsTable();
+    renderToolCallsTable();
+    renderAgentTraces();
+    renderErrors();
+    renderSessionsTable();
+
+    document.getElementById('lastUpdated').textContent =
+      'Updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    console.error('Load failed:', e);
+  }
+  document.getElementById('loadingOverlay').classList.add('hidden');
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Stats
+   ════════════════════════════════════════════════════════════════════ */
+function renderStats(s) {
+  setText('statRequests',  fmtNum(s.total_requests));
+  setText('statCost',      '$' + fmtCost(s.total_cost_usd));
+  setText('statLatency',   fmtLatency(s.avg_latency_ms));
+  setText('statErrorRate', fmtPct(s.error_rate_pct) + '%');
+  setText('statErrorSub',  s.total_errors + ' of ' + s.total_requests + ' requests');
+  setText('statTokens',    fmtNum(s.total_tokens));
+  setText('statSessions',  fmtNum(s.total_sessions));
+  setText('statToolCalls', fmtNum(s.total_tool_calls));
+  setText('statAgentSteps',fmtNum(s.total_agent_steps));
+  setText('badgeRequests', s.total_requests);
+  setText('badgeToolCalls',s.total_tool_calls);
+  setText('badgeSessions', s.total_sessions);
+  setText('badgeErrors',   s.total_errors);
+  setText('badgeTraces',   new Set((state.agentSteps || []).map(r => r.session_id)).size);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Charts
+   ════════════════════════════════════════════════════════════════════ */
+const CHART_DEFAULTS = {
+  plugins: { legend: { labels: { color: '#8b949e', font: { size: 12 } } } },
+  scales: {
+    x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+    y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+  },
+};
+
+function renderCharts(reqData, latData, statusData) {
+  // ── Requests over time ──
+  if (chartRequests) chartRequests.destroy();
+  const rLabels = (reqData || []).map(r => 'h+' + r.hour_bucket);
+  const rTotals = (reqData || []).map(r => r.total);
+  const rErrors = (reqData || []).map(r => r.errors);
+  chartRequests = new Chart(document.getElementById('chartRequests'), {
+    type: 'line',
+    data: {
+      labels: rLabels,
+      datasets: [
+        { label: 'Requests', data: rTotals, borderColor: '#58a6ff', backgroundColor: '#58a6ff22',
+          fill: true, tension: .35, pointRadius: 3 },
+        { label: 'Errors',   data: rErrors, borderColor: '#f85149', backgroundColor: '#f8514922',
+          fill: true, tension: .35, pointRadius: 3 },
+      ],
+    },
+    options: { ...CHART_DEFAULTS, responsive: true, maintainAspectRatio: false },
+  });
+
+  // ── Latency histogram ──
+  if (chartLatency) chartLatency.destroy();
+  const latBuckets = ['<200ms','200-500ms','500ms-1s','1-2s','2-3s','>3s'];
+  const latValues = latData ? [
+    latData.lt200, latData.lt500, latData.lt1000,
+    latData.lt2000, latData.lt3000, latData.gt3000,
+  ] : [0,0,0,0,0,0];
+  chartLatency = new Chart(document.getElementById('chartLatency'), {
+    type: 'bar',
+    data: {
+      labels: latBuckets,
+      datasets: [{ label: 'Requests', data: latValues,
+        backgroundColor: ['#3fb950','#58a6ff','#58a6ff','#d29922','#e3b341','#f85149'],
+        borderRadius: 4 }],
+    },
+    options: { ...CHART_DEFAULTS, responsive: true, maintainAspectRatio: false,
+      plugins: { ...CHART_DEFAULTS.plugins, legend: { display: false } } },
+  });
+
+  // ── Status donut ──
+  if (chartStatus) chartStatus.destroy();
+  const statuses = (statusData || []);
+  chartStatus = new Chart(document.getElementById('chartStatus'), {
+    type: 'doughnut',
+    data: {
+      labels: statuses.map(s => s.status),
+      datasets: [{ data: statuses.map(s => s.count),
+        backgroundColor: statuses.map(s => s.status === 'success' ? '#3fb950' : '#f85149'),
+        borderColor: '#161b22', borderWidth: 3 }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'right', labels: { color: '#8b949e', boxWidth: 12 } } },
+      cutout: '65%',
+    },
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Requests table
+   ════════════════════════════════════════════════════════════════════ */
+function populateProviderFilter() {
+  const sel = document.getElementById('reqProviderFilter');
+  const providers = [...new Set(state.requests.map(r => r.provider).filter(Boolean))];
+  sel.innerHTML = '<option value="">All providers</option>' +
+    providers.map(p => `<option value="${safeText(p)}">${safeText(p)}</option>`).join('');
+}
+
+function renderRequestsTable() {
+  const q      = (document.getElementById('reqSearch').value || '').toLowerCase();
+  const tenant = document.getElementById('reqTenantFilter').value || '';
+  const project = document.getElementById('reqProjectFilter').value || '';
+  const status = document.getElementById('reqStatusFilter').value;
+  const prov   = document.getElementById('reqProviderFilter').value;
+
+  let rows = state.requests.filter(r => {
+    if (status && r.status !== status) return false;
+    if (tenant && (r.tenant_id || '') !== tenant) return false;
+    if (project && (r.project_id || '') !== project) return false;
+    if (prov   && r.provider !== prov) return false;
+    if (q && !JSON.stringify(r).toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const key = state.sortKey.requests;
+  const asc = state.sortAsc.requests;
+  rows.sort((a, b) => {
+    const va = a[key] ?? '', vb = b[key] ?? '';
+    return asc ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
+  });
+
+  const tbody = document.getElementById('reqBody');
+  const empty = document.getElementById('reqEmpty');
+
+  if (!rows.length) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td class="cell-mono" style="white-space:nowrap;font-size:11px">${fmtTs(r.created_at)}</td>
+      <td><span class="cell-mono cell-truncate" style="max-width:110px;display:block" title="${safeText(r.session_id)}">${safeText(r.session_id)}</span></td>
+      <td class="cell-truncate">${safeText(r.user_id || '—')}</td>
+      <td class="cell-truncate" style="max-width:120px" title="${safeText(r.tenant_id || '')}">${safeText(r.tenant_id || '—')}</td>
+      <td class="cell-truncate" style="max-width:120px" title="${safeText(r.project_id || '')}">${safeText(r.project_id || '—')}</td>
+      <td>${safeText(r.provider || '—')}</td>
+      <td><span class="cell-mono" style="font-size:12px">${safeText(r.model || '—')}</span></td>
+      <td class="cell-truncate" style="max-width:120px" title="${safeText(r.workflow_id || '')}">${safeText(r.workflow_id || '—')}</td>
+      <td class="cell-truncate" style="max-width:120px" title="${safeText(r.task_id || '')}">${safeText(r.task_id || '—')}</td>
+      <td class="cell-truncate" style="max-width:120px" title="${safeText(r.correlation_id || '')}">${safeText(r.correlation_id || '—')}</td>
+      <td><span class="badge badge-${r.status === 'success' ? 'success' : 'error'}">${safeText(r.status || '')}</span></td>
+      <td style="white-space:nowrap">${fmtLatency(r.latency_ms)}</td>
+      <td style="white-space:nowrap">${fmtNum(r.total_tokens)}</td>
+      <td style="white-space:nowrap">$${fmtCost(r.cost_usd)}</td>
+      <td class="cell-truncate" style="max-width:200px" title="${escHtml(r.prompt_summary || '')}">${escHtml(truncate(r.prompt_summary, 60))}</td>
+    </tr>`).join('');
+}
+
+function sortTable(table, key) {
+  if (state.sortKey[table] === key) {
+    state.sortAsc[table] = !state.sortAsc[table];
+  } else {
+    state.sortKey[table] = key;
+    state.sortAsc[table] = false;
+  }
+  if (table === 'requests') renderRequestsTable();
+  if (table === 'sessions') renderSessionsTable();
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Tool Calls table
+   ════════════════════════════════════════════════════════════════════ */
+function renderToolCallsTable() {
+  const q      = (document.getElementById('tcSearch').value || '').toLowerCase();
+  const status = document.getElementById('tcStatusFilter').value;
+
+  let rows = state.toolCalls.filter(r => {
+    if (status && r.status !== status) return false;
+    if (q && !JSON.stringify(r).toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const tbody = document.getElementById('tcBody');
+  const empty = document.getElementById('tcEmpty');
+
+  if (!rows.length) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td class="cell-mono" style="white-space:nowrap;font-size:11px">${fmtTs(r.created_at)}</td>
+      <td><span class="cell-mono" style="font-size:12px">${safeText(truncate(r.session_id, 16))}</span></td>
+      <td><span class="badge badge-info">${safeText(r.tool_name)}</span></td>
+      <td class="cell-truncate cell-mono" style="max-width:160px;font-size:12px" title="${escHtml(r.tool_args)}">${escHtml(truncate(r.tool_args, 50))}</td>
+      <td class="cell-truncate" style="max-width:160px" title="${escHtml(r.tool_result)}">${escHtml(truncate(r.tool_result, 60))}</td>
+      <td><span class="badge badge-${r.status === 'success' ? 'success' : 'error'}">${safeText(r.status || '')}</span></td>
+      <td style="white-space:nowrap">${fmtLatency(r.latency_ms)}</td>
+    </tr>`).join('');
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Agent Traces
+   ════════════════════════════════════════════════════════════════════ */
+const STEP_ICONS = {
+  planning:    '🗺️',
+  model_call:  '🤖',
+  tool_call:   '🔧',
+  tool_result: '📦',
+  response:    '✅',
+};
+
+function renderAgentTraces() {
+  const container = document.getElementById('traceContainer');
+  const steps     = state.agentSteps;
+
+  if (!steps.length) {
+    container.innerHTML = '<div class="empty"><div class="empty-icon">🤖</div>No agent traces recorded. Run demo.kujo to seed data.</div>';
+    setText('badgeTraces', 0);
+    return;
+  }
+
+  // Group by session
+  const bySession = {};
+  steps.forEach(s => {
+    if (!bySession[s.session_id]) bySession[s.session_id] = [];
+    bySession[s.session_id].push(s);
+  });
+
+  const sessionIds = Object.keys(bySession);
+  setText('badgeTraces', sessionIds.length);
+
+  container.innerHTML = sessionIds.map((sid, idx) => {
+    const sessionSteps = bySession[sid].sort((a, b) => a.step_number - b.step_number);
+    const agentId = sessionSteps[0]?.agent_id || '—';
+    const safeSessionId = safeText(sid);
+    const safeAgentId = safeText(agentId);
+    return `
+      <div class="trace-session">
+        <div class="trace-session-header" onclick="toggleTrace('trace-${idx}')">
+          <span>🤖 ${safeAgentId}</span>
+          <span class="cell-mono" style="font-size:12px;color:var(--text-muted)">${safeSessionId}</span>
+          <span class="badge badge-info" style="margin-left:auto">${sessionSteps.length} steps</span>
+          <span id="trace-toggle-${idx}" style="color:var(--text-muted)">▼</span>
+        </div>
+        <div class="trace-steps" id="trace-${idx}">
+          ${sessionSteps.map(step => {
+            const stepType = safeStepType(step.step_type);
+            const stepLabel = safeText(step.step_type || 'unknown');
+            return `
+            <div class="trace-step">
+              <div class="step-icon step-icon-${stepType}">
+                ${STEP_ICONS[stepType] || '•'}
+              </div>
+              <div class="step-body">
+                <div class="step-meta">
+                  <span class="badge badge-step-${stepType}">${stepLabel}</span>
+                  <span style="font-size:11px;color:var(--text-muted)">Step ${step.step_number}</span>
+                  <span style="font-size:11px;color:var(--text-muted);margin-left:auto">${fmtTs(step.created_at)}</span>
+                </div>
+                <div class="step-content">${safeText(step.content)}</div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function toggleTrace(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const visible = el.style.display !== 'none';
+  el.style.display = visible ? 'none' : 'flex';
+  el.style.flexDirection = 'column';
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Errors
+   ════════════════════════════════════════════════════════════════════ */
+function renderErrors() {
+  const grid = document.getElementById('errorGrid');
+  const errs = state.errors;
+  if (!errs.length) {
+    grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="empty-icon">✅</div>No errors recorded — all requests succeeded.</div>';
+    return;
+  }
+  grid.innerHTML = errs.map(e => `
+    <div class="error-card">
+      <div class="error-code">${safeText(e.error_code || 'unknown')}</div>
+      <div class="error-count">${e.count}</div>
+      <div class="error-msg">${escHtml(truncate(e.error_message, 100))}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+        Provider: ${safeText(e.provider || '—')} · Last: ${fmtTs(e.last_seen)}
+      </div>
+    </div>`).join('');
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Sessions table
+   ════════════════════════════════════════════════════════════════════ */
+function renderSessionsTable() {
+  const rows  = state.sessions;
+  const tbody = document.getElementById('sessBody');
+  const empty = document.getElementById('sessEmpty');
+
+  if (!rows.length) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td class="cell-mono" style="font-size:12px">${safeText(r.session_id)}</td>
+      <td>${safeText(r.user_id || '—')}</td>
+      <td>${r.request_count}</td>
+      <td>${r.error_count > 0 ? `<span class="badge badge-error">${r.error_count}</span>` : '<span class="badge badge-success">0</span>'}</td>
+      <td style="white-space:nowrap">${fmtNum(r.total_tokens)}</td>
+      <td style="white-space:nowrap">$${fmtCost(r.total_cost_usd)}</td>
+      <td style="white-space:nowrap">${fmtLatency(r.avg_latency_ms)}</td>
+      <td class="cell-mono" style="font-size:11px;white-space:nowrap">${fmtTs(r.started_at)}</td>
+      <td class="cell-mono" style="font-size:11px;white-space:nowrap">${fmtTs(r.last_seen)}</td>
+    </tr>`).join('');
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Tabs
+   ════════════════════════════════════════════════════════════════════ */
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Export
+   ════════════════════════════════════════════════════════════════════ */
+async function exportData() {
+  const data = await fetchJSON('/api/export');
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'kujo-watchdog-' + Date.now() + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Formatters
+   ════════════════════════════════════════════════════════════════════ */
+function fmtTs(ms) {
+  if (!ms) return '—';
+  const d = new Date(parseInt(ms));
+  if (isNaN(d)) return '—';
+  return d.toLocaleString(undefined, { month:'short', day:'numeric',
+    hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+
+function fmtNum(n) {
+  if (n == null) return '—';
+  n = parseFloat(n);
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K';
+  return n.toLocaleString();
+}
+
+function fmtCost(n) {
+  if (n == null) return '—';
+  n = parseFloat(n);
+  if (n === 0) return '0.0000';
+  if (n < 0.0001) return n.toExponential(2);
+  return n.toFixed(4);
+}
+
+function fmtLatency(ms) {
+  if (!ms) return '—';
+  ms = parseFloat(ms);
+  if (ms >= 1000) return (ms / 1000).toFixed(2) + 's';
+  return Math.round(ms) + 'ms';
+}
+
+function fmtPct(n) {
+  if (n == null) return '—';
+  return parseFloat(n).toFixed(1);
+}
+
+function truncate(s, n) {
+  if (!s) return '';
+  s = String(s);
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function safeText(value) {
+  if (value == null) return '';
+  return escHtml(String(value));
+}
+
+function safeStepType(value) {
+  const key = String(value || '');
+  if (Object.prototype.hasOwnProperty.call(STEP_ICONS, key)) {
+    return key;
+  }
+  return 'planning';
+}
+
+function setText(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = v;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Boot
+   ════════════════════════════════════════════════════════════════════ */
+loadAll();
+// Auto-refresh every 30 s
+setInterval(loadAll, 30_000);
+</script>
+</body>
+</html>

@@ -1,0 +1,300 @@
+# Watchdog — Demo Seeder
+#
+# Populates watchdog.db with realistic fake data so the dashboard
+# has something interesting to show right away.
+#
+# Run:  kujo run demo.kujo --interpreter
+#
+# Re-running drops and recreates all data.
+
+from watchdog import watchdog_init
+
+print("=== Watchdog — Demo Seeder ===")
+print("")
+
+DB_PATH := "data/watchdog.db"
+
+# Drop existing tables so we start clean each run
+setup_db := db_connect("sqlite", DB_PATH)
+db_execute(setup_db, "DROP TABLE IF EXISTS requests",   [])
+db_execute(setup_db, "DROP TABLE IF EXISTS tool_calls", [])
+db_execute(setup_db, "DROP TABLE IF EXISTS agent_steps",[])
+db_close(setup_db)
+
+obs := watchdog_init(DB_PATH)
+db  := obs["db"]
+
+print("Database initialised at: " + DB_PATH)
+print("")
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+func rand_elem(arr) {
+    idx := random_int(0, len(arr) - 1)
+    return arr[idx]
+}
+
+func ts_offset(base_ms, offset_ms) {
+    return to_string(base_ms + offset_ms)
+}
+
+func insert_request(db, session_id, user_id, provider, model, request_id,
+                    status, input_tok, output_tok, cost, latency_ms,
+                    finish_reason, error_code, error_msg, prompt, response, created_at) {
+    total_tok := input_tok + output_tok
+    db_execute(db, "INSERT INTO requests (session_id, user_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [session_id, user_id, provider, model, request_id, status, input_tok, output_tok, total_tok, cost, latency_ms, finish_reason, error_code, error_msg, prompt, response, created_at])
+    rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
+    if len(rows) > 0 {
+        return rows[0]["id"]
+    }
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Seed data config
+# ---------------------------------------------------------------------------
+
+providers := [
+    { "name": "openai",     "model": "gpt-4.1-mini",    "input_rate": 0.40, "output_rate": 1.60 },
+    { "name": "openai",     "model": "gpt-4.1",         "input_rate": 2.00, "output_rate": 8.00 },
+    { "name": "openai",     "model": "gpt-4o-mini",     "input_rate": 0.15, "output_rate": 0.60 },
+    { "name": "deepseek",   "model": "deepseek-chat",   "input_rate": 0.07, "output_rate": 1.10 },
+    { "name": "openrouter", "model": "openai/gpt-4.1-mini", "input_rate": 0.40, "output_rate": 1.60 }
+]
+
+sessions := [
+    { "id": "sess_7f3a21bc", "user": "user_alice",   "label": "Code Review Agent"       },
+    { "id": "sess_9d14e55f", "user": "user_bob",     "label": "Research Summarizer"     },
+    { "id": "sess_2c8b10ad", "user": "user_carol",   "label": "SQL Query Assistant"     },
+    { "id": "sess_4e6f39c7", "user": "user_alice",   "label": "Email Drafter"           },
+    { "id": "sess_b1d72890", "user": "user_dave",    "label": "Customer Support Bot"    },
+    { "id": "sess_3a9c5e12", "user": "user_eve",     "label": "Data Extraction Agent"   },
+    { "id": "sess_f8012b67", "user": "user_frank",   "label": "Test Generator"          },
+    { "id": "sess_0d4587ef", "user": "user_grace",   "label": "Onboarding Wizard"       },
+    { "id": "sess_c6b3921a", "user": "user_heidi",   "label": "Document Classifier"     },
+    { "id": "sess_811e4fd3", "user": "user_ivan",    "label": "Streaming Demo Session"  }
+]
+
+prompts := [
+    "Summarize the key findings from this research paper.",
+    "Write a unit test for the authentication module.",
+    "Explain what this SQL query does and suggest optimizations.",
+    "Draft a professional reply to this customer complaint.",
+    "Extract all named entities from the following text.",
+    "Review this pull request for security vulnerabilities.",
+    "Generate five variations of this marketing headline.",
+    "What are the main differences between REST and GraphQL?",
+    "Classify this support ticket by priority and category.",
+    "Translate this Python function to TypeScript.",
+    "Identify the root cause of this stack trace.",
+    "Create a step-by-step onboarding checklist for new engineers.",
+    "Summarize this legal document in plain English.",
+    "Suggest three data models for a multi-tenant SaaS app.",
+    "Write a regex to extract email addresses from freeform text."
+]
+
+responses := [
+    "The paper identifies three key contributions: improved accuracy, reduced latency, and lower cost at scale.",
+    "Here is a comprehensive unit test covering happy path, edge cases, and error handling...",
+    "This query performs a full table scan on `orders`. Adding an index on `created_at` would reduce latency by ~80%.",
+    "Thank you for reaching out. I completely understand your frustration and I'm here to help resolve this immediately.",
+    "Entities found: Organization — Acme Corp; Person — Jane Smith; Location — San Francisco, CA.",
+    "Found 2 potential issues: unsanitised user input on line 47, and a hardcoded secret on line 112.",
+    "Variation 1: 'Unlock Your Potential Today'. Variation 2: 'Results That Speak for Themselves'...",
+    "REST uses fixed endpoints and HTTP verbs. GraphQL lets clients request exactly the fields they need.",
+    "Priority: High. Category: Billing. Suggested owner: finance-support@company.com.",
+    "Here is the TypeScript equivalent with full type annotations and async/await patterns...",
+    "The stack trace points to a nil pointer dereference in the connection pool under high concurrency.",
+    "Onboarding checklist: 1. Set up VPN access. 2. Clone the monorepo. 3. Run the bootstrap script...",
+    "In plain English: this agreement limits the vendor's liability to fees paid in the prior 12 months.",
+    "Option A: single schema per tenant (simplest). Option B: row-level tenancy with RLS. Option C: schema-per-tenant.",
+    "Pattern: `[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}`"
+]
+
+error_scenarios := [
+    { "code": "auth_error",    "msg": "Missing API key. Set OPENAI_API_KEY before calling chat_completion." },
+    { "code": "http_error",    "msg": "HTTP 429 — rate limit exceeded. Retry after 60 seconds."           },
+    { "code": "http_error",    "msg": "HTTP 503 — service temporarily unavailable."                       },
+    { "code": "network_error", "msg": "Connection timed out after 45 seconds."                            },
+    { "code": "provider_error","msg": "The model does not support tool_calls with stream=true."            },
+    { "code": "invalid_json",  "msg": "Could not parse response JSON: unexpected end of input."            }
+]
+
+tool_names := ["web_search", "get_weather", "calculator", "code_interpreter",
+               "read_file", "send_email", "query_database", "fetch_url"]
+
+# Base timestamp — roughly 3 days ago
+base_ts := current_timestamp() - (3 * 24 * 60 * 60 * 1000)
+
+# ---------------------------------------------------------------------------
+# 1. Bulk requests — mix of success and error across all sessions
+# ---------------------------------------------------------------------------
+
+print("Seeding requests...")
+
+i := 0
+while i < 55 {
+    sess_idx     := i % len(sessions)
+    sess         := sessions[sess_idx]
+    prov_idx     := random_int(0, len(providers) - 1)
+    prov         := providers[prov_idx]
+
+    # 88% success rate
+    is_error := random_int(1, 100) <= 12
+
+    input_tok  := random_int(80, 1800)
+    output_tok := random_int(40, 600)
+    latency    := random_int(180, 3200)
+    cost       := (input_tok / 1000000.0) * prov["input_rate"] + (output_tok / 1000000.0) * prov["output_rate"]
+
+    offset_ms  := (i * 180000) + random_int(0, 60000)   # spread ~3 min apart + jitter
+    created_at := ts_offset(base_ts, offset_ms)
+
+    prompt_idx   := random_int(0, len(prompts)    - 1)
+    response_idx := random_int(0, len(responses)  - 1)
+
+    request_id := "req_" + to_string(i) + "_" + to_string(random_int(10000, 99999))
+
+    status        := "success"
+    finish_reason := "stop"
+    error_code    := ""
+    error_msg     := ""
+    resp_summary  := responses[response_idx]
+
+    if is_error {
+        err_idx    := random_int(0, len(error_scenarios) - 1)
+        err        := error_scenarios[err_idx]
+        status        := "error"
+        finish_reason := ""
+        error_code    := err["code"]
+        error_msg     := err["msg"]
+        resp_summary  := ""
+        input_tok  := 0
+        output_tok := 0
+        cost       := 0.0
+        latency    := random_int(30, 800)
+    }
+
+    insert_request(db, sess["id"], sess["user"], prov["name"], prov["model"],
+        request_id, status, input_tok, output_tok, cost, latency,
+        finish_reason, error_code, error_msg, prompts[prompt_idx], resp_summary, created_at)
+
+    i := i + 1
+}
+
+print("  Inserted 55 requests.")
+
+# ---------------------------------------------------------------------------
+# 2. Tool call logs (linked to first 20 requests roughly)
+# ---------------------------------------------------------------------------
+
+print("Seeding tool calls...")
+
+tc_count := 0
+j := 0
+while j < 28 {
+    req_dbid   := random_int(1, 40)
+    sess_idx   := random_int(0, len(sessions) - 1)
+    sess       := sessions[sess_idx]
+    tool       := rand_elem(tool_names)
+    tc_latency := random_int(50, 1400)
+    tc_status  := "success"
+    if random_int(1, 10) <= 2 { tc_status := "error" }
+
+    offset_ms  := j * 210000 + random_int(0, 30000)
+    created_at := ts_offset(base_ts, offset_ms)
+
+    args_map := { "query": "example input for " + tool, "limit": 10 }
+    result_str := "Tool returned 3 results for: " + tool
+    if tc_status == "error" {
+        result_str := "Error: tool execution failed — timeout after 30s"
+    }
+
+    db_execute(db, "INSERT INTO tool_calls (request_dbid, session_id, tool_name, tool_args, tool_result, status, latency_ms, created_at) VALUES (?,?,?,?,?,?,?,?)", [req_dbid, sess["id"], tool, to_json(args_map), result_str, tc_status, tc_latency, created_at])
+    tc_count := tc_count + 1
+    j := j + 1
+}
+
+print("  Inserted " + to_string(tc_count) + " tool calls.")
+
+# ---------------------------------------------------------------------------
+# 3. Agent step traces for 3 sessions (multi-step reasoning chains)
+# ---------------------------------------------------------------------------
+
+print("Seeding agent traces...")
+
+agent_sessions := [sessions[0], sessions[1], sessions[5]]
+
+step_sequences := [
+    [
+        { "type": "planning",   "content": "User asked to review the authentication PR. I need to: 1) read the diff, 2) check for vulnerabilities, 3) verify test coverage, 4) post feedback." },
+        { "type": "tool_call",  "content": "Calling read_file({\"path\": \"auth/login.py\", \"lines\": \"1-200\"})" },
+        { "type": "tool_result","content": "Retrieved 187 lines. Found bcrypt hashing, JWT issuance, and session management code." },
+        { "type": "model_call", "content": "Analysing code for OWASP Top 10 vulnerabilities..." },
+        { "type": "tool_call",  "content": "Calling code_interpreter({\"code\": \"check_sql_injection(login_handler)\"})" },
+        { "type": "tool_result","content": "No SQL injection vectors found. Parameterised queries used throughout." },
+        { "type": "model_call", "content": "Checking test coverage reports..." },
+        { "type": "response",   "content": "Review complete. Found 1 medium issue: JWT expiry is set to 30 days — recommend reducing to 24 hours. Test coverage is 91%. LGTM with minor changes." }
+    ],
+    [
+        { "type": "planning",   "content": "Goal: summarise the latest ML paper. Steps: fetch abstract, extract key claims, cross-reference citations, produce summary." },
+        { "type": "tool_call",  "content": "Calling fetch_url({\"url\": \"https://arxiv.org/abs/2401.00001\"})" },
+        { "type": "tool_result","content": "Paper: 'Scaling Laws for Reward Model Overoptimisation'. Abstract retrieved (1,240 chars)." },
+        { "type": "model_call", "content": "Extracting key claims from abstract and introduction..." },
+        { "type": "tool_call",  "content": "Calling web_search({\"query\": \"reward model overoptimisation 2024 citations\"})" },
+        { "type": "tool_result","content": "Found 14 citing papers. Top citation: 'RLHF scaling survey (2024)'." },
+        { "type": "response",   "content": "Summary: This paper demonstrates that as KL divergence from the reference policy grows, reward model scores diverge from true human preferences — a phenomenon called overoptimisation. Mitigation: use ensemble reward models or periodic human evaluation checkpoints." }
+    ],
+    [
+        { "type": "planning",   "content": "Extract named entities and relationships from financial filings. Pipeline: chunk document, NER pass, relationship extraction, output structured JSON." },
+        { "type": "tool_call",  "content": "Calling read_file({\"path\": \"filings/Q1_2025_10K.txt\"})" },
+        { "type": "tool_result","content": "File loaded: 48,231 words across 12 sections." },
+        { "type": "model_call", "content": "Running NER on chunk 1/4..." },
+        { "type": "model_call", "content": "Running NER on chunk 2/4..." },
+        { "type": "model_call", "content": "Running NER on chunk 3/4..." },
+        { "type": "model_call", "content": "Running NER on chunk 4/4..." },
+        { "type": "tool_call",  "content": "Calling query_database({\"sql\": \"SELECT * FROM entities WHERE confidence > 0.85\"})" },
+        { "type": "tool_result","content": "74 high-confidence entities: 12 organisations, 31 persons, 18 monetary amounts, 13 dates." },
+        { "type": "response",   "content": "Extraction complete. Output: {\"organisations\": 12, \"persons\": 31, \"amounts\": 18, \"dates\": 13, \"relationships\": 27}. Full JSON written to entities_Q1_2025.json." }
+    ]
+]
+
+k := 0
+while k < len(agent_sessions) {
+    ag_sess    := agent_sessions[k]
+    agent_id   := "agent_" + to_string(k + 1)
+    steps      := step_sequences[k]
+    base_step_ts := base_ts + (k * 12 * 60 * 60 * 1000)
+
+    m := 0
+    while m < len(steps) {
+        step       := steps[m]
+        created_at := ts_offset(base_step_ts, m * 8000 + random_int(0, 3000))
+        meta       := { "agent_id": agent_id, "session_label": ag_sess["label"] }
+
+        db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, created_at) VALUES (?,?,?,?,?,?,?)", [ag_sess["id"], agent_id, m + 1, step["type"], step["content"], to_json(meta), created_at])
+        m := m + 1
+    }
+    print("  Agent trace " + to_string(k + 1) + ": " + to_string(len(steps)) + " steps for " + ag_sess["label"])
+    k := k + 1
+}
+
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
+
+req_count  := db_query(db, "SELECT COUNT(*) AS n FROM requests",   [])
+tc_c       := db_query(db, "SELECT COUNT(*) AS n FROM tool_calls", [])
+step_count := db_query(db, "SELECT COUNT(*) AS n FROM agent_steps",[])
+
+print("")
+print("=== Seed complete ===")
+print("  Requests:    " + to_string(req_count[0]["n"]))
+print("  Tool calls:  " + to_string(tc_c[0]["n"]))
+print("  Agent steps: " + to_string(step_count[0]["n"]))
+print("")
+print("Run the Watchdog server:")
+print("  kujo run dashboard_server.kujo --interpreter")
+print("Then open: http://localhost:7700")

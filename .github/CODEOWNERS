@@ -1,0 +1,7 @@
+* @robertdevore
+
+# Require owner review on security-sensitive surfaces.
+/src/dashboard_server.kujo @robertdevore
+/dashboard_server.kujo @robertdevore
+/docs/DEPLOYMENT_HARDENING_RUNBOOK.md @robertdevore
+/tests/*.js @robertdevore

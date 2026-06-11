@@ -1,0 +1,91 @@
+# Shared helpers for Watchdog modules.
+# Compatibility entrypoint mirrored from src/watchdog_shared.kujo.
+
+func cost_per_million(model) {
+	table := {
+		"gpt-4.1": {"input": 2.00, "output": 8.00},
+		"gpt-4.1-mini": {"input": 0.40, "output": 1.60},
+		"gpt-4.1-nano": {"input": 0.10, "output": 0.40},
+		"gpt-4o": {"input": 2.50, "output": 10.00},
+		"gpt-4o-mini": {"input": 0.15, "output": 0.60},
+		"gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
+		"deepseek-chat": {"input": 0.07, "output": 1.10},
+		"deepseek-reasoner": {"input": 0.55, "output": 2.19},
+		"openai/gpt-4.1-mini": {"input": 0.40, "output": 1.60}
+	}
+
+	if has_key(table, model) {
+		return table[model]
+	}
+
+	return {"input": 1.00, "output": 3.00}
+}
+
+func estimate_cost(model, input_tokens, output_tokens) {
+	rates := cost_per_million(model)
+	input_cost := (input_tokens / 1000000.0) * rates["input"]
+	output_cost := (output_tokens / 1000000.0) * rates["output"]
+	return input_cost + output_cost
+}
+
+func ensure_schema(db) {
+	db_execute(db, "CREATE TABLE IF NOT EXISTS schema_migrations (key TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT '')", [])
+
+	db_execute(db, "CREATE TABLE IF NOT EXISTS requests (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL DEFAULT '', user_id TEXT NOT NULL DEFAULT '', tenant_id TEXT NOT NULL DEFAULT '', project_id TEXT NOT NULL DEFAULT '', workflow_id TEXT NOT NULL DEFAULT '', task_id TEXT NOT NULL DEFAULT '', correlation_id TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'success', input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, total_tokens INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL DEFAULT 0.0, latency_ms INTEGER NOT NULL DEFAULT 0, finish_reason TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '', error_message TEXT NOT NULL DEFAULT '', prompt_summary TEXT NOT NULL DEFAULT '', response_summary TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '')", [])
+
+	db_execute(db, "CREATE TABLE IF NOT EXISTS tool_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, request_dbid INTEGER NOT NULL DEFAULT 0, session_id TEXT NOT NULL DEFAULT '', tool_name TEXT NOT NULL DEFAULT '', tool_args TEXT NOT NULL DEFAULT '{}', tool_result TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'success', latency_ms INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT '')", [])
+
+	db_execute(db, "CREATE TABLE IF NOT EXISTS agent_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', step_number INTEGER NOT NULL DEFAULT 0, step_type TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '', metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT '')", [])
+
+	db_execute(db, "CREATE TABLE IF NOT EXISTS audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL DEFAULT '', actor_key TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '', metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT '')", [])
+
+	try {
+		db_execute(db, "ALTER TABLE requests ADD COLUMN workflow_id TEXT NOT NULL DEFAULT ''", [])
+	} except err {
+	}
+
+	try {
+		db_execute(db, "ALTER TABLE requests ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''", [])
+	} except err {
+	}
+
+	try {
+		db_execute(db, "ALTER TABLE requests ADD COLUMN project_id TEXT NOT NULL DEFAULT ''", [])
+	} except err {
+	}
+
+	try {
+		db_execute(db, "ALTER TABLE requests ADD COLUMN task_id TEXT NOT NULL DEFAULT ''", [])
+	} except err {
+	}
+
+	try {
+		db_execute(db, "ALTER TABLE requests ADD COLUMN correlation_id TEXT NOT NULL DEFAULT ''", [])
+	} except err {
+	}
+
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_created_at ON requests(created_at)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_session_id ON requests(session_id)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_provider_model ON requests(provider, model)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_tenant_id ON requests(tenant_id)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_project_id ON requests(project_id)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_workflow_id ON requests(workflow_id)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_task_id ON requests(task_id)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_correlation_id ON requests(correlation_id)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_tool_calls_created_at ON tool_calls(created_at)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_tool_calls_session_id ON tool_calls(session_id)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_agent_steps_session_step ON agent_steps(session_id, step_number)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_agent_steps_created_at ON agent_steps(created_at)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_audit_events_action_result ON audit_events(action, result)", [])
+
+	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0001_base_schema", to_string(current_timestamp())])
+	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0002_kennel_correlation_fields", to_string(current_timestamp())])
+	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0003_tenant_project_fields", to_string(current_timestamp())])
+	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0004_audit_events", to_string(current_timestamp())])
+}
+
+export watchdog_cost_per_million := cost_per_million
+export watchdog_estimate_cost := estimate_cost
+export watchdog_ensure_schema := ensure_schema

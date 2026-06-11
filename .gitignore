@@ -1,0 +1,14 @@
+# Runtime database artifacts
+*.db
+*.db-shm
+*.db-wal
+
+# Local proxy configuration
+watchdog_proxy_config.json
+
+# Temporary workspace outputs
+tmp/*
+!tmp/.gitkeep
+
+data/*
+!data/.gitkeep

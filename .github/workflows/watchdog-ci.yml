@@ -1,0 +1,86 @@
+name: Watchdog CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  full-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout watchdog repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Kujo runtime repository
+        uses: actions/checkout@v4
+        with:
+          repository: robertdevore/kujo
+          path: kujo-runtime
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Kujo runtime
+        run: cargo build --release --manifest-path kujo-runtime/Cargo.toml
+
+      - name: Run full JavaScript regression suite
+        env:
+          KUJO_BIN: ${{ github.workspace }}/kujo-runtime/target/release/kujo
+        run: |
+          set -euo pipefail
+          for f in tests/*.js; do
+            echo "==> $f"
+            node "$f"
+          done
+
+  matrix-auth-rate-limit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        api_auth_mode: [off, token]
+        rate_limit_mode: [off, basic]
+    steps:
+      - name: Checkout watchdog repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Kujo runtime repository
+        uses: actions/checkout@v4
+        with:
+          repository: robertdevore/kujo
+          path: kujo-runtime
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Kujo runtime
+        run: cargo build --release --manifest-path kujo-runtime/Cargo.toml
+
+      - name: Run matrix coverage checks
+        env:
+          KUJO_BIN: ${{ github.workspace }}/kujo-runtime/target/release/kujo
+          WDG_API_AUTH_MODE: ${{ matrix.api_auth_mode }}
+          WDG_API_AUTH_TOKEN: ci-matrix-api-token
+          WDG_RATE_LIMIT_MODE: ${{ matrix.rate_limit_mode }}
+          WDG_RATE_LIMIT_MAX_REQUESTS: '5'
+          WDG_RATE_LIMIT_WINDOW_SECS: '2'
+        run: |
+          set -euo pipefail
+          echo "Matrix: api_auth_mode=${WDG_API_AUTH_MODE}, rate_limit_mode=${WDG_RATE_LIMIT_MODE}"
+          node tests/api_auth_mode_check.js
+          node tests/rate_limit_controls_check.js
+          node tests/proxy_authz_mode_check.js
+          node tests/watchdog_api_route_suite.js
+          node tests/src_layout_compatibility_check.js

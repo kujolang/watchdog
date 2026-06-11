@@ -1,0 +1,19 @@
+# Minimal isolation test for http_server + route
+# Run: ../kujo/target/release/kujo run test_server.kujo --interpreter
+
+print("Step 1: creating server...")
+srv := http_server(7700)
+print("Step 2: server type = " + type(srv))
+
+print("Step 3: registering route...")
+srv := srv.route("GET", "/", func(req) {
+    return json_response(200, {"ok": true})
+})
+print("Step 4: after route, srv type = " + type(srv))
+
+print("Step 5: registering second route...")
+srv := srv.route("GET", "/ping", func(req) {
+    return json_response(200, {"pong": true})
+})
+print("Step 6: done. Starting server...")
+srv.listen()

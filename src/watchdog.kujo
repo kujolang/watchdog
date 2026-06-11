@@ -1,0 +1,201 @@
+# Watchdog Module
+# Compatibility entrypoint mirrored from src/watchdog.kujo.
+#
+# Drop-in wrapper around the Kujo AI SDK that captures every model call,
+# tool invocation, and agent step into a local SQLite database.
+#
+# Usage:
+#   from watchdog import watchdog_init, watchdog_wrap_chat, watchdog_record_tool_call, watchdog_record_agent_step
+#
+#   wd := watchdog_init("watchdog.db")
+#   result := watchdog_wrap_chat(wd, client, messages, options, "session-abc", "user-123", chat_completion)
+
+from watchdog_shared import watchdog_estimate_cost, watchdog_ensure_schema
+
+func estimate_cost_impl(model, input_tokens, output_tokens) {
+    return watchdog_estimate_cost(model, input_tokens, output_tokens)
+}
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+func watchdog_init_impl(db_path) {
+    db := db_connect("sqlite", db_path)
+    watchdog_ensure_schema(db)
+
+    return {
+        "db":      db,
+        "db_path": db_path
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+func truncate_str(s, max_len) {
+    if type(s) != "string" {
+        return ""
+    }
+    if len(s) <= max_len {
+        return s
+    }
+    return substring(s, 0, max_len) + "..."
+}
+
+func safe_str(v) {
+    if type(v) == "null" {
+        return ""
+    }
+    return to_string(v)
+}
+
+func messages_to_prompt_summary(messages) {
+    if type(messages) != "array" {
+        return ""
+    }
+    if len(messages) == 0 {
+        return ""
+    }
+    last := messages[len(messages) - 1]
+    if type(last) == "dict" {
+        content := ""
+        if has_key(last, "content") {
+            content := safe_str(last["content"])
+        }
+        return truncate_str(content, 120)
+    }
+    return ""
+}
+
+# ---------------------------------------------------------------------------
+# Core recorder
+# ---------------------------------------------------------------------------
+
+func watchdog_record_request_impl(wd, session_id, user_id, provider, model,
+                                  request_id, status, input_tokens, output_tokens,
+                                  total_tokens, cost_usd, latency_ms, finish_reason,
+                                  error_code, error_message, prompt_summary, response_summary) {
+    ts := to_string(current_timestamp())
+    db_execute(wd["db"], "INSERT INTO requests (session_id, user_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [session_id, user_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, ts])
+
+    rows := db_query(wd["db"], "SELECT last_insert_rowid() AS id", [])
+    if len(rows) > 0 {
+        return rows[0]["id"]
+    }
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Wrapped chat_completion
+# ---------------------------------------------------------------------------
+
+func watchdog_wrap_chat_impl(wd, client, messages, options, session_id, user_id, chat_fn) {
+    prompt_summary := messages_to_prompt_summary(messages)
+    start_ms := current_timestamp()
+
+    result := chat_fn(client, messages, options)
+
+    end_ms   := current_timestamp()
+    latency  := end_ms - start_ms
+
+    provider := ""
+    model    := ""
+    if has_key(client, "provider") {
+        p := client["provider"]
+        if type(p) == "dict" {
+            if has_key(p, "name")          { provider := p["name"]          }
+            if has_key(p, "default_model") { model    := p["default_model"] }
+        }
+    }
+
+    if result["ok"] {
+        if has_key(result, "model") { model := result["model"] }
+    }
+
+    status        := "success"
+    request_id    := ""
+    input_tokens  := 0
+    output_tokens := 0
+    total_tokens  := 0
+    finish_reason := ""
+    error_code    := ""
+    error_message := ""
+    response_summary := ""
+
+    if result["ok"] {
+        if has_key(result, "request_id")  { request_id    := safe_str(result["request_id"])  }
+        if has_key(result, "finish_reason") { finish_reason := safe_str(result["finish_reason"]) }
+        if has_key(result, "output_text") { response_summary := truncate_str(safe_str(result["output_text"]), 120) }
+        if has_key(result, "usage") {
+            u := result["usage"]
+            if type(u) == "dict" {
+                if has_key(u, "input_tokens")  { input_tokens  := u["input_tokens"]  }
+                if has_key(u, "output_tokens") { output_tokens := u["output_tokens"] }
+                if has_key(u, "total_tokens")  { total_tokens  := u["total_tokens"]  }
+            }
+        }
+    } else {
+        status := "error"
+        if has_key(result, "error") {
+            e := result["error"]
+            if type(e) == "dict" {
+                if has_key(e, "code")    { error_code    := safe_str(e["code"])    }
+                if has_key(e, "message") { error_message := safe_str(e["message"]) }
+            }
+        }
+    }
+
+    cost_usd := estimate_cost_impl(model, input_tokens * 1.0, output_tokens * 1.0)
+
+    watchdog_record_request_impl(wd, session_id, user_id, provider, model,
+        request_id, status, input_tokens, output_tokens, total_tokens,
+        cost_usd, latency, finish_reason, error_code, error_message,
+        prompt_summary, response_summary)
+
+    return result
+}
+
+# ---------------------------------------------------------------------------
+# Tool call recorder
+# ---------------------------------------------------------------------------
+
+func watchdog_record_tool_call_impl(wd, request_dbid, session_id, tool_name,
+                                    tool_args, tool_result, status, latency_ms) {
+    ts := to_string(current_timestamp())
+    args_str   := tool_args
+    result_str := tool_result
+    if type(tool_args) == "dict" {
+        args_str := to_json(tool_args)
+    }
+    if type(tool_result) == "dict" {
+        result_str := to_json(tool_result)
+    }
+    db_execute(wd["db"], "INSERT INTO tool_calls (request_dbid, session_id, tool_name, tool_args, tool_result, status, latency_ms, created_at) VALUES (?,?,?,?,?,?,?,?)", [request_dbid, session_id, tool_name, args_str, result_str, status, latency_ms, ts])
+}
+
+# ---------------------------------------------------------------------------
+# Agent step recorder
+# ---------------------------------------------------------------------------
+
+func watchdog_record_agent_step_impl(wd, session_id, agent_id, step_number,
+                                     step_type, content, metadata) {
+    ts := to_string(current_timestamp())
+    meta_str := metadata
+    if type(metadata) == "dict" {
+        meta_str := to_json(metadata)
+    }
+    content_str := truncate_str(safe_str(content), 500)
+    db_execute(wd["db"], "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, created_at) VALUES (?,?,?,?,?,?,?)", [session_id, agent_id, step_number, step_type, content_str, meta_str, ts])
+}
+
+# ---------------------------------------------------------------------------
+# Exports
+# ---------------------------------------------------------------------------
+
+export watchdog_init := watchdog_init_impl
+export watchdog_wrap_chat := watchdog_wrap_chat_impl
+export watchdog_record_tool_call := watchdog_record_tool_call_impl
+export watchdog_record_agent_step := watchdog_record_agent_step_impl
+export watchdog_estimate_cost := estimate_cost_impl

@@ -1,0 +1,2641 @@
+# Watchdog + OpenAI-Compatible Proxy
+# Compatibility entrypoint mirrored from src/dashboard_server.kujo.
+#
+# Run:
+#   /path/to/kujo run dashboard_server.kujo --interpreter
+#
+# Default Watchdog URL:
+#   http://localhost:7700
+#
+# Proxy URL pattern:
+#   http://localhost:7700/proxy/v1/<resource>/<action>
+#
+# Example for chat completions:
+#   POST http://localhost:7700/proxy/v1/chat/completions
+
+from watchdog_shared import watchdog_estimate_cost, watchdog_ensure_schema
+
+DEFAULT_PORT := 7700
+DEFAULT_DB_PATH := "data/watchdog.db"
+DEFAULT_PROXY_CONFIG_PATH := "watchdog_proxy_config.json"
+DEFAULT_UPSTREAM_BASE_URL := "https://api.openai.com/v1"
+DEFAULT_AUTH_MODE := "passthrough"
+DEFAULT_PROXY_CONFIG_VISIBILITY := "safe"
+DEFAULT_API_AUTH_MODE := "off"
+DEFAULT_PROXY_AUTHZ_MODE := "off"
+DEFAULT_DEPLOYMENT_PROFILE := "local"
+DEFAULT_ALLOW_INSECURE_STARTUP := "false"
+DEFAULT_PROXY_AUTHZ_ALLOWLIST := "/healthz,/readyz"
+DEFAULT_CHARTJS_LOCAL_PATH := "vendor/chart.umd.min.js"
+DEFAULT_PROXY_TIMEOUT_SECS := 120
+DEFAULT_MAX_PROXY_BODY_BYTES := 1048576
+DEFAULT_MAX_PARSE_BODY_BYTES := 524288
+DEFAULT_REDACTION_MODE := "basic"
+DEFAULT_REDACT_TERMS := "api_key,authorization,bearer,password,secret,token,sk-"
+DEFAULT_RATE_LIMIT_MODE := "off"
+DEFAULT_RATE_LIMIT_MAX_REQUESTS := 60
+DEFAULT_RATE_LIMIT_WINDOW_SECS := 60
+DEFAULT_RATE_LIMIT_MAX_BUCKETS := 5000
+DEFAULT_RATE_LIMIT_BUCKET_TTL_SECS := 600
+DEFAULT_IDENTIFIER_MAX_LEN := 128
+DEFAULT_EXPORT_MAX_ROWS := 10000
+MAX_EXPORT_MAX_ROWS := 50000
+API_CONTRACT_VERSION := "v1"
+API_CONTRACT_STATUS := "stable"
+
+func env_or(key, fallback_value) {
+	v := env(key)
+	if type(v) == "null" {
+		return fallback_value
+	}
+	v := trim(to_string(v))
+	if v == "" {
+		return fallback_value
+	}
+	return v
+}
+
+func env_or_many(keys, fallback_value) {
+	i := 0
+	while i < len(keys) {
+		key := to_string(keys[i])
+		v := env(key)
+		if type(v) != "null" {
+			text := trim(to_string(v))
+			if text != "" {
+				return text
+			}
+		}
+		i := i + 1
+	}
+	return fallback_value
+}
+
+func parse_int_env_many(keys, fallback_value) {
+	raw := env_or_many(keys, "")
+	if raw == "" {
+		return fallback_value
+	}
+	try {
+		parsed := parse_int(raw)
+		return parsed
+	} except err {
+		return fallback_value
+	}
+}
+
+func positive_int_or_fallback(raw_value, fallback_value) {
+	if raw_value <= 0 {
+		return fallback_value
+	}
+	return raw_value
+}
+
+func parse_csv_terms(raw_text) {
+	terms := []
+	parts := split(to_string(raw_text), ",")
+	i := 0
+	while i < len(parts) {
+		part := trim(to_lower(to_string(parts[i])))
+		if part != "" {
+			terms := push(terms, part)
+		}
+		i := i + 1
+	}
+	return terms
+}
+
+func normalize_base_url(raw) {
+	next := trim(to_string(raw))
+	if next == "" {
+		return DEFAULT_UPSTREAM_BASE_URL
+	}
+	while ends_with(next, "/") {
+		next := substring(next, 0, len(next) - 1)
+	}
+	return next
+}
+
+func safe_dict_get(dict_value, key, fallback_value) {
+	if type(dict_value) != "dict" {
+		return fallback_value
+	}
+	if has_key(dict_value, key) {
+		return dict_value[key]
+	}
+	return fallback_value
+}
+
+func string_dict_get(dict_value, key, fallback_value) {
+	if type(dict_value) != "dict" {
+		return fallback_value
+	}
+	if has_key(dict_value, key) {
+		return to_string(dict_value[key])
+	}
+	return fallback_value
+}
+
+func parse_json_safe(text_value) {
+	text := to_string(text_value)
+	if len(trim(text)) == 0 {
+		return {
+			"ok": false,
+			"data": null,
+			"error": "empty body"
+		}
+	}
+
+	parsed := null
+	parse_error := null
+	try {
+		parsed := parse_json(text)
+	} except err {
+		parse_error := err
+	}
+
+	if type(parse_error) != "null" {
+		return {
+			"ok": false,
+			"data": null,
+			"error": to_string(parse_error)
+		}
+	}
+
+	return {
+		"ok": true,
+		"data": parsed,
+		"error": ""
+	}
+}
+
+func parse_json_with_limit(text_value, max_bytes) {
+	text := to_string(text_value)
+	if len(text) > max_bytes {
+		return {
+			"ok": false,
+			"data": null,
+			"error": "json body exceeds configured parse limit"
+		}
+	}
+	return parse_json_safe(text)
+}
+
+func get_header(headers, key_name) {
+	if type(headers) != "dict" {
+		return ""
+	}
+	if has_key(headers, key_name) {
+		return to_string(headers[key_name])
+	}
+
+	needle := to_lower(key_name)
+	for key in keys(headers) {
+		if to_lower(to_string(key)) == needle {
+			return to_string(headers[key])
+		}
+	}
+
+	return ""
+}
+
+func truncate_str(value, max_len) {
+	next := to_string(value)
+	if len(next) <= max_len {
+		return next
+	}
+	return substring(next, 0, max_len) + "..."
+}
+
+func safe_prompt_summary(messages) {
+	if type(messages) != "array" {
+		return ""
+	}
+	if len(messages) == 0 {
+		return ""
+	}
+
+	last := messages[len(messages) - 1]
+	if type(last) != "dict" {
+		return ""
+	}
+
+	content := string_dict_get(last, "content", "")
+	return truncate_str(content, 120)
+}
+
+func to_int_or_zero(value) {
+	try {
+		return parse_int(to_string(value))
+	} except err {
+		return 0
+	}
+}
+
+func request_query_map(req) {
+	query := safe_dict_get(req, "query", null)
+	if type(query) == "dict" {
+		return query
+	}
+
+	query := safe_dict_get(req, "query_params", null)
+	if type(query) == "dict" {
+		return query
+	}
+
+	return {}
+}
+
+func request_query_text(req, key, fallback_value) {
+	query := request_query_map(req)
+	if has_key(query, key) {
+		return trim(to_string(query[key]))
+	}
+	return fallback_value
+}
+
+func request_query_int(req, key, fallback_value, min_value, max_value) {
+	raw := request_query_text(req, key, "")
+	if raw == "" {
+		return fallback_value
+	}
+
+	parsed := fallback_value
+	try {
+		parsed := parse_int(raw)
+	} except err {
+		return fallback_value
+	}
+
+	if parsed < min_value {
+		return min_value
+	}
+	if parsed > max_value {
+		return max_value
+	}
+	return parsed
+}
+
+func where_clause_from_conditions(conditions) {
+	if len(conditions) == 0 {
+		return ""
+	}
+
+	out := " WHERE "
+	i := 0
+	while i < len(conditions) {
+		if i > 0 {
+			out := out + " AND "
+		}
+		out := out + to_string(conditions[i])
+		i := i + 1
+	}
+
+	return out
+}
+
+func parse_bool_value(raw_value, fallback_value) {
+	if type(raw_value) == "bool" {
+		return raw_value
+	}
+
+	text := to_lower(trim(to_string(raw_value)))
+	if text == "true" || text == "1" || text == "yes" || text == "on" {
+		return true
+	}
+	if text == "false" || text == "0" || text == "no" || text == "off" {
+		return false
+	}
+
+	return fallback_value
+}
+
+func normalize_identifier(raw_value) {
+	text := trim(to_string(raw_value))
+	if text == "" {
+		return ""
+	}
+	if len(text) <= IDENTIFIER_MAX_LEN {
+		return text
+	}
+	return substring(text, 0, IDENTIFIER_MAX_LEN)
+}
+
+func normalize_api_auth_mode(raw_mode) {
+	mode := to_lower(trim(to_string(raw_mode)))
+	if mode == "token" {
+		return "token"
+	}
+	return "off"
+}
+
+func normalize_proxy_authz_mode(raw_mode) {
+	mode := to_lower(trim(to_string(raw_mode)))
+	if mode == "token" {
+		return "token"
+	}
+	return "off"
+}
+
+func normalize_deployment_profile(raw_profile) {
+	profile := to_lower(trim(to_string(raw_profile)))
+	if profile == "production" || profile == "prod" {
+		return "production"
+	}
+	return "local"
+}
+
+func join_policy_errors(errors) {
+	if len(errors) == 0 {
+		return ""
+	}
+
+	out := ""
+	i := 0
+	while i < len(errors) {
+		if i > 0 {
+			out := out + " | "
+		}
+		out := out + to_string(errors[i])
+		i := i + 1
+	}
+
+	return out
+}
+
+func bearer_token_from_auth_header(auth_header) {
+	text := trim(to_string(auth_header))
+	if text == "" {
+		return ""
+	}
+	needle := "bearer "
+	if starts_with(to_lower(text), needle) {
+		return trim(substring(text, len(needle), len(text)))
+	}
+	return ""
+}
+
+func resolve_api_token_from_request(req) {
+	headers := safe_dict_get(req, "headers", {})
+	token := trim(get_header(headers, "X-Watchdog-Token"))
+	if token != "" {
+		return token
+	}
+
+	auth_header := get_header(headers, "Authorization")
+	return bearer_token_from_auth_header(auth_header)
+}
+
+func resolve_proxy_token_from_request(req) {
+	headers := safe_dict_get(req, "headers", {})
+	token := trim(get_header(headers, "X-Watchdog-Proxy-Token"))
+	if token != "" {
+		return token
+	}
+
+	auth_header := get_header(headers, "Authorization")
+	return bearer_token_from_auth_header(auth_header)
+}
+
+func resolve_audit_actor_key(req, scope) {
+	headers := safe_dict_get(req, "headers", {})
+	session_id := normalize_identifier(get_header(headers, "X-Observe-Session-Id"))
+	if session_id != "" {
+		return "session:" + session_id
+	}
+
+	if scope == "api" {
+		api_token := resolve_api_token_from_request(req)
+		if api_token != "" {
+			return "api_token:present"
+		}
+		return "api_token:missing"
+	}
+
+	if scope == "proxy" {
+		proxy_token := resolve_proxy_token_from_request(req)
+		if proxy_token != "" {
+			return "proxy_token:present"
+		}
+		return "proxy_token:missing"
+	}
+
+	return rate_limit_key(req)
+}
+
+func require_api_auth(req) {
+	rate_decision := check_rate_limit(req)
+	if !rate_decision["allowed"] {
+		return rate_decision
+	}
+
+	if API_AUTH_MODE != "token" {
+		return {
+			"allowed": true,
+			"status": 200,
+			"error": ""
+		}
+	}
+
+	if API_AUTH_TOKEN == "" {
+		insert_audit_event("api_auth_failure", resolve_audit_actor_key(req, "api"), "misconfigured", {
+			"status": 500,
+			"reason": "missing_api_auth_token"
+		})
+		return {
+			"allowed": false,
+			"status": 500,
+			"error": "API auth mode is token but WDG_API_AUTH_TOKEN is empty"
+		}
+	}
+
+	presented_token := resolve_api_token_from_request(req)
+	if presented_token == "" {
+		insert_audit_event("api_auth_failure", resolve_audit_actor_key(req, "api"), "denied", {
+			"status": 401,
+			"reason": "missing_api_token"
+		})
+		return {
+			"allowed": false,
+			"status": 401,
+			"error": "Unauthorized: missing API token"
+		}
+	}
+
+	if presented_token != API_AUTH_TOKEN {
+		insert_audit_event("api_auth_failure", resolve_audit_actor_key(req, "api"), "denied", {
+			"status": 403,
+			"reason": "invalid_api_token"
+		})
+		return {
+			"allowed": false,
+			"status": 403,
+			"error": "Forbidden: invalid API token"
+		}
+	}
+
+	return {
+		"allowed": true,
+		"status": 200,
+		"error": ""
+	}
+}
+
+func path_in_allowlist(path_value) {
+	path_text := to_lower(trim(to_string(path_value)))
+	if path_text == "" {
+		return false
+	}
+
+	i := 0
+	while i < len(PROXY_AUTHZ_ALLOWLIST) {
+		entry := trim(to_string(PROXY_AUTHZ_ALLOWLIST[i]))
+		if entry != "" {
+			if path_text == to_lower(entry) {
+				return true
+			}
+		}
+		i := i + 1
+	}
+
+	return false
+}
+
+func require_proxy_auth(req, path_value) {
+	if path_in_allowlist(path_value) {
+		return {
+			"allowed": true,
+			"status": 200,
+			"error": ""
+		}
+	}
+
+	if PROXY_AUTHZ_MODE != "token" {
+		return {
+			"allowed": true,
+			"status": 200,
+			"error": ""
+		}
+	}
+
+	if PROXY_AUTHZ_TOKEN == "" {
+		insert_audit_event("proxy_auth_failure", resolve_audit_actor_key(req, "proxy"), "misconfigured", {
+			"status": 500,
+			"reason": "missing_proxy_auth_token",
+			"path": path_value
+		})
+		return {
+			"allowed": false,
+			"status": 500,
+			"error": "Proxy auth mode is token but WDG_PROXY_AUTHZ_TOKEN is empty"
+		}
+	}
+
+	presented_token := resolve_proxy_token_from_request(req)
+	if presented_token == "" {
+		insert_audit_event("proxy_auth_failure", resolve_audit_actor_key(req, "proxy"), "denied", {
+			"status": 401,
+			"reason": "missing_proxy_token",
+			"path": path_value
+		})
+		return {
+			"allowed": false,
+			"status": 401,
+			"error": "Unauthorized: missing proxy token"
+		}
+	}
+
+	if presented_token != PROXY_AUTHZ_TOKEN {
+		insert_audit_event("proxy_auth_failure", resolve_audit_actor_key(req, "proxy"), "denied", {
+			"status": 403,
+			"reason": "invalid_proxy_token",
+			"path": path_value
+		})
+		return {
+			"allowed": false,
+			"status": 403,
+			"error": "Forbidden: invalid proxy token"
+		}
+	}
+
+	return {
+		"allowed": true,
+		"status": 200,
+		"error": ""
+	}
+}
+
+func rate_limit_key(req) {
+	headers := safe_dict_get(req, "headers", {})
+	session_id := trim(get_header(headers, "X-Observe-Session-Id"))
+	if session_id != "" {
+		return "session:" + session_id
+	}
+
+	forwarded_for := trim(get_header(headers, "X-Forwarded-For"))
+	if forwarded_for != "" {
+		parts := split(forwarded_for, ",")
+		if len(parts) > 0 {
+			ip := trim(to_string(parts[0]))
+			if ip != "" {
+				return "ip:" + ip
+			}
+		}
+	}
+
+	real_ip := trim(get_header(headers, "X-Real-IP"))
+	if real_ip != "" {
+		return "ip:" + real_ip
+	}
+
+	host := trim(get_header(headers, "Host"))
+	if host != "" {
+		return "host:" + host
+	}
+
+	return "anonymous"
+}
+
+func normalize_rate_limit_buckets(now_ms) {
+	ttl_ms := RATE_LIMIT_BUCKET_TTL_SECS * 1000
+	entries := []
+
+	for key in keys(RATE_LIMIT_BUCKETS) {
+		bucket := safe_dict_get(RATE_LIMIT_BUCKETS, key, null)
+		if type(bucket) == "dict" {
+			window_start := to_int_or_zero(safe_dict_get(bucket, "window_start", now_ms))
+			count := to_int_or_zero(safe_dict_get(bucket, "count", 0))
+			if count < 0 {
+				count := 0
+			}
+
+			if now_ms - window_start < ttl_ms {
+				entries := push(entries, {
+					"key": to_string(key),
+					"window_start": window_start,
+					"count": count
+				})
+			}
+		}
+	}
+
+	if RATE_LIMIT_MAX_BUCKETS > 0 {
+		while len(entries) > RATE_LIMIT_MAX_BUCKETS {
+			oldest_index := 0
+			oldest_start := to_int_or_zero(safe_dict_get(entries[0], "window_start", now_ms))
+
+			i := 1
+			while i < len(entries) {
+				candidate_start := to_int_or_zero(safe_dict_get(entries[i], "window_start", now_ms))
+				if candidate_start < oldest_start {
+					oldest_start := candidate_start
+					oldest_index := i
+				}
+				i := i + 1
+			}
+
+			next_entries := []
+			i := 0
+			while i < len(entries) {
+				if i != oldest_index {
+					next_entries := push(next_entries, entries[i])
+				}
+				i := i + 1
+			}
+			entries := next_entries
+		}
+	}
+
+	normalized := {}
+	i := 0
+	while i < len(entries) {
+		entry := entries[i]
+		entry_key := to_string(safe_dict_get(entry, "key", ""))
+		if entry_key != "" {
+			normalized[entry_key] := {
+				"window_start": to_int_or_zero(safe_dict_get(entry, "window_start", now_ms)),
+				"count": to_int_or_zero(safe_dict_get(entry, "count", 0))
+			}
+		}
+		i := i + 1
+	}
+
+	RATE_LIMIT_BUCKETS := normalized
+}
+
+func check_rate_limit(req) {
+	if RATE_LIMIT_MODE != "basic" {
+		return {
+			"allowed": true,
+			"status": 200,
+			"error": ""
+		}
+	}
+
+	if RATE_LIMIT_MAX_REQUESTS <= 0 {
+		return {
+			"allowed": true,
+			"status": 200,
+			"error": ""
+		}
+	}
+
+	window_ms := RATE_LIMIT_WINDOW_SECS * 1000
+	now_ms := current_timestamp()
+	normalize_rate_limit_buckets(now_ms)
+	bucket_key := rate_limit_key(req)
+	bucket := safe_dict_get(RATE_LIMIT_BUCKETS, bucket_key, null)
+
+	if type(bucket) != "dict" {
+		RATE_LIMIT_BUCKETS[bucket_key] := {
+			"window_start": now_ms,
+			"count": 1
+		}
+		return {
+			"allowed": true,
+			"status": 200,
+			"error": ""
+		}
+	}
+
+	window_start := to_int_or_zero(safe_dict_get(bucket, "window_start", now_ms))
+	count := to_int_or_zero(safe_dict_get(bucket, "count", 0))
+	if now_ms - window_start >= window_ms {
+		RATE_LIMIT_BUCKETS[bucket_key] := {
+			"window_start": now_ms,
+			"count": 1
+		}
+		return {
+			"allowed": true,
+			"status": 200,
+			"error": ""
+		}
+	}
+
+	next_count := count + 1
+	RATE_LIMIT_BUCKETS[bucket_key] := {
+		"window_start": window_start,
+		"count": next_count
+	}
+
+	if next_count > RATE_LIMIT_MAX_REQUESTS {
+		return {
+			"allowed": false,
+			"status": 429,
+			"error": "Too Many Requests: rate limit exceeded."
+		}
+	}
+
+	return {
+		"allowed": true,
+		"status": 200,
+		"error": ""
+	}
+}
+
+func enforce_rate_limit(req) {
+	decision := check_rate_limit(req)
+	if !decision["allowed"] {
+		return api_error(decision["status"], decision["error"])
+	}
+	return null
+}
+
+func redaction_enabled() {
+	return REDACTION_MODE != "off"
+}
+
+func string_has_sensitive_term(value) {
+	text := to_lower(to_string(value))
+	i := 0
+	while i < len(REDACT_TERMS) {
+		term := to_string(REDACT_TERMS[i])
+		if term != "" && contains(text, term) {
+			return true
+		}
+		i := i + 1
+	}
+	return false
+}
+
+func redact_sensitive_text(value) {
+	text := to_string(value)
+	if !redaction_enabled() {
+		return text
+	}
+	if string_has_sensitive_term(text) {
+		return "[REDACTED_SENSITIVE_CONTENT]"
+	}
+	return text
+}
+
+func redact_sensitive_value_for_key(key, value) {
+	if !redaction_enabled() {
+		return value
+	}
+
+	key_text := to_lower(to_string(key))
+	if string_has_sensitive_term(key_text) {
+		return "[REDACTED]"
+	}
+
+	if type(value) == "string" {
+		return redact_sensitive_text(value)
+	}
+
+	if type(value) == "dict" {
+		return redact_dict_shallow(value)
+	}
+
+	return value
+}
+
+func redact_dict_shallow(input_map) {
+	if type(input_map) != "dict" {
+		return input_map
+	}
+
+	clean := {}
+	for key in keys(input_map) {
+		clean[key] := redact_sensitive_value_for_key(key, input_map[key])
+	}
+	return clean
+}
+
+func parse_stream_events(sse_text) {
+	events := []
+	lines := split(to_string(sse_text), "\n")
+	i := 0
+	while i < len(lines) {
+		line := trim(lines[i])
+		if starts_with(line, "data:") {
+			payload_text := trim(replace(line, "data:", ""))
+			if payload_text == "[DONE]" {
+				break
+			}
+			if payload_text != "" {
+				parsed := parse_json_safe(payload_text)
+				if parsed["ok"] {
+					events := push(events, parsed["data"])
+				}
+			}
+		}
+		i := i + 1
+	}
+	return events
+}
+
+func usage_from_json_data(data) {
+	usage_map := safe_dict_get(data, "usage", {})
+	if type(usage_map) != "dict" {
+		return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+	}
+
+	input_tokens := to_int_or_zero(safe_dict_get(usage_map, "prompt_tokens", 0))
+	output_tokens := to_int_or_zero(safe_dict_get(usage_map, "completion_tokens", 0))
+	total_tokens := to_int_or_zero(safe_dict_get(usage_map, "total_tokens", input_tokens + output_tokens))
+
+	return {
+		"input_tokens": input_tokens,
+		"output_tokens": output_tokens,
+		"total_tokens": total_tokens
+	}
+}
+
+func usage_from_stream_events(events) {
+	usage := {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+	i := 0
+	while i < len(events) {
+		event := events[i]
+		if type(event) == "dict" {
+			event_usage := safe_dict_get(event, "usage", null)
+			if type(event_usage) == "dict" {
+				usage["input_tokens"] := to_int_or_zero(safe_dict_get(event_usage, "prompt_tokens", usage["input_tokens"]))
+				usage["output_tokens"] := to_int_or_zero(safe_dict_get(event_usage, "completion_tokens", usage["output_tokens"]))
+				usage["total_tokens"] := to_int_or_zero(safe_dict_get(event_usage, "total_tokens", usage["input_tokens"] + usage["output_tokens"]))
+			}
+		}
+		i := i + 1
+	}
+	return usage
+}
+
+func response_summary_from_json_data(data) {
+	choices := safe_dict_get(data, "choices", [])
+	if type(choices) != "array" || len(choices) == 0 {
+		return ""
+	}
+
+	first := choices[0]
+	if type(first) != "dict" {
+		return ""
+	}
+
+	message := safe_dict_get(first, "message", null)
+	if type(message) == "dict" {
+		content := safe_dict_get(message, "content", "")
+		if type(content) == "string" {
+			return truncate_str(content, 120)
+		}
+		if type(content) == "array" {
+			joined := ""
+			i := 0
+			while i < len(content) {
+				part := content[i]
+				joined := joined + to_string(part)
+				i := i + 1
+			}
+			return truncate_str(joined, 120)
+		}
+	}
+
+	return ""
+}
+
+func response_summary_from_stream_events(events) {
+	joined := ""
+	i := 0
+	while i < len(events) {
+		event := events[i]
+		if type(event) == "dict" {
+			choices := safe_dict_get(event, "choices", [])
+			if type(choices) == "array" && len(choices) > 0 {
+				choice := choices[0]
+				if type(choice) == "dict" {
+					delta := safe_dict_get(choice, "delta", null)
+					if type(delta) == "dict" {
+						content := safe_dict_get(delta, "content", "")
+						if type(content) == "string" {
+							joined := joined + content
+						}
+					}
+				}
+			}
+		}
+		i := i + 1
+	}
+	return truncate_str(joined, 120)
+}
+
+func finish_reason_from_json_data(data) {
+	choices := safe_dict_get(data, "choices", [])
+	if type(choices) != "array" || len(choices) == 0 {
+		return ""
+	}
+	first := choices[0]
+	if type(first) != "dict" {
+		return ""
+	}
+	return to_string(safe_dict_get(first, "finish_reason", ""))
+}
+
+func finish_reason_from_stream_events(events) {
+	reason := ""
+	i := 0
+	while i < len(events) {
+		event := events[i]
+		if type(event) == "dict" {
+			choices := safe_dict_get(event, "choices", [])
+			if type(choices) == "array" && len(choices) > 0 {
+				first := choices[0]
+				if type(first) == "dict" {
+					next_reason := to_string(safe_dict_get(first, "finish_reason", ""))
+					if next_reason != "" {
+						reason := next_reason
+					}
+				}
+			}
+		}
+		i := i + 1
+	}
+	return reason
+}
+
+func model_from_stream_events(events, fallback_model) {
+	model := fallback_model
+	i := 0
+	while i < len(events) {
+		event := events[i]
+		if type(event) == "dict" {
+			next_model := to_string(safe_dict_get(event, "model", ""))
+			if next_model != "" {
+				model := next_model
+			}
+		}
+		i := i + 1
+	}
+	return model
+}
+
+func merge_config_maps(base_cfg, override_cfg) {
+	out := {}
+	for k in keys(base_cfg) {
+		out[k] := base_cfg[k]
+	}
+	if type(override_cfg) == "dict" {
+		for k in keys(override_cfg) {
+			out[k] := override_cfg[k]
+		}
+	}
+	return out
+}
+
+func read_proxy_config_file(config_path) {
+	if !file_exists(config_path) {
+		return {}
+	}
+	text := read_file(config_path)
+	parsed := parse_json_safe(text)
+	if !parsed["ok"] {
+		return {}
+	}
+	data := parsed["data"]
+	if type(data) != "dict" {
+		return {}
+	}
+	return data
+}
+
+func effective_proxy_config(config_path) {
+	defaults := {
+		"upstream_base_url": DEFAULT_UPSTREAM_BASE_URL,
+		"auth_mode": DEFAULT_AUTH_MODE,
+		"upstream_api_key": "",
+		"upstream_api_key_env": ""
+	}
+
+	file_cfg := read_proxy_config_file(config_path)
+	cfg := merge_config_maps(defaults, file_cfg)
+
+	env_upstream := env_or_many(["WDG_UPSTREAM_BASE_URL"], "")
+	if env_upstream != "" {
+		cfg["upstream_base_url"] := env_upstream
+	}
+
+	env_auth_mode := env_or_many(["WDG_PROXY_AUTH_MODE"], "")
+	if env_auth_mode != "" {
+		cfg["auth_mode"] := env_auth_mode
+	}
+
+	env_api_key := env_or_many(["WDG_UPSTREAM_API_KEY"], "")
+	if env_api_key != "" {
+		cfg["upstream_api_key"] := env_api_key
+	}
+
+	env_api_key_env := env_or_many(["WDG_UPSTREAM_API_KEY_ENV"], "")
+	if env_api_key_env != "" {
+		cfg["upstream_api_key_env"] := env_api_key_env
+	}
+
+	cfg["upstream_base_url"] := normalize_base_url(string_dict_get(cfg, "upstream_base_url", DEFAULT_UPSTREAM_BASE_URL))
+
+	auth_mode := to_lower(trim(string_dict_get(cfg, "auth_mode", DEFAULT_AUTH_MODE)))
+	if auth_mode != "override" {
+		auth_mode := "passthrough"
+	}
+	cfg["auth_mode"] := auth_mode
+
+	return cfg
+}
+
+func resolve_override_api_key(cfg) {
+	raw := string_dict_get(cfg, "upstream_api_key", "")
+	if raw != "" {
+		return raw
+	}
+	env_name := string_dict_get(cfg, "upstream_api_key_env", "")
+	if env_name == "" {
+		return ""
+	}
+	return env_or(env_name, "")
+}
+
+PORT := parse_int_env_many(["WDG_PORT"], DEFAULT_PORT)
+DB_PATH := env_or_many(["WDG_DB_PATH"], DEFAULT_DB_PATH)
+PROXY_CONFIG_PATH := env_or_many(["WDG_PROXY_CONFIG_PATH"], DEFAULT_PROXY_CONFIG_PATH)
+PROXY_CONFIG_VISIBILITY := to_lower(env_or_many(["WDG_PROXY_CONFIG_VISIBILITY"], DEFAULT_PROXY_CONFIG_VISIBILITY))
+API_AUTH_MODE := normalize_api_auth_mode(env_or_many(["WDG_API_AUTH_MODE"], DEFAULT_API_AUTH_MODE))
+API_AUTH_TOKEN := trim(env_or_many(["WDG_API_AUTH_TOKEN"], ""))
+PROXY_AUTHZ_MODE := normalize_proxy_authz_mode(env_or_many(["WDG_PROXY_AUTHZ_MODE"], DEFAULT_PROXY_AUTHZ_MODE))
+PROXY_AUTHZ_TOKEN := trim(env_or_many(["WDG_PROXY_AUTHZ_TOKEN"], ""))
+DEPLOYMENT_PROFILE := normalize_deployment_profile(env_or_many(["WDG_DEPLOYMENT_PROFILE"], DEFAULT_DEPLOYMENT_PROFILE))
+ALLOW_INSECURE_STARTUP := parse_bool_value(env_or_many(["WDG_ALLOW_INSECURE_STARTUP"], DEFAULT_ALLOW_INSECURE_STARTUP), false)
+DASHBOARD_CHARTJS_LOCAL_PATH := env_or_many(["WDG_CHARTJS_LOCAL_PATH"], DEFAULT_CHARTJS_LOCAL_PATH)
+PROXY_AUTHZ_ALLOWLIST := parse_csv_terms(env_or_many(["WDG_PROXY_AUTHZ_ALLOWLIST"], DEFAULT_PROXY_AUTHZ_ALLOWLIST))
+PROXY_TIMEOUT_SECS := parse_int_env_many(["WDG_PROXY_TIMEOUT_SECS"], DEFAULT_PROXY_TIMEOUT_SECS)
+MAX_PROXY_BODY_BYTES := parse_int_env_many(["WDG_MAX_PROXY_BODY_BYTES"], DEFAULT_MAX_PROXY_BODY_BYTES)
+MAX_PARSE_BODY_BYTES := parse_int_env_many(["WDG_MAX_PARSE_BODY_BYTES"], DEFAULT_MAX_PARSE_BODY_BYTES)
+REDACTION_MODE := to_lower(env_or_many(["WDG_REDACTION_MODE"], DEFAULT_REDACTION_MODE))
+REDACT_TERMS := parse_csv_terms(env_or_many(["WDG_REDACT_TERMS"], DEFAULT_REDACT_TERMS))
+RATE_LIMIT_MODE := to_lower(env_or_many(["WDG_RATE_LIMIT_MODE"], DEFAULT_RATE_LIMIT_MODE))
+RATE_LIMIT_MAX_REQUESTS := parse_int_env_many(["WDG_RATE_LIMIT_MAX_REQUESTS"], DEFAULT_RATE_LIMIT_MAX_REQUESTS)
+RATE_LIMIT_WINDOW_SECS := parse_int_env_many(["WDG_RATE_LIMIT_WINDOW_SECS"], DEFAULT_RATE_LIMIT_WINDOW_SECS)
+RATE_LIMIT_MAX_BUCKETS := positive_int_or_fallback(parse_int_env_many(["WDG_RATE_LIMIT_MAX_BUCKETS"], DEFAULT_RATE_LIMIT_MAX_BUCKETS), DEFAULT_RATE_LIMIT_MAX_BUCKETS)
+RATE_LIMIT_BUCKET_TTL_SECS := positive_int_or_fallback(parse_int_env_many(["WDG_RATE_LIMIT_BUCKET_TTL_SECS"], DEFAULT_RATE_LIMIT_BUCKET_TTL_SECS), DEFAULT_RATE_LIMIT_BUCKET_TTL_SECS)
+IDENTIFIER_MAX_LEN := positive_int_or_fallback(parse_int_env_many(["WDG_IDENTIFIER_MAX_LEN"], DEFAULT_IDENTIFIER_MAX_LEN), DEFAULT_IDENTIFIER_MAX_LEN)
+EXPORT_MAX_ROWS := positive_int_or_fallback(parse_int_env_many(["WDG_EXPORT_MAX_ROWS"], DEFAULT_EXPORT_MAX_ROWS), DEFAULT_EXPORT_MAX_ROWS)
+
+print("=== Watchdog ===")
+print("")
+print("Port: " + to_string(PORT))
+print("Database: " + DB_PATH)
+print("Proxy config: " + PROXY_CONFIG_PATH)
+print("API auth mode: " + API_AUTH_MODE)
+print("Proxy auth mode: " + PROXY_AUTHZ_MODE)
+print("Deployment profile: " + DEPLOYMENT_PROFILE)
+print("Dashboard local Chart.js path: " + DASHBOARD_CHARTJS_LOCAL_PATH)
+print("Proxy timeout seconds: " + to_string(PROXY_TIMEOUT_SECS))
+print("Max proxy body bytes: " + to_string(MAX_PROXY_BODY_BYTES))
+print("Max parse body bytes: " + to_string(MAX_PARSE_BODY_BYTES))
+print("Telemetry redaction mode: " + REDACTION_MODE)
+print("Rate limit mode: " + RATE_LIMIT_MODE)
+print("Rate limit max requests: " + to_string(RATE_LIMIT_MAX_REQUESTS))
+print("Rate limit window seconds: " + to_string(RATE_LIMIT_WINDOW_SECS))
+print("Rate limit max buckets: " + to_string(RATE_LIMIT_MAX_BUCKETS))
+print("Rate limit bucket ttl seconds: " + to_string(RATE_LIMIT_BUCKET_TTL_SECS))
+print("Identifier max length: " + to_string(IDENTIFIER_MAX_LEN))
+print("Export max rows: " + to_string(EXPORT_MAX_ROWS))
+if API_AUTH_MODE != "token" {
+	print("Warning: API auth is disabled and Kujo http_server listens on all interfaces.")
+	print("Use local-only networking, firewall rules, or a reverse proxy before non-local exposure.")
+}
+
+startup_policy_errors := []
+if DEPLOYMENT_PROFILE == "production" {
+	if API_AUTH_MODE != "token" {
+		startup_policy_errors := push(startup_policy_errors, "WDG_API_AUTH_MODE must be token in production")
+	}
+	if API_AUTH_TOKEN == "" {
+		startup_policy_errors := push(startup_policy_errors, "WDG_API_AUTH_TOKEN must be set in production")
+	}
+	if PROXY_AUTHZ_MODE != "token" {
+		startup_policy_errors := push(startup_policy_errors, "WDG_PROXY_AUTHZ_MODE must be token in production")
+	}
+	if PROXY_AUTHZ_TOKEN == "" {
+		startup_policy_errors := push(startup_policy_errors, "WDG_PROXY_AUTHZ_TOKEN must be set in production")
+	}
+}
+
+if len(startup_policy_errors) > 0 {
+	policy_message := join_policy_errors(startup_policy_errors)
+	if ALLOW_INSECURE_STARTUP {
+		print("Warning: production startup policy override enabled via WDG_ALLOW_INSECURE_STARTUP.")
+		print("Startup policy violations: " + policy_message)
+	} else {
+		print("FATAL: production startup policy violations: " + policy_message)
+		parse_int("watchdog_startup_policy_failure")
+	}
+}
+print("")
+
+# ---------------------------------------------------------------------------
+# Database setup
+# ---------------------------------------------------------------------------
+
+db := db_connect("sqlite", DB_PATH)
+watchdog_ensure_schema(db)
+
+print("Database ready: " + DB_PATH)
+
+RATE_LIMIT_BUCKETS := {}
+
+# ---------------------------------------------------------------------------
+# Logging helpers
+# ---------------------------------------------------------------------------
+
+func insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary) {
+	ts := to_string(current_timestamp())
+	clean_error_message := redact_sensitive_text(error_message)
+	clean_prompt_summary := redact_sensitive_text(prompt_summary)
+	clean_response_summary := redact_sensitive_text(response_summary)
+	db_execute(db, "INSERT INTO requests (session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, clean_error_message, clean_prompt_summary, clean_response_summary, ts])
+
+	rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
+	if len(rows) > 0 {
+		return rows[0]["id"]
+	}
+	return 0
+}
+
+func insert_tool_call_row(request_dbid, session_id, tool_name, tool_args, tool_result, status, latency_ms) {
+	ts := to_string(current_timestamp())
+	args_str := tool_args
+	if type(tool_args) == "dict" {
+		args_str := to_json(redact_dict_shallow(tool_args))
+	} else {
+		args_str := redact_sensitive_text(args_str)
+	}
+	result_str := tool_result
+	if type(tool_result) == "dict" {
+		result_str := to_json(redact_dict_shallow(tool_result))
+	} else {
+		result_str := redact_sensitive_text(result_str)
+	}
+	db_execute(db, "INSERT INTO tool_calls (request_dbid, session_id, tool_name, tool_args, tool_result, status, latency_ms, created_at) VALUES (?,?,?,?,?,?,?,?)", [request_dbid, session_id, tool_name, args_str, result_str, status, latency_ms, ts])
+}
+
+func next_step_number(session_id) {
+	rows := db_query(db, "SELECT COALESCE(MAX(step_number), 0) AS n FROM agent_steps WHERE session_id = ?", [session_id])
+	if len(rows) == 0 {
+		return 1
+	}
+	return to_int_or_zero(rows[0]["n"]) + 1
+}
+
+func insert_agent_step_row(session_id, agent_id, step_type, content, metadata) {
+	step_number := next_step_number(session_id)
+	ts := to_string(current_timestamp())
+	meta_str := metadata
+	if type(metadata) == "dict" {
+		meta_str := to_json(redact_dict_shallow(metadata))
+	} else {
+		meta_str := redact_sensitive_text(meta_str)
+	}
+	clean_content := truncate_str(redact_sensitive_text(content), 500)
+	db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, created_at) VALUES (?,?,?,?,?,?,?)", [session_id, agent_id, step_number, step_type, clean_content, meta_str, ts])
+}
+
+func insert_audit_event(action, actor_key, result, metadata) {
+	ts := to_string(current_timestamp())
+	meta_str := metadata
+	if type(metadata) == "dict" {
+		meta_str := to_json(redact_dict_shallow(metadata))
+	} else {
+		meta_str := redact_sensitive_text(meta_str)
+	}
+
+	db_execute(db, "INSERT INTO audit_events (action, actor_key, result, metadata, created_at) VALUES (?,?,?,?,?)", [
+		truncate_str(to_string(action), 80),
+		truncate_str(to_string(actor_key), 160),
+		truncate_str(to_string(result), 40),
+		meta_str,
+		ts
+	])
+}
+
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+
+func apply_default_security_headers(response) {
+	response := set_header(response, "X-Content-Type-Options", "nosniff")
+	response := set_header(response, "X-Frame-Options", "DENY")
+	response := set_header(response, "Referrer-Policy", "no-referrer")
+	response := set_header(response, "Cache-Control", "no-store")
+	return response
+}
+
+func api_ok(data) {
+	response := apply_default_security_headers(json_response(200, {"ok": true, "data": data}))
+	response := set_header(response, "X-Watchdog-API-Version", API_CONTRACT_VERSION)
+	return response
+}
+
+func api_error(status_code, message) {
+	response := apply_default_security_headers(json_response(status_code, {"ok": false, "error": message}))
+	response := set_header(response, "X-Watchdog-API-Version", API_CONTRACT_VERSION)
+	return response
+}
+
+func forward_response(status_code, body_text, content_type) {
+	response := http_response(status_code, body_text)
+	if content_type != "" {
+		response := set_header(response, "Content-Type", content_type)
+	}
+	response := set_header(response, "X-Watchdog-Proxy", "kujo-watchdog")
+	return apply_default_security_headers(response)
+}
+
+func export_rows_as_jsonl(request_rows, tool_rows, step_rows) {
+	lines := []
+
+	i := 0
+	while i < len(request_rows) {
+		lines := push(lines, to_json({
+			"kind": "request",
+			"data": request_rows[i]
+		}))
+		i := i + 1
+	}
+
+	i := 0
+	while i < len(tool_rows) {
+		lines := push(lines, to_json({
+			"kind": "tool_call",
+			"data": tool_rows[i]
+		}))
+		i := i + 1
+	}
+
+	i := 0
+	while i < len(step_rows) {
+		lines := push(lines, to_json({
+			"kind": "agent_step",
+			"data": step_rows[i]
+		}))
+		i := i + 1
+	}
+
+	body := ""
+	i := 0
+	while i < len(lines) {
+		if i > 0 {
+			body := body + "\n"
+		}
+		body := body + to_string(lines[i])
+		i := i + 1
+	}
+
+	response := http_response(200, body)
+	response := set_header(response, "Content-Type", "application/x-ndjson")
+	return apply_default_security_headers(response)
+}
+
+func resolve_session_id(req, parsed_payload) {
+	headers := safe_dict_get(req, "headers", {})
+	session_id := get_header(headers, "x-observe-session-id")
+	if session_id != "" {
+		return normalize_identifier(session_id)
+	}
+
+	if type(parsed_payload) == "dict" {
+		session_id := string_dict_get(parsed_payload, "session_id", "")
+		if session_id != "" {
+			return normalize_identifier(session_id)
+		}
+	}
+
+	return normalize_identifier("session_" + to_string(current_timestamp()))
+}
+
+func resolve_user_id(req, parsed_payload) {
+	headers := safe_dict_get(req, "headers", {})
+	user_id := get_header(headers, "x-observe-user-id")
+	if user_id != "" {
+		return normalize_identifier(user_id)
+	}
+
+	if type(parsed_payload) == "dict" {
+		user_id := string_dict_get(parsed_payload, "user_id", "")
+		if user_id != "" {
+			return normalize_identifier(user_id)
+		}
+	}
+
+	return normalize_identifier("user_local")
+}
+
+func resolve_tenant_id(req, parsed_payload) {
+	headers := safe_dict_get(req, "headers", {})
+	tenant_id := get_header(headers, "x-observe-tenant-id")
+	if tenant_id == "" {
+		tenant_id := get_header(headers, "x-tenant-id")
+	}
+	if tenant_id != "" {
+		return normalize_identifier(tenant_id)
+	}
+
+	if type(parsed_payload) == "dict" {
+		tenant_id := string_dict_get(parsed_payload, "tenant_id", "")
+		if tenant_id == "" {
+			tenant_id := string_dict_get(parsed_payload, "tenant", "")
+		}
+		if tenant_id != "" {
+			return normalize_identifier(tenant_id)
+		}
+	}
+
+	return ""
+}
+
+func resolve_project_id(req, parsed_payload) {
+	headers := safe_dict_get(req, "headers", {})
+	project_id := get_header(headers, "x-observe-project-id")
+	if project_id == "" {
+		project_id := get_header(headers, "x-project-id")
+	}
+	if project_id != "" {
+		return normalize_identifier(project_id)
+	}
+
+	if type(parsed_payload) == "dict" {
+		project_id := string_dict_get(parsed_payload, "project_id", "")
+		if project_id == "" {
+			project_id := string_dict_get(parsed_payload, "project", "")
+		}
+		if project_id != "" {
+			return normalize_identifier(project_id)
+		}
+	}
+
+	return ""
+}
+
+func resolve_workflow_id(req, parsed_payload) {
+	headers := safe_dict_get(req, "headers", {})
+	workflow_id := get_header(headers, "x-observe-workflow-id")
+	if workflow_id != "" {
+		return normalize_identifier(workflow_id)
+	}
+
+	if type(parsed_payload) == "dict" {
+		workflow_id := string_dict_get(parsed_payload, "workflow_id", "")
+		if workflow_id != "" {
+			return normalize_identifier(workflow_id)
+		}
+	}
+
+	return ""
+}
+
+func resolve_task_id(req, parsed_payload) {
+	headers := safe_dict_get(req, "headers", {})
+	task_id := get_header(headers, "x-observe-task-id")
+	if task_id != "" {
+		return normalize_identifier(task_id)
+	}
+
+	if type(parsed_payload) == "dict" {
+		task_id := string_dict_get(parsed_payload, "task_id", "")
+		if task_id != "" {
+			return normalize_identifier(task_id)
+		}
+	}
+
+	return ""
+}
+
+func resolve_correlation_id(req, parsed_payload) {
+	headers := safe_dict_get(req, "headers", {})
+	correlation_id := get_header(headers, "x-observe-correlation-id")
+	if correlation_id != "" {
+		return normalize_identifier(correlation_id)
+	}
+
+	if type(parsed_payload) == "dict" {
+		correlation_id := string_dict_get(parsed_payload, "correlation_id", "")
+		if correlation_id != "" {
+			return normalize_identifier(correlation_id)
+		}
+	}
+
+	return ""
+}
+
+func joined_proxy_action(params) {
+	action := string_dict_get(params, "action", "")
+	subaction := string_dict_get(params, "subaction", "")
+	tail := string_dict_get(params, "tail", "")
+
+	parts := []
+	if action != "" {
+		parts := push(parts, action)
+	}
+	if subaction != "" {
+		parts := push(parts, subaction)
+	}
+	if tail != "" {
+		parts := push(parts, tail)
+	}
+
+	out := ""
+	i := 0
+	while i < len(parts) {
+		if i > 0 {
+			out := out + "/"
+		}
+		out := out + to_string(parts[i])
+		i := i + 1
+	}
+
+	return out
+}
+
+func proxy_route_dispatch(req) {
+	rate_limit_response := enforce_rate_limit(req)
+	if type(rate_limit_response) != "null" {
+		return rate_limit_response
+	}
+
+	params := safe_dict_get(req, "params", {})
+	resource := string_dict_get(params, "resource", "")
+	action := joined_proxy_action(params)
+	proxy_path := "/proxy/v1/" + trim(to_string(resource))
+	if trim(to_string(action)) != "" {
+		proxy_path := proxy_path + "/" + trim(to_string(action))
+	}
+
+	proxy_auth := require_proxy_auth(req, proxy_path)
+	if !proxy_auth["allowed"] {
+		return api_error(proxy_auth["status"], proxy_auth["error"])
+	}
+
+	return proxy_forward(req, resource, action)
+}
+
+func proxy_forward(req, resource, action) {
+	cfg := effective_proxy_config(PROXY_CONFIG_PATH)
+	headers_in := safe_dict_get(req, "headers", {})
+
+	resource_clean := trim(to_string(resource))
+	action_clean := trim(to_string(action))
+	if resource_clean == "" {
+		return api_error(400, "Missing proxy resource path")
+	}
+
+	path_suffix := "/" + resource_clean
+	if action_clean != "" {
+		path_suffix := path_suffix + "/" + action_clean
+	}
+
+	upstream_url := string_dict_get(cfg, "upstream_base_url", DEFAULT_UPSTREAM_BASE_URL) + path_suffix
+	request_body := to_string(safe_dict_get(req, "body", ""))
+	started_ms := current_timestamp()
+	method := to_string(safe_dict_get(req, "method", "POST"))
+	content_type_in := get_header(headers_in, "Content-Type")
+	if content_type_in == "" {
+		content_type_in := "application/json"
+	}
+
+	if len(request_body) > MAX_PROXY_BODY_BYTES {
+		session_id_hint := resolve_session_id(req, null)
+		user_id_hint := resolve_user_id(req, null)
+		tenant_id_hint := resolve_tenant_id(req, null)
+		project_id_hint := resolve_project_id(req, null)
+		workflow_id_hint := resolve_workflow_id(req, null)
+		task_id_hint := resolve_task_id(req, null)
+		correlation_id_hint := resolve_correlation_id(req, null)
+		agent_id_hint := "proxy:" + resource_clean
+		latency_ms := current_timestamp() - started_ms
+		error_message := "Proxy request body exceeds configured max bytes: " + to_string(MAX_PROXY_BODY_BYTES)
+		request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, cfg["upstream_base_url"], "", "", "error", 0, 0, 0, 0.0, latency_ms, "", "payload_too_large", error_message, "", "")
+		insert_tool_call_row(request_dbid, session_id_hint, "proxy_forward", {
+			"method": method,
+			"path": path_suffix,
+			"upstream_url": upstream_url
+		}, {
+			"error": error_message
+		}, "error", latency_ms)
+		insert_agent_step_row(session_id_hint, agent_id_hint, "proxy_failed", "Proxy request body exceeded configured max bytes.", {
+			"path": path_suffix,
+			"max_proxy_body_bytes": MAX_PROXY_BODY_BYTES,
+			"request_body_bytes": len(request_body)
+		})
+		return api_error(413, error_message)
+	}
+
+	payload_obj := null
+	payload_parse := parse_json_with_limit(request_body, MAX_PARSE_BODY_BYTES)
+	if payload_parse["ok"] {
+		if type(payload_parse["data"]) == "dict" {
+			payload_obj := payload_parse["data"]
+		}
+	} else {
+		if len(trim(request_body)) > 0 && contains(to_lower(content_type_in), "application/json") {
+			session_id_hint := resolve_session_id(req, null)
+			user_id_hint := resolve_user_id(req, null)
+			tenant_id_hint := resolve_tenant_id(req, null)
+			project_id_hint := resolve_project_id(req, null)
+			workflow_id_hint := resolve_workflow_id(req, null)
+			task_id_hint := resolve_task_id(req, null)
+			correlation_id_hint := resolve_correlation_id(req, null)
+			agent_id_hint := "proxy:" + resource_clean
+			latency_ms := current_timestamp() - started_ms
+			error_code := "invalid_json"
+			status_code := 400
+			error_message := "Invalid JSON body"
+			if payload_parse["error"] == "json body exceeds configured parse limit" {
+				error_code := "json_parse_limit"
+				status_code := 413
+				error_message := "JSON body exceeds configured parse limit: " + to_string(MAX_PARSE_BODY_BYTES)
+			}
+
+			request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, cfg["upstream_base_url"], "", "", "error", 0, 0, 0, 0.0, latency_ms, "", error_code, error_message, "", "")
+			insert_tool_call_row(request_dbid, session_id_hint, "proxy_forward", {
+				"method": method,
+				"path": path_suffix,
+				"upstream_url": upstream_url
+			}, {
+				"error": error_message
+			}, "error", latency_ms)
+			insert_agent_step_row(session_id_hint, agent_id_hint, "proxy_failed", "Proxy request JSON parsing failed.", {
+				"path": path_suffix,
+				"error": error_message
+			})
+			return api_error(status_code, error_message)
+		}
+	}
+
+	session_id := resolve_session_id(req, payload_obj)
+	user_id := resolve_user_id(req, payload_obj)
+	tenant_id := resolve_tenant_id(req, payload_obj)
+	project_id := resolve_project_id(req, payload_obj)
+	workflow_id := resolve_workflow_id(req, payload_obj)
+	task_id := resolve_task_id(req, payload_obj)
+	correlation_id := resolve_correlation_id(req, payload_obj)
+	agent_id := "proxy:" + resource_clean
+
+	prompt_summary := ""
+	model_name := ""
+	if type(payload_obj) == "dict" {
+		model_name := string_dict_get(payload_obj, "model", "")
+		prompt_summary := safe_prompt_summary(safe_dict_get(payload_obj, "messages", []))
+	}
+
+	insert_agent_step_row(session_id, agent_id, "proxy_received", "Received proxy request for " + path_suffix, {
+		"method": method,
+		"upstream_url": upstream_url,
+		"auth_mode": cfg["auth_mode"]
+	})
+
+	headers_out := {}
+	headers_out["Content-Type"] := content_type_in
+
+	if cfg["auth_mode"] == "override" {
+		override_key := resolve_override_api_key(cfg)
+		if override_key == "" {
+			latency_ms := current_timestamp() - started_ms
+			insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, cfg["upstream_base_url"], model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "proxy_auth_missing", "Proxy auth_mode=override but no API key is configured.", prompt_summary, "")
+			insert_agent_step_row(session_id, agent_id, "proxy_failed", "Proxy override mode is missing an upstream API key.", {"upstream_url": upstream_url})
+			return api_error(500, "Proxy auth_mode=override requires WDG_UPSTREAM_API_KEY or WDG_UPSTREAM_API_KEY_ENV")
+		}
+		headers_out["Authorization"] := "Bearer " + override_key
+	} else {
+		auth_header := get_header(headers_in, "Authorization")
+		if auth_header != "" {
+			headers_out["Authorization"] := auth_header
+		}
+	}
+
+	http_referer := get_header(headers_in, "HTTP-Referer")
+	if http_referer != "" {
+		headers_out["HTTP-Referer"] := http_referer
+	}
+	x_title := get_header(headers_in, "X-Title")
+	if x_title != "" {
+		headers_out["X-Title"] := x_title
+	}
+
+	request_options := {
+		"method": method,
+		"timeout": PROXY_TIMEOUT_SECS * 1.0
+	}
+	request_options["_headers"] := headers_out
+	if len(request_body) > 0 {
+		request_options["_body"] := request_body
+	}
+
+	insert_agent_step_row(session_id, agent_id, "proxy_forwarded", "Forwarded request to upstream.", {
+		"upstream_url": upstream_url,
+		"method": method,
+		"auth_mode": cfg["auth_mode"]
+	})
+
+	http_result := http_request(upstream_url, request_options)
+	match http_result {
+		case Ok(resp): {
+			status_code := to_int_or_zero(safe_dict_get(resp, "_status", safe_dict_get(resp, "status", 0)))
+			body_text := to_string(safe_dict_get(resp, "_body", safe_dict_get(resp, "body", "")))
+			resp_headers := safe_dict_get(resp, "_headers", safe_dict_get(resp, "headers", {}))
+			content_type := get_header(resp_headers, "Content-Type")
+			if content_type == "" {
+				content_type := "application/json"
+			}
+
+			request_id := ""
+			status_label := "success"
+			error_code := ""
+			error_message := ""
+			finish_reason := ""
+			response_summary := ""
+			usage := {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+			if contains(to_lower(content_type), "text/event-stream") {
+				events := parse_stream_events(body_text)
+				usage := usage_from_stream_events(events)
+				response_summary := response_summary_from_stream_events(events)
+				finish_reason := finish_reason_from_stream_events(events)
+				model_name := model_from_stream_events(events, model_name)
+			} else {
+				parsed := parse_json_safe(body_text)
+				if parsed["ok"] {
+					data := parsed["data"]
+					if type(data) == "dict" {
+						request_id := string_dict_get(data, "id", "")
+						if model_name == "" {
+							model_name := string_dict_get(data, "model", model_name)
+						}
+						usage := usage_from_json_data(data)
+						response_summary := response_summary_from_json_data(data)
+						finish_reason := finish_reason_from_json_data(data)
+						err_obj := safe_dict_get(data, "error", null)
+						if type(err_obj) == "dict" {
+							status_label := "error"
+							error_code := "provider_error"
+							error_message := string_dict_get(err_obj, "message", "Provider returned an error.")
+						}
+					}
+				}
+			}
+
+			if status_code < 200 || status_code > 299 {
+				status_label := "error"
+				if error_code == "" {
+					error_code := "http_error"
+					error_message := "HTTP " + to_string(status_code)
+				}
+			}
+
+			latency_ms := current_timestamp() - started_ms
+			cost_usd := watchdog_estimate_cost(model_name, usage["input_tokens"] * 1.0, usage["output_tokens"] * 1.0)
+			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, cfg["upstream_base_url"], model_name, request_id, status_label, usage["input_tokens"], usage["output_tokens"], usage["total_tokens"], cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary)
+
+			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
+				"method": method,
+				"path": path_suffix,
+				"upstream_url": upstream_url
+			}, {
+				"status_code": status_code,
+				"status": status_label,
+				"error_code": error_code
+			}, status_label, latency_ms)
+
+			insert_agent_step_row(session_id, agent_id, "proxy_completed", "Completed proxy request.", {
+				"status_code": status_code,
+				"status": status_label,
+				"model": model_name,
+				"latency_ms": latency_ms,
+				"path": path_suffix
+			})
+
+			return forward_response(status_code, body_text, content_type)
+		}
+		case Err(err): {
+			latency_ms := current_timestamp() - started_ms
+			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, cfg["upstream_base_url"], model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "network_error", to_string(err), prompt_summary, "")
+			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
+				"method": method,
+				"path": path_suffix,
+				"upstream_url": upstream_url
+			}, {
+				"error": to_string(err)
+			}, "error", latency_ms)
+			insert_agent_step_row(session_id, agent_id, "proxy_failed", "Proxy network error.", {
+				"error": to_string(err),
+				"path": path_suffix
+			})
+			return api_error(502, "Upstream request failed: " + to_string(err))
+		}
+		case other: {
+			latency_ms := current_timestamp() - started_ms
+			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, cfg["upstream_base_url"], model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "transport_error", "Unexpected http_request result type: " + type(other), prompt_summary, "")
+			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
+				"method": method,
+				"path": path_suffix,
+				"upstream_url": upstream_url
+			}, {
+				"error": "Unexpected http_request result type: " + type(other)
+			}, "error", latency_ms)
+			insert_agent_step_row(session_id, agent_id, "proxy_failed", "Proxy transport error.", {
+				"error": "Unexpected http_request result type: " + type(other),
+				"path": path_suffix
+			})
+			return api_error(502, "Unexpected upstream transport result")
+		}
+	}
+}
+
+# ---------------------------------------------------------------------------
+# HTTP Server + Routes
+# ---------------------------------------------------------------------------
+
+server := http_server(PORT)
+
+server := server.route("GET", "/healthz", func(req) {
+	return api_ok({
+		"status": "ok",
+		"service": "watchdog"
+	})
+})
+
+server := server.route("GET", "/readyz", func(req) {
+	try {
+		rows := db_query(db, "SELECT 1 AS ready", [])
+		if len(rows) == 0 {
+			return api_error(503, "Database readiness check returned no rows")
+		}
+		return api_ok({
+			"status": "ready",
+			"database": "ok"
+		})
+	} except err {
+		return api_error(503, "Database readiness check failed")
+	}
+})
+
+# Watchdog UI
+server := server.route("GET", "/", func(req) {
+	html := read_file("dashboard.html")
+	return apply_default_security_headers(html_response(200, html))
+})
+
+server := server.route("GET", "/assets/vendor/chart.umd.min.js", func(req) {
+	if !file_exists(DASHBOARD_CHARTJS_LOCAL_PATH) {
+		response := http_response(404, "Local Chart.js asset not found at configured path.")
+		response := set_header(response, "Content-Type", "text/plain; charset=utf-8")
+		return apply_default_security_headers(response)
+	}
+
+	asset := read_file(DASHBOARD_CHARTJS_LOCAL_PATH)
+	response := http_response(200, asset)
+	response := set_header(response, "Content-Type", "application/javascript; charset=utf-8")
+	return apply_default_security_headers(response)
+})
+
+# Proxy config visibility
+server := server.route("GET", "/api/proxy-config", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	insert_audit_event("proxy_config_view", resolve_audit_actor_key(req, "api"), "success", {
+		"visibility": PROXY_CONFIG_VISIBILITY
+	})
+
+	cfg := effective_proxy_config(PROXY_CONFIG_PATH)
+	override_key := resolve_override_api_key(cfg)
+	payload := {
+		"upstream_base_url": cfg["upstream_base_url"],
+		"auth_mode": cfg["auth_mode"],
+		"has_override_api_key": len(trim(override_key)) > 0,
+		"api_auth_mode": API_AUTH_MODE,
+		"api_auth_enabled": API_AUTH_MODE == "token",
+		"proxy_auth_mode": PROXY_AUTHZ_MODE,
+		"proxy_auth_enabled": PROXY_AUTHZ_MODE == "token"
+	}
+
+	if PROXY_CONFIG_VISIBILITY == "verbose" {
+		payload["config_path"] := PROXY_CONFIG_PATH
+		payload["upstream_api_key_env"] := cfg["upstream_api_key_env"]
+		payload["has_api_auth_token"] := API_AUTH_TOKEN != ""
+	}
+
+	return api_ok(payload)
+})
+
+server := server.route("GET", "/api/version", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	return api_ok({
+		"current_version": API_CONTRACT_VERSION,
+		"status": API_CONTRACT_STATUS,
+		"versioning_mode": "metadata",
+		"legacy_base_path": "/api",
+		"version_metadata_header": "X-Watchdog-API-Version",
+		"notes": "Clients should pin behavior to the reported version metadata and monitor changelog guidance before upgrades."
+	})
+})
+
+# Proxy routes for OpenAI-compatible APIs
+server := server.route("GET", "/proxy/v1/:resource", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("POST", "/proxy/v1/:resource", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("PUT", "/proxy/v1/:resource", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("PATCH", "/proxy/v1/:resource", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("DELETE", "/proxy/v1/:resource", func(req) {
+	return proxy_route_dispatch(req)
+})
+
+server := server.route("GET", "/proxy/v1/:resource/:action", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("POST", "/proxy/v1/:resource/:action", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("PUT", "/proxy/v1/:resource/:action", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("PATCH", "/proxy/v1/:resource/:action", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("DELETE", "/proxy/v1/:resource/:action", func(req) {
+	return proxy_route_dispatch(req)
+})
+
+server := server.route("GET", "/proxy/v1/:resource/:action/:subaction", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("POST", "/proxy/v1/:resource/:action/:subaction", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("PUT", "/proxy/v1/:resource/:action/:subaction", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("PATCH", "/proxy/v1/:resource/:action/:subaction", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("DELETE", "/proxy/v1/:resource/:action/:subaction", func(req) {
+	return proxy_route_dispatch(req)
+})
+
+server := server.route("GET", "/proxy/v1/:resource/:action/:subaction/:tail", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("POST", "/proxy/v1/:resource/:action/:subaction/:tail", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("PUT", "/proxy/v1/:resource/:action/:subaction/:tail", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("PATCH", "/proxy/v1/:resource/:action/:subaction/:tail", func(req) {
+	return proxy_route_dispatch(req)
+})
+server := server.route("DELETE", "/proxy/v1/:resource/:action/:subaction/:tail", func(req) {
+	return proxy_route_dispatch(req)
+})
+
+# Existing dashboard APIs
+server := server.route("GET", "/api/stats", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	total_rows := db_query(db, "SELECT COUNT(*) AS n FROM requests", [])
+	error_rows := db_query(db, "SELECT COUNT(*) AS n FROM requests WHERE status = 'error'", [])
+	cost_rows := db_query(db, "SELECT COALESCE(SUM(cost_usd),0) AS total FROM requests", [])
+	lat_rows := db_query(db, "SELECT COALESCE(AVG(latency_ms),0) AS avg FROM requests WHERE status = 'success'", [])
+	tok_rows := db_query(db, "SELECT COALESCE(SUM(total_tokens),0) AS total FROM requests", [])
+	sess_rows := db_query(db, "SELECT COUNT(DISTINCT session_id) AS n FROM requests", [])
+	tc_rows := db_query(db, "SELECT COUNT(*) AS n FROM tool_calls", [])
+	step_rows := db_query(db, "SELECT COUNT(*) AS n FROM agent_steps", [])
+
+	total := total_rows[0]["n"]
+	errors := error_rows[0]["n"]
+	cost := cost_rows[0]["total"]
+	avg_lat := lat_rows[0]["avg"]
+	tokens := tok_rows[0]["total"]
+	sess_n := sess_rows[0]["n"]
+	tc_n := tc_rows[0]["n"]
+	steps_n := step_rows[0]["n"]
+
+	error_rate := 0.0
+	if total > 0 {
+		error_rate := (errors * 100.0) / total
+	}
+
+	return api_ok({
+		"total_requests": total,
+		"total_errors": errors,
+		"error_rate_pct": error_rate,
+		"total_cost_usd": cost,
+		"avg_latency_ms": avg_lat,
+		"total_tokens": tokens,
+		"total_sessions": sess_n,
+		"total_tool_calls": tc_n,
+		"total_agent_steps": steps_n
+	})
+})
+
+server := server.route("GET", "/api/requests", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	page := request_query_int(req, "page", 1, 1, 1000000)
+	page_size := request_query_int(req, "page_size", 200, 1, 500)
+	offset := (page - 1) * page_size
+
+	conditions := []
+	params := []
+
+	session_id := request_query_text(req, "session_id", "")
+	if session_id != "" {
+		conditions := push(conditions, "session_id = ?")
+		params := push(params, session_id)
+	}
+
+	user_id := request_query_text(req, "user_id", "")
+	if user_id != "" {
+		conditions := push(conditions, "user_id = ?")
+		params := push(params, user_id)
+	}
+
+	tenant_id := request_query_text(req, "tenant_id", "")
+	if tenant_id != "" {
+		conditions := push(conditions, "tenant_id = ?")
+		params := push(params, tenant_id)
+	}
+
+	project_id := request_query_text(req, "project_id", "")
+	if project_id != "" {
+		conditions := push(conditions, "project_id = ?")
+		params := push(params, project_id)
+	}
+
+	status := request_query_text(req, "status", "")
+	if status != "" {
+		conditions := push(conditions, "status = ?")
+		params := push(params, status)
+	}
+
+	provider := request_query_text(req, "provider", "")
+	if provider != "" {
+		conditions := push(conditions, "provider = ?")
+		params := push(params, provider)
+	}
+
+	workflow_id := request_query_text(req, "workflow_id", "")
+	if workflow_id != "" {
+		conditions := push(conditions, "workflow_id = ?")
+		params := push(params, workflow_id)
+	}
+
+	task_id := request_query_text(req, "task_id", "")
+	if task_id != "" {
+		conditions := push(conditions, "task_id = ?")
+		params := push(params, task_id)
+	}
+
+	correlation_id := request_query_text(req, "correlation_id", "")
+	if correlation_id != "" {
+		conditions := push(conditions, "correlation_id = ?")
+		params := push(params, correlation_id)
+	}
+
+	model := request_query_text(req, "model", "")
+	if model != "" {
+		conditions := push(conditions, "model = ?")
+		params := push(params, model)
+	}
+
+	since_ms := request_query_int(req, "since_ms", 0, 0, 9223372036854775807)
+	if since_ms > 0 {
+		conditions := push(conditions, "CAST(created_at AS INTEGER) >= ?")
+		params := push(params, since_ms)
+	}
+
+	until_ms := request_query_int(req, "until_ms", 0, 0, 9223372036854775807)
+	if until_ms > 0 {
+		conditions := push(conditions, "CAST(created_at AS INTEGER) <= ?")
+		params := push(params, until_ms)
+	}
+
+	sql := "SELECT id, session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, created_at FROM requests"
+	sql := sql + where_clause_from_conditions(conditions)
+	sql := sql + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	params := push(params, page_size)
+	params := push(params, offset)
+
+	rows := db_query(db, sql, params)
+	return api_ok(rows)
+})
+
+server := server.route("GET", "/api/audit-events", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	page := request_query_int(req, "page", 1, 1, 1000000)
+	page_size := request_query_int(req, "page_size", 200, 1, 500)
+	offset := (page - 1) * page_size
+
+	conditions := []
+	params := []
+
+	action := request_query_text(req, "action", "")
+	if action != "" {
+		conditions := push(conditions, "action = ?")
+		params := push(params, action)
+	}
+
+	result := request_query_text(req, "result", "")
+	if result != "" {
+		conditions := push(conditions, "result = ?")
+		params := push(params, result)
+	}
+
+	since_ms := request_query_int(req, "since_ms", 0, 0, 9223372036854775807)
+	if since_ms > 0 {
+		conditions := push(conditions, "CAST(created_at AS INTEGER) >= ?")
+		params := push(params, since_ms)
+	}
+
+	until_ms := request_query_int(req, "until_ms", 0, 0, 9223372036854775807)
+	if until_ms > 0 {
+		conditions := push(conditions, "CAST(created_at AS INTEGER) <= ?")
+		params := push(params, until_ms)
+	}
+
+	sql := "SELECT id, action, actor_key, result, metadata, created_at FROM audit_events"
+	sql := sql + where_clause_from_conditions(conditions)
+	sql := sql + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	params := push(params, page_size)
+	params := push(params, offset)
+
+	rows := db_query(db, sql, params)
+	return api_ok(rows)
+})
+
+server := server.route("GET", "/api/tool-calls", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	page := request_query_int(req, "page", 1, 1, 1000000)
+	page_size := request_query_int(req, "page_size", 200, 1, 500)
+	offset := (page - 1) * page_size
+
+	conditions := []
+	params := []
+
+	session_id := request_query_text(req, "session_id", "")
+	if session_id != "" {
+		conditions := push(conditions, "session_id = ?")
+		params := push(params, session_id)
+	}
+
+	status := request_query_text(req, "status", "")
+	if status != "" {
+		conditions := push(conditions, "status = ?")
+		params := push(params, status)
+	}
+
+	tool_name := request_query_text(req, "tool_name", "")
+	if tool_name != "" {
+		conditions := push(conditions, "tool_name = ?")
+		params := push(params, tool_name)
+	}
+
+	since_ms := request_query_int(req, "since_ms", 0, 0, 9223372036854775807)
+	if since_ms > 0 {
+		conditions := push(conditions, "CAST(created_at AS INTEGER) >= ?")
+		params := push(params, since_ms)
+	}
+
+	until_ms := request_query_int(req, "until_ms", 0, 0, 9223372036854775807)
+	if until_ms > 0 {
+		conditions := push(conditions, "CAST(created_at AS INTEGER) <= ?")
+		params := push(params, until_ms)
+	}
+
+	sql := "SELECT id, request_dbid, session_id, tool_name, tool_args, tool_result, status, latency_ms, created_at FROM tool_calls"
+	sql := sql + where_clause_from_conditions(conditions)
+	sql := sql + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	params := push(params, page_size)
+	params := push(params, offset)
+
+	rows := db_query(db, sql, params)
+	return api_ok(rows)
+})
+
+server := server.route("GET", "/api/agent-steps", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	page := request_query_int(req, "page", 1, 1, 1000000)
+	page_size := request_query_int(req, "page_size", 500, 1, 1000)
+	offset := (page - 1) * page_size
+
+	conditions := []
+	params := []
+
+	session_id := request_query_text(req, "session_id", "")
+	if session_id != "" {
+		conditions := push(conditions, "session_id = ?")
+		params := push(params, session_id)
+	}
+
+	agent_id := request_query_text(req, "agent_id", "")
+	if agent_id != "" {
+		conditions := push(conditions, "agent_id = ?")
+		params := push(params, agent_id)
+	}
+
+	step_type := request_query_text(req, "step_type", "")
+	if step_type != "" {
+		conditions := push(conditions, "step_type = ?")
+		params := push(params, step_type)
+	}
+
+	since_ms := request_query_int(req, "since_ms", 0, 0, 9223372036854775807)
+	if since_ms > 0 {
+		conditions := push(conditions, "CAST(created_at AS INTEGER) >= ?")
+		params := push(params, since_ms)
+	}
+
+	until_ms := request_query_int(req, "until_ms", 0, 0, 9223372036854775807)
+	if until_ms > 0 {
+		conditions := push(conditions, "CAST(created_at AS INTEGER) <= ?")
+		params := push(params, until_ms)
+	}
+
+	sql := "SELECT id, session_id, agent_id, step_number, step_type, content, metadata, created_at FROM agent_steps"
+	sql := sql + where_clause_from_conditions(conditions)
+	sql := sql + " ORDER BY session_id, step_number ASC LIMIT ? OFFSET ?"
+	params := push(params, page_size)
+	params := push(params, offset)
+
+	rows := db_query(db, sql, params)
+	return api_ok(rows)
+})
+
+server := server.route("GET", "/api/errors", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	rows := db_query(db, "SELECT error_code, error_message, COUNT(*) AS count, provider, MAX(created_at) AS last_seen FROM requests WHERE status = 'error' GROUP BY error_code, error_message ORDER BY count DESC", [])
+	return api_ok(rows)
+})
+
+server := server.route("GET", "/api/sessions", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	page := request_query_int(req, "page", 1, 1, 1000000)
+	page_size := request_query_int(req, "page_size", 200, 1, 500)
+	offset := (page - 1) * page_size
+
+	conditions := []
+	params := []
+
+	session_id := request_query_text(req, "session_id", "")
+	if session_id != "" {
+		conditions := push(conditions, "session_id = ?")
+		params := push(params, session_id)
+	}
+
+	user_id := request_query_text(req, "user_id", "")
+	if user_id != "" {
+		conditions := push(conditions, "user_id = ?")
+		params := push(params, user_id)
+	}
+
+	tenant_id := request_query_text(req, "tenant_id", "")
+	if tenant_id != "" {
+		conditions := push(conditions, "tenant_id = ?")
+		params := push(params, tenant_id)
+	}
+
+	project_id := request_query_text(req, "project_id", "")
+	if project_id != "" {
+		conditions := push(conditions, "project_id = ?")
+		params := push(params, project_id)
+	}
+
+	since_ms := request_query_int(req, "since_ms", 0, 0, 9223372036854775807)
+	if since_ms > 0 {
+		conditions := push(conditions, "CAST(created_at AS INTEGER) >= ?")
+		params := push(params, since_ms)
+	}
+
+	until_ms := request_query_int(req, "until_ms", 0, 0, 9223372036854775807)
+	if until_ms > 0 {
+		conditions := push(conditions, "CAST(created_at AS INTEGER) <= ?")
+		params := push(params, until_ms)
+	}
+
+	sql := "SELECT session_id, user_id, COUNT(*) AS request_count, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS error_count, COALESCE(SUM(total_tokens),0) AS total_tokens, COALESCE(SUM(cost_usd),0) AS total_cost_usd, COALESCE(AVG(latency_ms),0) AS avg_latency_ms, MIN(created_at) AS started_at, MAX(created_at) AS last_seen FROM requests"
+	sql := sql + where_clause_from_conditions(conditions)
+	sql := sql + " GROUP BY session_id, user_id ORDER BY last_seen DESC LIMIT ? OFFSET ?"
+	params := push(params, page_size)
+	params := push(params, offset)
+
+	rows := db_query(db, sql, params)
+	return api_ok(rows)
+})
+
+server := server.route("GET", "/api/charts/requests-over-time", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	conditions := []
+	params := []
+	tenant_id := request_query_text(req, "tenant_id", "")
+	if tenant_id != "" {
+		conditions := push(conditions, "tenant_id = ?")
+		params := push(params, tenant_id)
+	}
+	project_id := request_query_text(req, "project_id", "")
+	if project_id != "" {
+		conditions := push(conditions, "project_id = ?")
+		params := push(params, project_id)
+	}
+	sql := "SELECT CAST(CAST(created_at AS INTEGER) / 3600000 AS INTEGER) AS hour_bucket, COUNT(*) AS total, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors FROM requests"
+	sql := sql + where_clause_from_conditions(conditions)
+	sql := sql + " GROUP BY hour_bucket ORDER BY hour_bucket ASC LIMIT 72"
+	rows := db_query(db, sql, params)
+	return api_ok(rows)
+})
+
+server := server.route("GET", "/api/charts/cost-over-time", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	conditions := []
+	params := []
+	tenant_id := request_query_text(req, "tenant_id", "")
+	if tenant_id != "" {
+		conditions := push(conditions, "tenant_id = ?")
+		params := push(params, tenant_id)
+	}
+	project_id := request_query_text(req, "project_id", "")
+	if project_id != "" {
+		conditions := push(conditions, "project_id = ?")
+		params := push(params, project_id)
+	}
+	sql := "SELECT CAST(CAST(created_at AS INTEGER) / 3600000 AS INTEGER) AS hour_bucket, COALESCE(SUM(cost_usd),0) AS cost FROM requests"
+	sql := sql + where_clause_from_conditions(conditions)
+	sql := sql + " GROUP BY hour_bucket ORDER BY hour_bucket ASC LIMIT 72"
+	rows := db_query(db, sql, params)
+	return api_ok(rows)
+})
+
+server := server.route("GET", "/api/charts/latency-hist", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	conditions := ["status = 'success'"]
+	params := []
+	tenant_id := request_query_text(req, "tenant_id", "")
+	if tenant_id != "" {
+		conditions := push(conditions, "tenant_id = ?")
+		params := push(params, tenant_id)
+	}
+	project_id := request_query_text(req, "project_id", "")
+	if project_id != "" {
+		conditions := push(conditions, "project_id = ?")
+		params := push(params, project_id)
+	}
+	sql := "SELECT SUM(CASE WHEN latency_ms < 200 THEN 1 ELSE 0 END) AS lt200, SUM(CASE WHEN latency_ms >= 200 AND latency_ms < 500 THEN 1 ELSE 0 END) AS lt500, SUM(CASE WHEN latency_ms >= 500 AND latency_ms < 1000 THEN 1 ELSE 0 END) AS lt1000, SUM(CASE WHEN latency_ms >= 1000 AND latency_ms < 2000 THEN 1 ELSE 0 END) AS lt2000, SUM(CASE WHEN latency_ms >= 2000 AND latency_ms < 3000 THEN 1 ELSE 0 END) AS lt3000, SUM(CASE WHEN latency_ms >= 3000 THEN 1 ELSE 0 END) AS gt3000 FROM requests"
+	sql := sql + where_clause_from_conditions(conditions)
+	rows := db_query(db, sql, params)
+	return api_ok(rows[0])
+})
+
+server := server.route("GET", "/api/charts/status-breakdown", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	conditions := []
+	params := []
+	tenant_id := request_query_text(req, "tenant_id", "")
+	if tenant_id != "" {
+		conditions := push(conditions, "tenant_id = ?")
+		params := push(params, tenant_id)
+	}
+	project_id := request_query_text(req, "project_id", "")
+	if project_id != "" {
+		conditions := push(conditions, "project_id = ?")
+		params := push(params, project_id)
+	}
+	sql := "SELECT status, COUNT(*) AS count FROM requests"
+	sql := sql + where_clause_from_conditions(conditions)
+	sql := sql + " GROUP BY status"
+	rows := db_query(db, sql, params)
+	return api_ok(rows)
+})
+
+server := server.route("GET", "/api/charts/provider-breakdown", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	conditions := []
+	params := []
+	tenant_id := request_query_text(req, "tenant_id", "")
+	if tenant_id != "" {
+		conditions := push(conditions, "tenant_id = ?")
+		params := push(params, tenant_id)
+	}
+	project_id := request_query_text(req, "project_id", "")
+	if project_id != "" {
+		conditions := push(conditions, "project_id = ?")
+		params := push(params, project_id)
+	}
+	sql := "SELECT provider, model, COUNT(*) AS count, COALESCE(SUM(cost_usd),0) AS total_cost, COALESCE(AVG(latency_ms),0) AS avg_latency FROM requests"
+	sql := sql + where_clause_from_conditions(conditions)
+	sql := sql + " GROUP BY provider, model ORDER BY count DESC"
+	rows := db_query(db, sql, params)
+	return api_ok(rows)
+})
+
+server := server.route("GET", "/api/admin/diagnostics", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	migration_rows := db_query(db, "SELECT key, applied_at FROM schema_migrations ORDER BY key ASC", [])
+	request_rows := db_query(db, "SELECT COUNT(*) AS n FROM requests", [])
+	tool_rows := db_query(db, "SELECT COUNT(*) AS n FROM tool_calls", [])
+	step_rows := db_query(db, "SELECT COUNT(*) AS n FROM agent_steps", [])
+	audit_rows := db_query(db, "SELECT COUNT(*) AS n FROM audit_events", [])
+
+	diagnostics := {
+		"runtime": {
+			"port": PORT,
+			"db_path": DB_PATH,
+			"proxy_config_path": PROXY_CONFIG_PATH,
+			"proxy_config_visibility": PROXY_CONFIG_VISIBILITY,
+			"api_auth_mode": API_AUTH_MODE,
+			"api_auth_token_present": API_AUTH_TOKEN != "",
+			"proxy_auth_mode": PROXY_AUTHZ_MODE,
+			"proxy_auth_token_present": PROXY_AUTHZ_TOKEN != "",
+			"rate_limit_mode": RATE_LIMIT_MODE,
+			"rate_limit_max_requests": RATE_LIMIT_MAX_REQUESTS,
+			"rate_limit_window_secs": RATE_LIMIT_WINDOW_SECS,
+			"rate_limit_max_buckets": RATE_LIMIT_MAX_BUCKETS,
+			"rate_limit_bucket_ttl_secs": RATE_LIMIT_BUCKET_TTL_SECS,
+			"redaction_mode": REDACTION_MODE,
+			"identifier_max_len": IDENTIFIER_MAX_LEN,
+			"export_max_rows": EXPORT_MAX_ROWS
+		},
+		"migrations": migration_rows,
+		"db_stats": {
+			"requests": to_int_or_zero(request_rows[0]["n"]),
+			"tool_calls": to_int_or_zero(tool_rows[0]["n"]),
+			"agent_steps": to_int_or_zero(step_rows[0]["n"]),
+			"audit_events": to_int_or_zero(audit_rows[0]["n"])
+		}
+	}
+
+	return api_ok(diagnostics)
+})
+
+server := server.route("POST", "/api/admin/prune", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	body_text := to_string(safe_dict_get(req, "body", "{}"))
+	body_parse := parse_json_safe(body_text)
+	body := {}
+	if body_parse["ok"] {
+		if type(body_parse["data"]) == "dict" {
+			body := body_parse["data"]
+		}
+	}
+
+	before_ms := 0
+	if has_key(body, "before_ms") {
+		before_ms := to_int_or_zero(body["before_ms"])
+	}
+	if before_ms <= 0 {
+		before_ms := request_query_int(req, "before_ms", 0, 0, 9223372036854775807)
+	}
+	if before_ms <= 0 {
+		insert_audit_event("prune_operation", resolve_audit_actor_key(req, "api"), "invalid_request", {
+			"reason": "before_ms_invalid"
+		})
+		return api_error(400, "before_ms is required and must be a positive integer")
+	}
+
+	dry_run := true
+	if has_key(body, "dry_run") {
+		dry_run := parse_bool_value(body["dry_run"], true)
+	} else {
+		dry_run := parse_bool_value(request_query_text(req, "dry_run", "true"), true)
+	}
+
+	request_rows := db_query(db, "SELECT COUNT(*) AS n FROM requests WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
+	tool_rows := db_query(db, "SELECT COUNT(*) AS n FROM tool_calls WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
+	step_rows := db_query(db, "SELECT COUNT(*) AS n FROM agent_steps WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
+
+	counts := {
+		"requests": request_rows[0]["n"],
+		"tool_calls": tool_rows[0]["n"],
+		"agent_steps": step_rows[0]["n"]
+	}
+
+	if !dry_run {
+		db_execute(db, "DELETE FROM tool_calls WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
+		db_execute(db, "DELETE FROM agent_steps WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
+		db_execute(db, "DELETE FROM requests WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
+	}
+
+	insert_audit_event("prune_operation", resolve_audit_actor_key(req, "api"), "success", {
+		"before_ms": before_ms,
+		"dry_run": dry_run,
+		"affected": counts
+	})
+
+	return api_ok({
+		"before_ms": before_ms,
+		"dry_run": dry_run,
+		"affected": counts
+	})
+})
+
+server := server.route("GET", "/api/export", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	export_format := to_lower(request_query_text(req, "format", "json"))
+	if export_format != "json" && export_format != "jsonl" && export_format != "ndjson" {
+		return api_error(400, "Unsupported export format. Use json, jsonl, or ndjson")
+	}
+	max_rows := request_query_int(req, "max_rows", EXPORT_MAX_ROWS, 1, MAX_EXPORT_MAX_ROWS)
+	cursor := request_query_int(req, "cursor", 0, 0, 2147483647)
+	chunk_size := request_query_int(req, "chunk_size", max_rows, 1, MAX_EXPORT_MAX_ROWS)
+	session_id := request_query_text(req, "session_id", "")
+	tenant_id := request_query_text(req, "tenant_id", "")
+	project_id := request_query_text(req, "project_id", "")
+	since_ms := request_query_int(req, "since_ms", 0, 0, 9223372036854775807)
+	until_ms := request_query_int(req, "until_ms", 0, 0, 9223372036854775807)
+
+	request_conditions := []
+	request_params := []
+
+	if session_id != "" {
+		request_conditions := push(request_conditions, "session_id = ?")
+		request_params := push(request_params, session_id)
+	}
+	if tenant_id != "" {
+		request_conditions := push(request_conditions, "tenant_id = ?")
+		request_params := push(request_params, tenant_id)
+	}
+	if project_id != "" {
+		request_conditions := push(request_conditions, "project_id = ?")
+		request_params := push(request_params, project_id)
+	}
+	if since_ms > 0 {
+		request_conditions := push(request_conditions, "CAST(created_at AS INTEGER) >= ?")
+		request_params := push(request_params, since_ms)
+	}
+	if until_ms > 0 {
+		request_conditions := push(request_conditions, "CAST(created_at AS INTEGER) <= ?")
+		request_params := push(request_params, until_ms)
+	}
+
+	request_sql := "SELECT * FROM requests" + where_clause_from_conditions(request_conditions) + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	request_params := push(request_params, chunk_size)
+	request_params := push(request_params, cursor)
+	reqs := db_query(db, request_sql, request_params)
+
+	tool_conditions := []
+	tool_params := []
+	if session_id != "" {
+		tool_conditions := push(tool_conditions, "session_id = ?")
+		tool_params := push(tool_params, session_id)
+	}
+	if since_ms > 0 {
+		tool_conditions := push(tool_conditions, "CAST(created_at AS INTEGER) >= ?")
+		tool_params := push(tool_params, since_ms)
+	}
+	if until_ms > 0 {
+		tool_conditions := push(tool_conditions, "CAST(created_at AS INTEGER) <= ?")
+		tool_params := push(tool_params, until_ms)
+	}
+
+	tool_sql := "SELECT * FROM tool_calls" + where_clause_from_conditions(tool_conditions) + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	tool_params := push(tool_params, chunk_size)
+	tool_params := push(tool_params, cursor)
+	tools := db_query(db, tool_sql, tool_params)
+
+	step_conditions := []
+	step_params := []
+	if session_id != "" {
+		step_conditions := push(step_conditions, "session_id = ?")
+		step_params := push(step_params, session_id)
+	}
+	if since_ms > 0 {
+		step_conditions := push(step_conditions, "CAST(created_at AS INTEGER) >= ?")
+		step_params := push(step_params, since_ms)
+	}
+	if until_ms > 0 {
+		step_conditions := push(step_conditions, "CAST(created_at AS INTEGER) <= ?")
+		step_params := push(step_params, until_ms)
+	}
+
+	step_sql := "SELECT * FROM agent_steps" + where_clause_from_conditions(step_conditions) + " ORDER BY session_id, step_number LIMIT ? OFFSET ?"
+	step_params := push(step_params, chunk_size)
+	step_params := push(step_params, cursor)
+	steps := db_query(db, step_sql, step_params)
+
+	has_more := false
+	if len(reqs) == chunk_size || len(tools) == chunk_size || len(steps) == chunk_size {
+		has_more := true
+	}
+
+	next_cursor := -1
+	if has_more {
+		next_cursor := cursor + chunk_size
+	}
+
+	if export_format == "jsonl" || export_format == "ndjson" {
+		response := export_rows_as_jsonl(reqs, tools, steps)
+		response := set_header(response, "X-Watchdog-Cursor", to_string(cursor))
+		response := set_header(response, "X-Watchdog-Chunk-Size", to_string(chunk_size))
+		response := set_header(response, "X-Watchdog-Next-Cursor", to_string(next_cursor))
+		response := set_header(response, "X-Watchdog-Has-More", to_string(has_more))
+		return response
+	}
+
+	return api_ok({
+		"exported_at": to_string(current_timestamp()),
+		"filters": {
+			"session_id": session_id,
+			"tenant_id": tenant_id,
+			"project_id": project_id,
+			"max_rows": max_rows,
+			"cursor": cursor,
+			"chunk_size": chunk_size,
+			"since_ms": since_ms,
+			"until_ms": until_ms,
+			"format": export_format
+		},
+		"chunk": {
+			"cursor": cursor,
+			"chunk_size": chunk_size,
+			"next_cursor": next_cursor,
+			"has_more": has_more
+		},
+		"requests": reqs,
+		"tool_calls": tools,
+		"agent_steps": steps
+	})
+})
+
+print("")
+print("Watchdog:        http://localhost:" + to_string(PORT))
+print("API stats:       http://localhost:" + to_string(PORT) + "/api/stats")
+print("Proxy config:    http://localhost:" + to_string(PORT) + "/api/proxy-config")
+print("Proxy endpoint:  http://localhost:" + to_string(PORT) + "/proxy/v1/chat/completions")
+print("")
+print("Press Ctrl+C to stop.")
+print("")
+
+server.listen()
