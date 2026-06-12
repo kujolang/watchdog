@@ -1075,26 +1075,35 @@ RATE_LIMIT_BUCKET_TTL_SECS := positive_int_or_fallback(parse_int_env_many(["WDG_
 IDENTIFIER_MAX_LEN := positive_int_or_fallback(parse_int_env_many(["WDG_IDENTIFIER_MAX_LEN"], DEFAULT_IDENTIFIER_MAX_LEN), DEFAULT_IDENTIFIER_MAX_LEN)
 EXPORT_MAX_ROWS := positive_int_or_fallback(parse_int_env_many(["WDG_EXPORT_MAX_ROWS"], DEFAULT_EXPORT_MAX_ROWS), DEFAULT_EXPORT_MAX_ROWS)
 
-print("=== Watchdog ===")
-print("")
-print("Port: " + to_string(PORT))
-print("Database: " + DB_PATH)
-print("Proxy config: " + PROXY_CONFIG_PATH)
-print("API auth mode: " + API_AUTH_MODE)
-print("Proxy auth mode: " + PROXY_AUTHZ_MODE)
-print("Deployment profile: " + DEPLOYMENT_PROFILE)
-print("Dashboard local Chart.js path: " + DASHBOARD_CHARTJS_LOCAL_PATH)
-print("Proxy timeout seconds: " + to_string(PROXY_TIMEOUT_SECS))
-print("Max proxy body bytes: " + to_string(MAX_PROXY_BODY_BYTES))
-print("Max parse body bytes: " + to_string(MAX_PARSE_BODY_BYTES))
-print("Telemetry redaction mode: " + REDACTION_MODE)
-print("Rate limit mode: " + RATE_LIMIT_MODE)
-print("Rate limit max requests: " + to_string(RATE_LIMIT_MAX_REQUESTS))
-print("Rate limit window seconds: " + to_string(RATE_LIMIT_WINDOW_SECS))
-print("Rate limit max buckets: " + to_string(RATE_LIMIT_MAX_BUCKETS))
-print("Rate limit bucket ttl seconds: " + to_string(RATE_LIMIT_BUCKET_TTL_SECS))
-print("Identifier max length: " + to_string(IDENTIFIER_MAX_LEN))
-print("Export max rows: " + to_string(EXPORT_MAX_ROWS))
+func print_lines(line_values) {
+	for line in line_values {
+		print(to_string(line))
+	}
+}
+
+func kv(label, value) {
+	print(to_string(label) + ": " + to_string(value))
+}
+
+print_lines(["=== Watchdog ===", ""])
+kv("Port", PORT)
+kv("Database", DB_PATH)
+kv("Proxy config", PROXY_CONFIG_PATH)
+kv("API auth mode", API_AUTH_MODE)
+kv("Proxy auth mode", PROXY_AUTHZ_MODE)
+kv("Deployment profile", DEPLOYMENT_PROFILE)
+kv("Dashboard local Chart.js path", DASHBOARD_CHARTJS_LOCAL_PATH)
+kv("Proxy timeout seconds", PROXY_TIMEOUT_SECS)
+kv("Max proxy body bytes", MAX_PROXY_BODY_BYTES)
+kv("Max parse body bytes", MAX_PARSE_BODY_BYTES)
+kv("Telemetry redaction mode", REDACTION_MODE)
+kv("Rate limit mode", RATE_LIMIT_MODE)
+kv("Rate limit max requests", RATE_LIMIT_MAX_REQUESTS)
+kv("Rate limit window seconds", RATE_LIMIT_WINDOW_SECS)
+kv("Rate limit max buckets", RATE_LIMIT_MAX_BUCKETS)
+kv("Rate limit bucket ttl seconds", RATE_LIMIT_BUCKET_TTL_SECS)
+kv("Identifier max length", IDENTIFIER_MAX_LEN)
+kv("Export max rows", EXPORT_MAX_ROWS)
 if API_AUTH_MODE != "token" {
 	print("Warning: API auth is disabled and Kujo http_server listens on all interfaces.")
 	print("Use local-only networking, firewall rules, or a reverse proxy before non-local exposure.")
@@ -2629,13 +2638,15 @@ server := server.route("GET", "/api/export", func(req) {
 	})
 })
 
-print("")
-print("Watchdog:        http://localhost:" + to_string(PORT))
-print("API stats:       http://localhost:" + to_string(PORT) + "/api/stats")
-print("Proxy config:    http://localhost:" + to_string(PORT) + "/api/proxy-config")
-print("Proxy endpoint:  http://localhost:" + to_string(PORT) + "/proxy/v1/chat/completions")
-print("")
-print("Press Ctrl+C to stop.")
-print("")
+print_lines([
+	"",
+	"Watchdog:        http://localhost:" + to_string(PORT),
+	"API stats:       http://localhost:" + to_string(PORT) + "/api/stats",
+	"Proxy config:    http://localhost:" + to_string(PORT) + "/api/proxy-config",
+	"Proxy endpoint:  http://localhost:" + to_string(PORT) + "/proxy/v1/chat/completions",
+	"",
+	"Press Ctrl+C to stop.",
+	""
+])
 
 server.listen()

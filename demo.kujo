@@ -9,10 +9,28 @@
 
 from watchdog import watchdog_init
 
-print("=== Watchdog — Demo Seeder ===")
-print("")
-
 DB_PATH := "data/watchdog.db"
+
+func print_lines(line_values) {
+    for line in line_values {
+        print(to_string(line))
+    }
+}
+
+func section(title) {
+    print("=== " + to_string(title) + " ===")
+}
+
+func kv(label, value) {
+    print("  " + to_string(label) + to_string(value))
+}
+
+func ok(message) {
+    print("  " + to_string(message))
+}
+
+section("Watchdog — Demo Seeder")
+print("")
 
 # Drop existing tables so we start clean each run
 setup_db := db_connect("sqlite", DB_PATH)
@@ -24,8 +42,7 @@ db_close(setup_db)
 obs := watchdog_init(DB_PATH)
 db  := obs["db"]
 
-print("Database initialised at: " + DB_PATH)
-print("")
+print_lines(["Database initialised at: " + DB_PATH, ""])
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -184,7 +201,7 @@ while i < 55 {
     i := i + 1
 }
 
-print("  Inserted 55 requests.")
+ok("Inserted 55 requests.")
 
 # ---------------------------------------------------------------------------
 # 2. Tool call logs (linked to first 20 requests roughly)
@@ -206,8 +223,8 @@ while j < 28 {
     offset_ms  := j * 210000 + random_int(0, 30000)
     created_at := ts_offset(base_ts, offset_ms)
 
-    args_map := { "query": "example input for " + tool, "limit": 10 }
-    result_str := "Tool returned 3 results for: " + tool
+    args_map := { "query": "example input for " + to_string(tool), "limit": 10 }
+    result_str := "Tool returned 3 results for: " + to_string(tool)
     if tc_status == "error" {
         result_str := "Error: tool execution failed — timeout after 30s"
     }
@@ -217,7 +234,7 @@ while j < 28 {
     j := j + 1
 }
 
-print("  Inserted " + to_string(tc_count) + " tool calls.")
+ok("Inserted " + to_string(tc_count) + " tool calls.")
 
 # ---------------------------------------------------------------------------
 # 3. Agent step traces for 3 sessions (multi-step reasoning chains)
@@ -277,7 +294,7 @@ while k < len(agent_sessions) {
         db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, created_at) VALUES (?,?,?,?,?,?,?)", [ag_sess["id"], agent_id, m + 1, step["type"], step["content"], to_json(meta), created_at])
         m := m + 1
     }
-    print("  Agent trace " + to_string(k + 1) + ": " + to_string(len(steps)) + " steps for " + ag_sess["label"])
+    print("  Agent trace " + to_string(k + 1) + ": " + to_string(len(steps)) + " steps for " + to_string(ag_sess["label"]))
     k := k + 1
 }
 
@@ -290,11 +307,13 @@ tc_c       := db_query(db, "SELECT COUNT(*) AS n FROM tool_calls", [])
 step_count := db_query(db, "SELECT COUNT(*) AS n FROM agent_steps",[])
 
 print("")
-print("=== Seed complete ===")
-print("  Requests:    " + to_string(req_count[0]["n"]))
-print("  Tool calls:  " + to_string(tc_c[0]["n"]))
-print("  Agent steps: " + to_string(step_count[0]["n"]))
-print("")
-print("Run the Watchdog server:")
-print("  kujo run --interpreter dashboard_server.kujo")
-print("Then open: http://localhost:7700")
+section("Seed complete")
+kv("Requests:    ", req_count[0]["n"])
+kv("Tool calls:  ", tc_c[0]["n"])
+kv("Agent steps: ", step_count[0]["n"])
+print_lines([
+    "",
+    "Run the Watchdog server:",
+    "  kujo run --interpreter dashboard_server.kujo",
+    "Then open: http://localhost:7700"
+])
