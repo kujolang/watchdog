@@ -16,6 +16,23 @@ done
 
 5. Update `README.md` and relevant docs for behavior/config changes.
 
+## Agent and Example Hygiene
+
+- Start broad code searches from canonical paths: `src/`, `demo.kujo`,
+  `scripts/`, `tests/`, `docs/`, `README.md`, and `CONTRIBUTING.md`.
+- Exclude generated or bulk runtime paths from ordinary sweeps:
+  `tmp/`, `data/`, `vendor/`, SQLite files, and local proxy config files.
+- Treat `demo.kujo`, `README.md`, and `docs/KENNEL_INTEGRATION_GUIDE.md` as
+  copyable examples. They should model the most token-efficient idioms agents
+  and humans should imitate.
+- Keep introductory snippets direct. Use small local helpers such as
+  `print_lines`, `section`, `kv`, or `ok` only when they remove repetitive
+  status, menu, banner, or summary output.
+- Treat `tests/` as contract coverage. Preserve explicit fixtures and expected
+  output when they make behavior easier to audit.
+- Root compatibility entrypoints mirror `src/`; update `src/` first, then run
+  `node scripts/sync_compat_entrypoints.js`.
+
 ## Pull Request Expectations
 
 - Clearly explain the user impact and risk level.

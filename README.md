@@ -57,6 +57,23 @@ http://localhost:7700
 curl -s http://localhost:7700/api/proxy-config
 ```
 
+Expected response shape:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "upstream_base_url": "https://api.openai.com/v1",
+    "auth_mode": "passthrough",
+    "has_override_api_key": false,
+    "api_auth_mode": "off",
+    "api_auth_enabled": false,
+    "proxy_auth_mode": "off",
+    "proxy_auth_enabled": false
+  }
+}
+```
+
 ### 4) Optional smoke test (passthrough auth mode)
 
 ```bash
@@ -68,6 +85,27 @@ curl -i -s \
 
 If no API key header is passed in passthrough mode, you should see an upstream
 `401` and a corresponding error row in `/api/requests`.
+
+---
+
+## Canonical examples and generated paths
+
+Use `src/` as the canonical implementation source. The root files
+`dashboard_server.kujo`, `dashboard.html`, `watchdog.kujo`, and
+`watchdog_shared.kujo` are compatibility mirrors kept in sync from `src/`.
+
+`demo.kujo`, this README, and `docs/KENNEL_INTEGRATION_GUIDE.md` are the
+primary copyable examples. Prefer compact, runnable snippets in those files and
+keep repeated output formatting behind small local helpers when it improves
+scannability.
+
+Treat `tests/` as contract and regression coverage. Do not shorten fixtures or
+expected-output checks just to reduce tokens when explicit examples make a test
+clearer.
+
+Exclude generated and bulk runtime paths from broad readability sweeps unless a
+task explicitly targets them: `tmp/`, `data/`, `vendor/`, SQLite artifacts, and
+local proxy config files.
 
 ---
 
