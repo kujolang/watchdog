@@ -199,41 +199,54 @@ function buildReport(profiles) {
 	};
 }
 
-function printHumanSummary(report) {
-	console.log('Watchdog benchmark summary');
-	console.log('generated_at=' + report.generated_at);
-	console.log('baseline=' + report.baseline_profile);
-	console.log('');
-	console.log('profile status total concurrency rps p95_ms growth_per_request');
-	for (const item of report.profiles) {
-		if (item.status !== 'ok' || !item.metrics) {
-			console.log(item.profile + ' failed - - - - -');
-			continue;
-		}
-		console.log(
-			item.profile +
-				' ' + item.status +
-				' ' + item.metrics.total +
-				' ' + item.metrics.concurrency +
-				' ' + item.metrics.rps.toFixed(2) +
-				' ' + item.metrics.p95_ms +
-				' ' + item.metrics.growth_per_request.toFixed(2)
-		);
+function printLines(lines) {
+	for (const line of lines) {
+		console.log(line);
+	}
+}
+
+function profileSummaryLine(item) {
+	if (item.status !== 'ok' || !item.metrics) {
+		return item.profile + ' failed - - - - -';
 	}
 
+	return [
+		item.profile,
+		item.status,
+		item.metrics.total,
+		item.metrics.concurrency,
+		item.metrics.rps.toFixed(2),
+		item.metrics.p95_ms,
+		item.metrics.growth_per_request.toFixed(2),
+	].join(' ');
+}
+
+function trendSummaryLine(baselineProfile, trend) {
+	return [
+		baselineProfile + '->' + trend.profile,
+		trend.profile,
+		trend.delta_rps_pct.toFixed(2),
+		trend.delta_p95_ms_pct.toFixed(2),
+		trend.delta_growth_per_request_pct.toFixed(2),
+	].join(' ');
+}
+
+function printHumanSummary(report) {
+	printLines([
+		'Watchdog benchmark summary',
+		'generated_at=' + report.generated_at,
+		'baseline=' + report.baseline_profile,
+		'',
+		'profile status total concurrency rps p95_ms growth_per_request',
+	]);
+	printLines(report.profiles.map(profileSummaryLine));
+
 	if (report.trend.comparisons.length > 0) {
-		console.log('');
-		console.log('trend_vs_' + report.baseline_profile + ' profile delta_rps_pct delta_p95_ms_pct delta_growth_per_request_pct');
-		for (const trend of report.trend.comparisons) {
-			console.log(
-				report.baseline_profile +
-				'->' + trend.profile +
-				' ' + trend.profile +
-				' ' + trend.delta_rps_pct.toFixed(2) +
-				' ' + trend.delta_p95_ms_pct.toFixed(2) +
-				' ' + trend.delta_growth_per_request_pct.toFixed(2)
-			);
-		}
+		printLines([
+			'',
+			'trend_vs_' + report.baseline_profile + ' profile delta_rps_pct delta_p95_ms_pct delta_growth_per_request_pct',
+		]);
+		printLines(report.trend.comparisons.map(trend => trendSummaryLine(report.baseline_profile, trend)));
 	}
 }
 
