@@ -22,11 +22,19 @@ func section(title) {
 }
 
 func kv(label, value) {
-    print("  " + to_string(label) + to_string(value))
+    print("  " + to_string(label) + ": " + to_string(value))
 }
 
 func ok(message) {
     print("  " + to_string(message))
+}
+
+func progress(message) {
+    print(to_string(message) + "...")
+}
+
+func inserted(count, noun) {
+    ok("Inserted " + to_string(count) + " " + to_string(noun) + ".")
 }
 
 section("Watchdog — Demo Seeder")
@@ -149,7 +157,7 @@ base_ts := current_timestamp() - (3 * 24 * 60 * 60 * 1000)
 # 1. Bulk requests — mix of success and error across all sessions
 # ---------------------------------------------------------------------------
 
-print("Seeding requests...")
+progress("Seeding requests")
 
 i := 0
 while i < 55 {
@@ -201,13 +209,13 @@ while i < 55 {
     i := i + 1
 }
 
-ok("Inserted 55 requests.")
+inserted(55, "requests")
 
 # ---------------------------------------------------------------------------
 # 2. Tool call logs (linked to first 20 requests roughly)
 # ---------------------------------------------------------------------------
 
-print("Seeding tool calls...")
+progress("Seeding tool calls")
 
 tc_count := 0
 j := 0
@@ -234,13 +242,13 @@ while j < 28 {
     j := j + 1
 }
 
-ok("Inserted " + to_string(tc_count) + " tool calls.")
+inserted(tc_count, "tool calls")
 
 # ---------------------------------------------------------------------------
 # 3. Agent step traces for 3 sessions (multi-step reasoning chains)
 # ---------------------------------------------------------------------------
 
-print("Seeding agent traces...")
+progress("Seeding agent traces")
 
 agent_sessions := [sessions[0], sessions[1], sessions[5]]
 
@@ -294,7 +302,7 @@ while k < len(agent_sessions) {
         db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, created_at) VALUES (?,?,?,?,?,?,?)", [ag_sess["id"], agent_id, m + 1, step["type"], step["content"], to_json(meta), created_at])
         m := m + 1
     }
-    print("  Agent trace " + to_string(k + 1) + ": " + to_string(len(steps)) + " steps for " + to_string(ag_sess["label"]))
+    kv("Agent trace " + to_string(k + 1), to_string(len(steps)) + " steps for " + to_string(ag_sess["label"]))
     k := k + 1
 }
 
@@ -308,9 +316,9 @@ step_count := db_query(db, "SELECT COUNT(*) AS n FROM agent_steps",[])
 
 print("")
 section("Seed complete")
-kv("Requests:    ", req_count[0]["n"])
-kv("Tool calls:  ", tc_c[0]["n"])
-kv("Agent steps: ", step_count[0]["n"])
+kv("Requests", req_count[0]["n"])
+kv("Tool calls", tc_c[0]["n"])
+kv("Agent steps", step_count[0]["n"])
 print_lines([
     "",
     "Run the Watchdog server:",

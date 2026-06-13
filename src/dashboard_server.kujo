@@ -1105,8 +1105,10 @@ kv("Rate limit bucket ttl seconds", RATE_LIMIT_BUCKET_TTL_SECS)
 kv("Identifier max length", IDENTIFIER_MAX_LEN)
 kv("Export max rows", EXPORT_MAX_ROWS)
 if API_AUTH_MODE != "token" {
-	print("Warning: API auth is disabled and Kujo http_server listens on all interfaces.")
-	print("Use local-only networking, firewall rules, or a reverse proxy before non-local exposure.")
+	print_lines([
+		"Warning: API auth is disabled and Kujo http_server listens on all interfaces.",
+		"Use local-only networking, firewall rules, or a reverse proxy before non-local exposure."
+	])
 }
 
 startup_policy_errors := []
@@ -1128,8 +1130,10 @@ if DEPLOYMENT_PROFILE == "production" {
 if len(startup_policy_errors) > 0 {
 	policy_message := join_policy_errors(startup_policy_errors)
 	if ALLOW_INSECURE_STARTUP {
-		print("Warning: production startup policy override enabled via WDG_ALLOW_INSECURE_STARTUP.")
-		print("Startup policy violations: " + policy_message)
+		print_lines([
+			"Warning: production startup policy override enabled via WDG_ALLOW_INSECURE_STARTUP.",
+			"Startup policy violations: " + policy_message
+		])
 	} else {
 		print("FATAL: production startup policy violations: " + policy_message)
 		parse_int("watchdog_startup_policy_failure")
