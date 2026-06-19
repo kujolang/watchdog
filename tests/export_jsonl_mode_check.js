@@ -200,6 +200,14 @@ async function run() {
 		const limitedRecords = parseJsonlLines(limitedJsonl.body);
 		assert.ok(limitedRecords.length <= 3, 'max_rows=1 should bound records across request/tool/step kinds');
 
+		const cappedChunkJson = await httpGet('/api/export?format=json&max_rows=1&chunk_size=50');
+		assert.strictEqual(cappedChunkJson.status, 200, 'chunk size above max_rows should still return 200');
+		const cappedChunkParsed = parseJson(cappedChunkJson.body, '/api/export?format=json&max_rows=1&chunk_size=50');
+		assert.strictEqual(Number(cappedChunkParsed.data.chunk.chunk_size), 1, 'max_rows should cap effective chunk_size');
+		assert.ok(cappedChunkParsed.data.requests.length <= 1, 'max_rows cap should apply to request export rows');
+		assert.ok(cappedChunkParsed.data.tool_calls.length <= 1, 'max_rows cap should apply to tool call export rows');
+		assert.ok(cappedChunkParsed.data.agent_steps.length <= 1, 'max_rows cap should apply to agent step export rows');
+
 		const chunkedJsonl = await httpGet('/api/export?format=jsonl&chunk_size=1&cursor=0');
 		assert.strictEqual(chunkedJsonl.status, 200, 'chunked jsonl export should return 200');
 		assert.strictEqual(String(chunkedJsonl.headers['x-watchdog-cursor'] || ''), '0', 'jsonl cursor header should reflect cursor');

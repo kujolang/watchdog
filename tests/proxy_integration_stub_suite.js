@@ -208,7 +208,7 @@ function countByValue(rows, key, value) {
 	return rows.filter(row => String(row[key]) === String(value)).length;
 }
 
-async function runPassthroughScenario(stubPort) {
+async function runPassthroughScenario(stubPort, received) {
 	const watchdogPort = 7721;
 	const dbPath = path.join(TMP_DIR, 'proxy-passthrough-check.db');
 	const cfgPath = path.join(TMP_DIR, 'proxy-passthrough-config.json');
@@ -238,6 +238,17 @@ async function runPassthroughScenario(stubPort) {
 			JSON.stringify({ model: 'gpt-4.1-mini', messages: [{ role: 'user', content: 'json path' }] })
 		);
 		assert.strictEqual(jsonResp.status, 200, 'passthrough JSON proxy call should succeed');
+
+		const queryResp = await httpRequest(
+			watchdogPort,
+			'GET',
+			'/proxy/v1/models?limit=1&after=model_123',
+			{
+				Authorization: 'Bearer passthrough-token',
+				'X-Observe-Session-Id': 'sess_proxy_stub_pass',
+			}
+		);
+		assert.strictEqual(queryResp.status, 200, 'passthrough GET proxy call with query params should succeed');
 
 		const sseResp = await httpRequest(
 			watchdogPort,
@@ -292,16 +303,33 @@ async function runPassthroughScenario(stubPort) {
 		);
 		assert.strictEqual(timeoutResp.status, 502, 'slow upstream should hit timeout and return 502');
 
+		const receivedBeforeUnsafe = received.length;
+		const unsafeResp = await httpRequest(
+			watchdogPort,
+			'GET',
+			'/proxy/v1/chat/%2e%2e',
+			{
+				Authorization: 'Bearer passthrough-token',
+				'X-Observe-Session-Id': 'sess_proxy_stub_pass',
+			}
+		);
+		assert.strictEqual(unsafeResp.status, 400, 'unsafe encoded proxy paths should be rejected');
+		assert.strictEqual(received.length, receivedBeforeUnsafe, 'unsafe paths should not reach upstream');
+
 		const requests = await getApiData(watchdogPort, '/api/requests?session_id=sess_proxy_stub_pass&page_size=50');
-		assert.ok(Array.isArray(requests) && requests.length >= 5, 'requests log should capture proxy side effects');
+		assert.ok(Array.isArray(requests) && requests.length >= 6, 'requests log should capture proxy side effects');
 		assert.ok(countByValue(requests, 'status', 'success') >= 2, 'requests log should include success rows');
 		assert.ok(countByValue(requests, 'status', 'error') >= 2, 'requests log should include error rows');
+		assert.ok(
+			requests.some(row => String(row.error_code) === 'unsafe_proxy_path'),
+			'requests log should capture unsafe proxy path rejections'
+		);
 
 		const toolCalls = await getApiData(watchdogPort, '/api/tool-calls?session_id=sess_proxy_stub_pass&page_size=50');
-		assert.ok(Array.isArray(toolCalls) && toolCalls.length >= 5, 'tool call log should capture forwarding events');
+		assert.ok(Array.isArray(toolCalls) && toolCalls.length >= 6, 'tool call log should capture forwarding events');
 
 		const steps = await getApiData(watchdogPort, '/api/agent-steps?session_id=sess_proxy_stub_pass&page_size=200');
-		assert.ok(Array.isArray(steps) && steps.length >= 10, 'agent step log should include lifecycle steps');
+		assert.ok(Array.isArray(steps) && steps.length >= 13, 'agent step log should include lifecycle steps');
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_received'));
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_forwarded'));
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_completed'));
@@ -357,9 +385,16 @@ async function run() {
 	const { server, received } = await startUpstreamStub(stubPort);
 
 	try {
-		await runPassthroughScenario(stubPort);
-		assert.ok(received.length >= 5, 'stub should receive passthrough scenario requests');
+		await runPassthroughScenario(stubPort, received);
+		assert.ok(received.length >= 6, 'stub should receive passthrough scenario requests');
 		assert.ok(received.some(entry => entry.authorization === 'Bearer passthrough-token'), 'passthrough mode should forward incoming Authorization header');
+		assert.ok(
+			received.some(entry => {
+				const entryPath = String(entry.path || '');
+				return entryPath.startsWith('/v1/models?') && entryPath.includes('limit=1') && entryPath.includes('after=model_123');
+			}),
+			'proxy should forward safe scalar query parameters upstream'
+		);
 		assert.ok(received.some(entry => entry.path === '/v1/malformed'), 'malformed upstream path should be exercised');
 		assert.ok(received.some(entry => entry.path === '/v1/slow'), 'timeout upstream path should be exercised');
 

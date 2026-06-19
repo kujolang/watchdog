@@ -1,5 +1,5 @@
-# Minimal isolation test for http_server + route
-# Run: ../kujo/target/release/kujo run --interpreter test_server.kujo
+# Minimal isolation test for http_server + route.
+# Run: kujo run --interpreter tests/fixtures/http_server_smoke.kujo
 
 print("Step 1: creating server...")
 srv := http_server(7700)

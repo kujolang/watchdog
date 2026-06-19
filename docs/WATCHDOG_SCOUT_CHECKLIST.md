@@ -205,7 +205,7 @@ Acceptance criteria:
 Validation/testing expectations:
 - Add deterministic seeded dataset for route assertions.
 Evidence:
-- [test_server.kujo](../test_server.kujo#L1)
+- [tests/fixtures/http_server_smoke.kujo](../tests/fixtures/http_server_smoke.kujo#L1)
 Dependencies/unknowns:
 - Evaluate best Kujo testing pattern used in nearby repos.
 
