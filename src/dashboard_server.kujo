@@ -276,6 +276,140 @@ func request_query_int(req, key, fallback_value, min_value, max_value) {
 	return parsed
 }
 
+func unsafe_proxy_component_reason(raw_value, component_name) {
+	text := trim(to_string(raw_value))
+	if text == "" {
+		return ""
+	}
+
+	lower_text := to_lower(text)
+	if starts_with(text, "/") || contains(text, "\\") {
+		return component_name + " contains a path separator"
+	}
+	if text == "." || text == ".." || contains(text, "..") {
+		return component_name + " contains a relative path segment"
+	}
+	if contains(text, "?") || contains(text, "#") {
+		return component_name + " contains query or fragment text"
+	}
+	if contains(lower_text, "%2f") || contains(lower_text, "%5c") || contains(lower_text, "%2e") {
+		return component_name + " contains encoded path traversal characters"
+	}
+	if contains(lower_text, "://") {
+		return component_name + " contains URL scheme text"
+	}
+
+	return ""
+}
+
+func validate_proxy_path(resource, action) {
+	resource_reason := unsafe_proxy_component_reason(resource, "resource")
+	if resource_reason != "" {
+		return {
+			"ok": false,
+			"error": "Unsafe proxy path: " + resource_reason
+		}
+	}
+
+	parts := split(to_string(action), "/")
+	i := 0
+	while i < len(parts) {
+		part := trim(to_string(parts[i]))
+		if part != "" {
+			part_reason := unsafe_proxy_component_reason(part, "path segment")
+			if part_reason != "" {
+				return {
+					"ok": false,
+					"error": "Unsafe proxy path: " + part_reason
+				}
+			}
+		}
+		i := i + 1
+	}
+
+	return {
+		"ok": true,
+		"error": ""
+	}
+}
+
+func unsafe_proxy_query_component_reason(raw_value, component_name) {
+	text := trim(to_string(raw_value))
+	if text == "" {
+		return ""
+	}
+	if contains(text, "&") || contains(text, "=") || contains(text, "?") || contains(text, "#") {
+		return component_name + " contains query delimiter text"
+	}
+	if contains(text, "\n") || contains(text, "\r") || contains(text, " ") || contains(text, "\t") {
+		return component_name + " contains whitespace"
+	}
+	if contains(text, "\\") {
+		return component_name + " contains a path separator"
+	}
+	return ""
+}
+
+func append_proxy_query_pair(query_text, key, value) {
+	pair := to_string(key) + "=" + to_string(value)
+	if query_text == "" {
+		return "?" + pair
+	}
+	return query_text + "&" + pair
+}
+
+func build_proxy_query_suffix(req) {
+	query := request_query_map(req)
+	out := ""
+
+	for key in keys(query) {
+		key_text := trim(to_string(key))
+		key_reason := unsafe_proxy_query_component_reason(key_text, "query key")
+		if key_reason != "" {
+			return {
+				"ok": false,
+				"query": "",
+				"error": "Unsafe proxy query: " + key_reason
+			}
+		}
+
+		value := query[key]
+		if type(value) == "array" {
+			i := 0
+			while i < len(value) {
+				value_text := trim(to_string(value[i]))
+				value_reason := unsafe_proxy_query_component_reason(value_text, "query value")
+				if value_reason != "" {
+					return {
+						"ok": false,
+						"query": "",
+						"error": "Unsafe proxy query: " + value_reason
+					}
+				}
+				out := append_proxy_query_pair(out, key_text, value_text)
+				i := i + 1
+			}
+		} else {
+			value_text := trim(to_string(value))
+			value_reason := unsafe_proxy_query_component_reason(value_text, "query value")
+			if value_reason != "" {
+				return {
+					"ok": false,
+					"query": "",
+					"error": "Unsafe proxy query: " + value_reason
+				}
+			}
+			out := append_proxy_query_pair(out, key_text, value_text)
+		}
+	}
+
+	return {
+		"ok": true,
+		"query": out,
+		"error": ""
+	}
+}
+
 func where_clause_from_conditions(conditions) {
 	if len(conditions) == 0 {
 		return ""
@@ -1501,13 +1635,59 @@ func proxy_forward(req, resource, action) {
 		path_suffix := path_suffix + "/" + action_clean
 	}
 
-	upstream_url := string_dict_get(cfg, "upstream_base_url", DEFAULT_UPSTREAM_BASE_URL) + path_suffix
 	request_body := to_string(safe_dict_get(req, "body", ""))
 	started_ms := current_timestamp()
 	method := to_string(safe_dict_get(req, "method", "POST"))
 	content_type_in := get_header(headers_in, "Content-Type")
 	if content_type_in == "" {
 		content_type_in := "application/json"
+	}
+
+	path_validation := validate_proxy_path(resource_clean, action_clean)
+	query_suffix := ""
+	if path_validation["ok"] {
+		query_validation := build_proxy_query_suffix(req)
+		if !query_validation["ok"] {
+			path_validation := {
+				"ok": false,
+				"error": query_validation["error"]
+			}
+		} else {
+			query_suffix := to_string(query_validation["query"])
+		}
+	}
+
+	upstream_url := string_dict_get(cfg, "upstream_base_url", DEFAULT_UPSTREAM_BASE_URL) + path_suffix + query_suffix
+	forwarded_path := path_suffix + query_suffix
+
+	if !path_validation["ok"] {
+		session_id_hint := resolve_session_id(req, null)
+		user_id_hint := resolve_user_id(req, null)
+		tenant_id_hint := resolve_tenant_id(req, null)
+		project_id_hint := resolve_project_id(req, null)
+		workflow_id_hint := resolve_workflow_id(req, null)
+		task_id_hint := resolve_task_id(req, null)
+		correlation_id_hint := resolve_correlation_id(req, null)
+		agent_id_hint := "proxy:" + resource_clean
+		latency_ms := current_timestamp() - started_ms
+		error_message := to_string(path_validation["error"])
+		request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, cfg["upstream_base_url"], "", "", "error", 0, 0, 0, 0.0, latency_ms, "", "unsafe_proxy_path", error_message, "", "")
+		insert_tool_call_row(request_dbid, session_id_hint, "proxy_forward", {
+			"method": method,
+			"path": forwarded_path,
+			"upstream_url": upstream_url
+		}, {
+			"error": error_message
+		}, "error", latency_ms)
+		insert_agent_step_row(session_id_hint, agent_id_hint, "proxy_failed", "Rejected unsafe proxy path or query.", {
+			"path": forwarded_path,
+			"error": error_message
+		})
+		insert_audit_event("proxy_path_rejected", resolve_audit_actor_key(req, "proxy"), "denied", {
+			"path": forwarded_path,
+			"reason": error_message
+		})
+		return api_error(400, error_message)
 	}
 
 	if len(request_body) > MAX_PROXY_BODY_BYTES {
@@ -1524,13 +1704,13 @@ func proxy_forward(req, resource, action) {
 		request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, cfg["upstream_base_url"], "", "", "error", 0, 0, 0, 0.0, latency_ms, "", "payload_too_large", error_message, "", "")
 		insert_tool_call_row(request_dbid, session_id_hint, "proxy_forward", {
 			"method": method,
-			"path": path_suffix,
+			"path": forwarded_path,
 			"upstream_url": upstream_url
 		}, {
 			"error": error_message
 		}, "error", latency_ms)
 		insert_agent_step_row(session_id_hint, agent_id_hint, "proxy_failed", "Proxy request body exceeded configured max bytes.", {
-			"path": path_suffix,
+			"path": forwarded_path,
 			"max_proxy_body_bytes": MAX_PROXY_BODY_BYTES,
 			"request_body_bytes": len(request_body)
 		})
@@ -1566,13 +1746,13 @@ func proxy_forward(req, resource, action) {
 			request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, cfg["upstream_base_url"], "", "", "error", 0, 0, 0, 0.0, latency_ms, "", error_code, error_message, "", "")
 			insert_tool_call_row(request_dbid, session_id_hint, "proxy_forward", {
 				"method": method,
-				"path": path_suffix,
+				"path": forwarded_path,
 				"upstream_url": upstream_url
 			}, {
 				"error": error_message
 			}, "error", latency_ms)
 			insert_agent_step_row(session_id_hint, agent_id_hint, "proxy_failed", "Proxy request JSON parsing failed.", {
-				"path": path_suffix,
+				"path": forwarded_path,
 				"error": error_message
 			})
 			return api_error(status_code, error_message)
@@ -1595,7 +1775,7 @@ func proxy_forward(req, resource, action) {
 		prompt_summary := safe_prompt_summary(safe_dict_get(payload_obj, "messages", []))
 	}
 
-	insert_agent_step_row(session_id, agent_id, "proxy_received", "Received proxy request for " + path_suffix, {
+	insert_agent_step_row(session_id, agent_id, "proxy_received", "Received proxy request for " + forwarded_path, {
 		"method": method,
 		"upstream_url": upstream_url,
 		"auth_mode": cfg["auth_mode"]
@@ -1705,7 +1885,7 @@ func proxy_forward(req, resource, action) {
 
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
-				"path": path_suffix,
+				"path": forwarded_path,
 				"upstream_url": upstream_url
 			}, {
 				"status_code": status_code,
@@ -1718,7 +1898,7 @@ func proxy_forward(req, resource, action) {
 				"status": status_label,
 				"model": model_name,
 				"latency_ms": latency_ms,
-				"path": path_suffix
+				"path": forwarded_path
 			})
 
 			return forward_response(status_code, body_text, content_type)
@@ -1728,14 +1908,14 @@ func proxy_forward(req, resource, action) {
 			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, cfg["upstream_base_url"], model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "network_error", to_string(err), prompt_summary, "")
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
-				"path": path_suffix,
+				"path": forwarded_path,
 				"upstream_url": upstream_url
 			}, {
 				"error": to_string(err)
 			}, "error", latency_ms)
 			insert_agent_step_row(session_id, agent_id, "proxy_failed", "Proxy network error.", {
 				"error": to_string(err),
-				"path": path_suffix
+				"path": forwarded_path
 			})
 			return api_error(502, "Upstream request failed: " + to_string(err))
 		}
@@ -1744,14 +1924,14 @@ func proxy_forward(req, resource, action) {
 			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, cfg["upstream_base_url"], model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "transport_error", "Unexpected http_request result type: " + type(other), prompt_summary, "")
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
-				"path": path_suffix,
+				"path": forwarded_path,
 				"upstream_url": upstream_url
 			}, {
 				"error": "Unexpected http_request result type: " + type(other)
 			}, "error", latency_ms)
 			insert_agent_step_row(session_id, agent_id, "proxy_failed", "Proxy transport error.", {
 				"error": "Unexpected http_request result type: " + type(other),
-				"path": path_suffix
+				"path": forwarded_path
 			})
 			return api_error(502, "Unexpected upstream transport result")
 		}
@@ -2521,8 +2701,14 @@ server := server.route("GET", "/api/export", func(req) {
 		return api_error(400, "Unsupported export format. Use json, jsonl, or ndjson")
 	}
 	max_rows := request_query_int(req, "max_rows", EXPORT_MAX_ROWS, 1, MAX_EXPORT_MAX_ROWS)
+	if max_rows > MAX_EXPORT_MAX_ROWS {
+		max_rows := MAX_EXPORT_MAX_ROWS
+	}
 	cursor := request_query_int(req, "cursor", 0, 0, 2147483647)
 	chunk_size := request_query_int(req, "chunk_size", max_rows, 1, MAX_EXPORT_MAX_ROWS)
+	if chunk_size > max_rows {
+		chunk_size := max_rows
+	}
 	session_id := request_query_text(req, "session_id", "")
 	tenant_id := request_query_text(req, "tenant_id", "")
 	project_id := request_query_text(req, "project_id", "")

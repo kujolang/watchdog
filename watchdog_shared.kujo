@@ -65,6 +65,7 @@ func ensure_schema(db) {
 	}
 
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_created_at ON requests(created_at)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_created_at_ms ON requests(CAST(created_at AS INTEGER))", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_session_id ON requests(session_id)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_provider_model ON requests(provider, model)", [])
@@ -74,16 +75,20 @@ func ensure_schema(db) {
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_task_id ON requests(task_id)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_correlation_id ON requests(correlation_id)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_tool_calls_created_at ON tool_calls(created_at)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_tool_calls_created_at_ms ON tool_calls(CAST(created_at AS INTEGER))", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_tool_calls_session_id ON tool_calls(session_id)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_agent_steps_session_step ON agent_steps(session_id, step_number)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_agent_steps_created_at ON agent_steps(created_at)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_agent_steps_created_at_ms ON agent_steps(CAST(created_at AS INTEGER))", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_audit_events_created_at_ms ON audit_events(CAST(created_at AS INTEGER))", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_audit_events_action_result ON audit_events(action, result)", [])
 
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0001_base_schema", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0002_kennel_correlation_fields", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0003_tenant_project_fields", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0004_audit_events", to_string(current_timestamp())])
+	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0005_time_filter_indexes", to_string(current_timestamp())])
 }
 
 export watchdog_cost_per_million := cost_per_million
