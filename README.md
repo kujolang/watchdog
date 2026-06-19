@@ -15,6 +15,12 @@ bounded performance tuning, and usage analysis.
 Watchdog is part of Kujo’s Control layer: visible state, bounded telemetry,
 structured exports, regression signals, and reviewable local monitoring data.
 
+Watchdog is intentionally strong as a local-first reference implementation and
+can be deployed behind enterprise controls. Production readiness still depends
+on the operator enabling token auth, TLS/reverse-proxy boundaries, firewalling,
+retention policy, backups, and secret-management practices appropriate to the
+environment.
+
 ---
 
 ## How it works
@@ -168,7 +174,10 @@ Precedence: env vars override file values, and file values override defaults.
 | `GET,POST,PUT,PATCH,DELETE` | `/proxy/v1/:resource/:action/:subaction/:tail` | Example: `/proxy/v1/fine_tuning/jobs/<id>/cancel` |
 
 The proxy forwards JSON and SSE responses and returns the upstream status/body
-to the caller.
+to the caller. Safe scalar query parameters are forwarded to upstream list and
+retrieve endpoints, while suspicious path/query text such as path traversal,
+embedded URL schemes, fragments, and query delimiters in path segments is
+rejected before any upstream request is made.
 
 ---
 
@@ -383,7 +392,7 @@ List endpoints now support optional query parameters for pagination and filterin
 - time window: `since_ms`, `until_ms` (epoch milliseconds)
 - export format: `format=json|jsonl|ndjson` (`/api/export`; invalid values return `400`)
 - export row bound: `max_rows` (`/api/export`; default from `WDG_EXPORT_MAX_ROWS`, max `50000`)
-- export chunk cursor: `cursor` and `chunk_size` (`/api/export`; works for json/jsonl/ndjson)
+- export chunk cursor: `cursor` and `chunk_size` (`/api/export`; works for json/jsonl/ndjson; `max_rows` caps the effective chunk size per exported kind)
 - tenant/project scoping extends to `/api/sessions` and chart endpoints such as `/api/charts/requests-over-time`, `/api/charts/status-breakdown`, and `/api/charts/provider-breakdown`
 
 Retention and export control examples:
@@ -426,8 +435,11 @@ watchdog/
 ├── dashboard_server.kujo  # Root compatibility entrypoint (mirrors src/dashboard_server.kujo)
 ├── dashboard.html         # Root compatibility entrypoint (mirrors src/dashboard.html)
 ├── watchdog.kujo          # Root compatibility entrypoint (mirrors src/watchdog.kujo)
+├── watchdog_shared.kujo   # Root compatibility shared module (mirrors src/watchdog_shared.kujo)
 ├── demo.kujo              # Demo data seeding script
 ├── scripts/               # Operational scripts (benchmarks, helpers)
+├── tests/                 # Contract, static, proxy, and runtime checks
+│   └── fixtures/          # Non-product runtime fixtures
 ├── data/                  # Runtime SQLite files (created at runtime)
 └── docs/                  # Backlogs and implementation checklists
 ```
@@ -442,6 +454,7 @@ Keep root compatibility entrypoints synced from `src/`:
 - Deployment and hardening runbook: [docs/DEPLOYMENT_HARDENING_RUNBOOK.md](docs/DEPLOYMENT_HARDENING_RUNBOOK.md)
 - Kennel integration guide: [docs/KENNEL_INTEGRATION_GUIDE.md](docs/KENNEL_INTEGRATION_GUIDE.md)
 - Enterprise next-session checklist: [docs/WATCHDOG_ENTERPRISE_NEXT_SESSION_CHECKLIST.md](docs/WATCHDOG_ENTERPRISE_NEXT_SESSION_CHECKLIST.md)
+- Enterprise review follow-up checklist: [docs/WATCHDOG_ENTERPRISE_REVIEW_2026-06-19.md](docs/WATCHDOG_ENTERPRISE_REVIEW_2026-06-19.md)
 - Enterprise deployment architecture: [docs/ENTERPRISE_DEPLOYMENT_ARCHITECTURE.md](docs/ENTERPRISE_DEPLOYMENT_ARCHITECTURE.md)
 - Enterprise release loop checklist: [docs/ENTERPRISE_RELEASE_LOOP_CHECKLIST.md](docs/ENTERPRISE_RELEASE_LOOP_CHECKLIST.md)
 - Release checklist and versioning policy: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
