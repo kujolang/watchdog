@@ -1,5 +1,9 @@
 # Watchdog
 
+[![Version](https://img.shields.io/badge/version-1.0.0-black)](https://github.com/kujolang/watchdog)
+[![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
+[![built with Kujo](https://img.shields.io/badge/built%20with-Kujo-white.svg)](https://github.com/kujolang/kujo)
+
 Watchdog is a server-first observability layer for local agent and workflow
 telemetry in Kujo applications.
 
@@ -471,10 +475,3 @@ Keep root compatibility entrypoints synced from `src/`:
 - Kujo CLI/runtime installed
 - No API key required to run the dashboard itself
 - API key required only when proxying to an authenticated upstream
-
----
-
-## Related projects
-
-- [kujo](../kujo) - Kujo language runtime
-- [kujo-ai-sdk](../kujo-ai-sdk) - Provider-agnostic AI SDK for Kujo
