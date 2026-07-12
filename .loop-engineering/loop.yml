@@ -23,7 +23,7 @@ eval_gates:
   - id: compat_entrypoints
     command: "node scripts/sync_compat_entrypoints.js --check"
   - id: diff_check
-    command: "git diff --check -- $(git diff --name-only | grep -v '^.loop-engineering/' || true)"
+    command: "files=$(git diff --name-only | grep -v '^.loop-engineering/' || true); [ -z \"$files\" ] || git diff --check -- $files"
     required: true
 
 commit:
