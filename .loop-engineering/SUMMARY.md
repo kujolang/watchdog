@@ -10,9 +10,9 @@ blocked
 
 ## Verification
 
-- passed: compat_entrypoints, diff_check, compat_entrypoints, diff_check, compat_entrypoints, diff_check
+- passed: kujo_checks, compat_entrypoints, kujo_checks, compat_entrypoints, kujo_checks, compat_entrypoints
 - blocked: none
-- failed: kujo_checks, static_tests, kujo_checks, static_tests, kujo_checks, static_tests
+- failed: static_tests, diff_check, static_tests, diff_check, static_tests, diff_check
 
 ## Commits
 
