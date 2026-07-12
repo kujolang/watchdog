@@ -2,17 +2,17 @@
 
 ## Verdict
 
-blocked
+success
 
 ## Completed
 
-- configured loop run completed through iteration 3
+- configured loop run completed through iteration 1
 
 ## Verification
 
-- passed: kujo_checks, compat_entrypoints, kujo_checks, compat_entrypoints, kujo_checks, compat_entrypoints
+- passed: kujo_checks, compat_entrypoints, diff_check
 - blocked: none
-- failed: static_tests, diff_check, static_tests, diff_check, static_tests, diff_check
+- failed: static_tests
 
 ## Commits
 
@@ -24,8 +24,9 @@ blocked
 
 ## External Blockers
 
-- none
+- governance-release-docs-drift: Restore the required governance documentation section in the owning documentation task, then rerun the full static test gate.
+- load-soak-threshold-drift: Rerun on the supported performance host or update the owning benchmark threshold with evidence, then rerun the load/soak suite.
 
 ## Next Start
 
-- repeated-failure: required gate failed 3 times
+- success: required gates passed

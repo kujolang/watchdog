@@ -1,29 +1,46 @@
 diff --git a/.loop-engineering/iterations/001/context.md b/.loop-engineering/iterations/001/context.md
-index 85d13f0..ae89182 100644
+index ae89182..25f2441 100644
 --- a/.loop-engineering/iterations/001/context.md
 +++ b/.loop-engineering/iterations/001/context.md
 @@ -1,6 +1,6 @@
  # Context
  
  - objective: Audit HLP-011 watchdog configuration normalization and retain multi-source/security policy helpers unless native env access can preserve behavior exactly.
--- git_head: 7b54cd9
-+- git_head: 6205aed
+-- git_head: 6205aed
++- git_head: 033dc65
  - changed_files:
    - none
 diff --git a/.loop-engineering/iterations/001/diff.patch b/.loop-engineering/iterations/001/diff.patch
-index b7253b4..e69de29 100644
+index c91b766..e69de29 100644
 --- a/.loop-engineering/iterations/001/diff.patch
 +++ b/.loop-engineering/iterations/001/diff.patch
-@@ -1,12 +0,0 @@
+@@ -1,29 +0,0 @@
 -diff --git a/.loop-engineering/iterations/001/context.md b/.loop-engineering/iterations/001/context.md
--index d90cde4..85d13f0 100644
+-index 85d13f0..ae89182 100644
 ---- a/.loop-engineering/iterations/001/context.md
 -+++ b/.loop-engineering/iterations/001/context.md
 -@@ -1,6 +1,6 @@
 - # Context
 - 
 - - objective: Audit HLP-011 watchdog configuration normalization and retain multi-source/security policy helpers unless native env access can preserve behavior exactly.
---- git_head: fd9371e
--+- git_head: 7b54cd9
+--- git_head: 7b54cd9
+-+- git_head: 6205aed
 - - changed_files:
 -   - none
+-diff --git a/.loop-engineering/iterations/001/diff.patch b/.loop-engineering/iterations/001/diff.patch
+-index b7253b4..e69de29 100644
+---- a/.loop-engineering/iterations/001/diff.patch
+-+++ b/.loop-engineering/iterations/001/diff.patch
+-@@ -1,12 +0,0 @@
+--diff --git a/.loop-engineering/iterations/001/context.md b/.loop-engineering/iterations/001/context.md
+--index d90cde4..85d13f0 100644
+----- a/.loop-engineering/iterations/001/context.md
+--+++ b/.loop-engineering/iterations/001/context.md
+--@@ -1,6 +1,6 @@
+-- # Context
+-- 
+-- - objective: Audit HLP-011 watchdog configuration normalization and retain multi-source/security policy helpers unless native env access can preserve behavior exactly.
+---- git_head: fd9371e
+--+- git_head: 7b54cd9
+-- - changed_files:
+--   - none
