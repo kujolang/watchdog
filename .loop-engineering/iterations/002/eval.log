@@ -1,0 +1,34 @@
+
+## gate: kujo_checks
+$ for f in dashboard_server.kujo src/*.kujo watchdog.kujo; do /Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/debug/kujo check \"$f\" >/dev/null || exit 1; done
+[KUJOCLI001] [cli] error: Failed to read .kujo file '"dashboard_server.kujo"': No such file or directory (os error 2)
+
+## gate: static_tests
+$ for f in tests/*.js; do node \"$f\" || exit 1; done
+node:internal/modules/cjs/loader:1408
+  throw err;
+  ^
+
+Error: Cannot find module '/Users/robertdevore/2026/Kujolang/kujo-repos/watchdog/"tests/_kujo_bin.js"'
+    at Function._resolveFilename (node:internal/modules/cjs/loader:1405:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1061:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1066:22)
+    at Function._load (node:internal/modules/cjs/loader:1215:37)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:151:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v23.11.0
+
+## gate: compat_entrypoints
+$ node scripts/sync_compat_entrypoints.js --check
+sync_compat_entrypoints: CHECK PASS
+gate compat_entrypoints: pass
+
+## gate: diff_check
+$ git diff --check
+gate diff_check: pass

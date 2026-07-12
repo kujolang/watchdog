@@ -2,25 +2,25 @@
 
 ## Verdict
 
-not-run
+blocked
 
 ## Completed
 
-- none
+- configured loop run completed through iteration 3
 
 ## Verification
 
-- passed: none
+- passed: compat_entrypoints, diff_check, compat_entrypoints, diff_check, compat_entrypoints, diff_check
 - blocked: none
-- failed: none
+- failed: kujo_checks, static_tests, kujo_checks, static_tests, kujo_checks, static_tests
 
 ## Commits
 
-- none
+- Loop engineering: Audit HLP-011 watchdog configuration normalization and retain multi-source/security policy helpers unless native env access can preserve behavior exactly.
 
 ## Remaining
 
-- configure objective/checklist_file in loop.yml
+- none
 
 ## External Blockers
 
@@ -28,4 +28,4 @@ not-run
 
 ## Next Start
 
-- scripts/run-workflow.sh --config .loop-engineering/loop.yml
+- repeated-failure: required gate failed 3 times
