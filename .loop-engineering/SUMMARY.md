@@ -10,9 +10,9 @@ success
 
 ## Verification
 
-- passed: kujo_checks, compat_entrypoints, diff_check
+- passed: kujo_checks, static_tests, compat_entrypoints, diff_check
 - blocked: none
-- failed: static_tests
+- failed: none
 
 ## Commits
 
@@ -25,8 +25,6 @@ success
 ## External Blockers
 
 - typed-env-default-contract: Define optional/default typed-env primitives or a documented fallback contract, then migrate only the normalization paths with compatibility fixtures.
-- governance-release-docs-drift: Restore the required governance documentation section in the owning documentation task, then rerun the full static test gate.
-- load-soak-threshold-drift: Rerun on the supported performance host or update the owning benchmark threshold with evidence, then rerun the load/soak suite.
 
 ## Next Start
 

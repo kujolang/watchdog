@@ -19,7 +19,7 @@ eval_gates:
   - id: kujo_checks
     command: "for f in dashboard_server.kujo src/*.kujo watchdog.kujo; do /Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/debug/kujo check $f >/dev/null || exit 1; done"
   - id: static_tests
-    command: "export KUJO_BIN=/Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/debug/kujo; for f in tests/*.js; do node $f || exit 1; done"
+    command: "export KUJO_BIN=/Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/release/kujo; for f in tests/*.js; do node $f || exit 1; done"
     required: false
   - id: compat_entrypoints
     command: "node scripts/sync_compat_entrypoints.js --check"

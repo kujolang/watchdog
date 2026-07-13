@@ -7,7 +7,7 @@ Compiler optimization: 0 constants folded, 21 dead instructions removed, 0 peeph
 gate kujo_checks: pass
 
 ## gate: static_tests
-$ export KUJO_BIN=/Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/debug/kujo; for f in tests/*.js; do node $f || exit 1; done
+$ export KUJO_BIN=/Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/release/kujo; for f in tests/*.js; do node $f || exit 1; done
 admin_diagnostics_check: PASS
 api_auth_mode_check: PASS
 api_query_support_static_check: PASS
@@ -21,18 +21,29 @@ dashboard_xss_regression_check: PASS
 enterprise_architecture_doc_check: PASS
 export_jsonl_mode_check: PASS
 frontend_contract_suite: PASS
-governance_release_docs_check: FAIL
-AssertionError [ERR_ASSERTION]: CONTRIBUTING.md missing required text: Pull Request Expectations
-    at assertIncludesAll (/Users/robertdevore/2026/Kujolang/kujo-repos/watchdog/tests/governance_release_docs_check.js:15:10)
-    at run (/Users/robertdevore/2026/Kujolang/kujo-repos/watchdog/tests/governance_release_docs_check.js:28:2)
-    at Object.<anonymous> (/Users/robertdevore/2026/Kujolang/kujo-repos/watchdog/tests/governance_release_docs_check.js:64:2)
-    at Module._compile (node:internal/modules/cjs/loader:1734:14)
-    at Object..js (node:internal/modules/cjs/loader:1899:10)
-    at Module.load (node:internal/modules/cjs/loader:1469:32)
-    at Function._load (node:internal/modules/cjs/loader:1286:12)
-    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
-    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)
-    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:151:5)
+governance_release_docs_check: PASS
+kennel_correlation_fields_check: PASS
+layout_defaults_check: PASS
+load_soak_suite profile=quick total=60 concurrency=6 rps=29.82 p95_ms=331 baseline_stats_ms=4 baseline_requests_ms=3 baseline_charts_ms=3 stats_ms=2 requests_ms=5 charts_ms=3 db_size=184320 growth_per_request=1092.27
+load_soak_suite: PASS (quick)
+production_startup_guard_check: PASS
+proxy_authz_mode_check: PASS
+proxy_config_visibility_check: PASS
+proxy_integration_stub_suite: PASS
+proxy_route_compatibility_static_check: PASS
+rate_limit_bucket_eviction_check: PASS
+rate_limit_controls_check: PASS
+request_body_limits_check: PASS
+retention_export_controls_static_check: PASS
+runtime_portability_contract_check: PASS
+schema_migration_static_check: PASS
+scout_backlog_alignment_check: PASS
+shared_module_dedupe_check: PASS
+src_layout_compatibility_check: PASS
+telemetry_redaction_check: PASS
+tenant_project_partitioning_check: PASS
+watchdog_api_route_suite: PASS
+gate static_tests: pass
 
 ## gate: compat_entrypoints
 $ node scripts/sync_compat_entrypoints.js --check

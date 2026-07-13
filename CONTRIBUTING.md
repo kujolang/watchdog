@@ -151,7 +151,7 @@ For Watchdog, check:
 User-visible behavior changes should include a changelog entry when the repo has
 a changelog.
 
-## Security Expectations
+## Security Changes
 
 - Do not log or commit real API keys, bearer tokens, prompts with secrets, or
   telemetry DBs.
@@ -160,7 +160,7 @@ a changelog.
   include positive and negative behavior tests, non-regression proof from the
   full suite, and documentation updates.
 
-## Pull Requests
+## Pull Request Expectations
 
 A good PR includes:
 
