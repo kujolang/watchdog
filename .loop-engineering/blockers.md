@@ -3,6 +3,6 @@
 blockers:
   - id: typed-env-default-contract
     command: "env_int/env_float/env_bool"
-    evidence: "Watchdog config normalization combines multi-name environment precedence, invalid-value fallback, positive bounds, enum normalization, and security defaults; direct native typed env calls cannot preserve all of those semantics without a contract change."
+    evidence: "Kujo now supports typed env defaults for single-name missing/invalid values, but Watchdog normalization also combines multi-name precedence, positive bounds, enum normalization, and security defaults; replacing those policy paths directly would still change behavior."
     status: needs-contract-first
-    next_action: "Define optional/default typed-env primitives or a documented fallback contract, then migrate only the normalization paths with compatibility fixtures."
+    next_action: "Add a documented multi-name/bounded normalization contract or retain the policy helper, then migrate only paths covered by compatibility fixtures."
