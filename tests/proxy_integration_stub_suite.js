@@ -321,6 +321,10 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.ok(countByValue(requests, 'status', 'success') >= 2, 'requests log should include success rows');
 		assert.ok(countByValue(requests, 'status', 'error') >= 2, 'requests log should include error rows');
 		assert.ok(
+			requests.some(row => String(row.request_id) === 'sse-1' && Number(row.total_tokens) === 4),
+			'requests log should preserve streamed request identity and usage'
+		);
+		assert.ok(
 			requests.some(row => String(row.error_code) === 'unsafe_proxy_path'),
 			'requests log should capture unsafe proxy path rejections'
 		);

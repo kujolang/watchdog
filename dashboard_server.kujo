@@ -1101,6 +1101,17 @@ func model_from_stream_events(events, fallback_model) {
 	return model
 }
 
+func request_id_from_stream_events(events) {
+	request_id := ""
+	for event in events {
+		if type(event) == "dict" {
+			next_id := to_string(safe_dict_get(event,"id",""))
+			if next_id != "" { request_id = next_id }
+		}
+	}
+	return request_id
+}
+
 func merge_config_maps(base_cfg, override_cfg) {
 	out := {}
 	for k in keys(base_cfg) {
@@ -1845,6 +1856,7 @@ func proxy_forward(req, resource, action) {
 
 			if contains(to_lower(content_type), "text/event-stream") {
 				events := parse_stream_events(body_text)
+				request_id := request_id_from_stream_events(events)
 				usage := usage_from_stream_events(events)
 				response_summary := response_summary_from_stream_events(events)
 				finish_reason := finish_reason_from_stream_events(events)
