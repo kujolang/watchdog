@@ -9,7 +9,15 @@
 
 from watchdog import watchdog_init
 
-DB_PATH := "data/watchdog.db"
+DEFAULT_DB_PATH := "data/watchdog.db"
+DB_PATH := DEFAULT_DB_PATH
+configured_db_path := env("WDG_DB_PATH")
+if type(configured_db_path) != "null" {
+    configured_db_path := trim(to_string(configured_db_path))
+    if configured_db_path != "" {
+        DB_PATH := configured_db_path
+    }
+}
 
 func print_lines(line_values) {
     for line in line_values {

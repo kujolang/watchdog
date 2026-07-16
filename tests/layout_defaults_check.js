@@ -16,7 +16,8 @@ const demoSource = read('demo.kujo');
 const gitignore = read('.gitignore');
 
 assertContains(serverSource, 'DEFAULT_DB_PATH := "data/watchdog.db"', 'Server default DB path should use data directory');
-assertContains(demoSource, 'DB_PATH := "data/watchdog.db"', 'Demo DB path should use data directory');
+assertContains(demoSource, 'DEFAULT_DB_PATH := "data/watchdog.db"', 'Demo default DB path should use data directory');
+assertContains(demoSource, 'configured_db_path := env("WDG_DB_PATH")', 'Demo should support an isolated DB path override');
 assertContains(gitignore, '*.db', '.gitignore should ignore sqlite database files');
 assertContains(gitignore, '!data/.gitkeep', '.gitignore should retain data directory placeholder');
 assertContains(gitignore, '!tmp/.gitkeep', '.gitignore should retain tmp directory placeholder');

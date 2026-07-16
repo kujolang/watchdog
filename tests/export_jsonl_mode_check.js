@@ -1,11 +1,14 @@
 const assert = require('assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
-const DB_PATH = path.join(ROOT, 'data', 'watchdog.db');
+const TEMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-export-jsonl-'));
+const DB_PATH = path.join(TEMP_ROOT, 'watchdog.db');
+const PORT = 17701;
 const { resolveKujoBinOrThrow } = require('./_kujo_bin');
 const KUJO_BIN = resolveKujoBinOrThrow(__filename);
 
@@ -44,7 +47,7 @@ function httpGet(pathname) {
 		const req = http.request(
 			{
 				host: '127.0.0.1',
-				port: 7700,
+				port: PORT,
 				path: pathname,
 				method: 'GET',
 			},
@@ -78,7 +81,7 @@ function parseJson(text, label) {
 async function startServer() {
 	const child = spawn(KUJO_BIN, ['run', '--interpreter', 'dashboard_server.kujo'], {
 		cwd: ROOT,
-		env: { ...process.env, WDG_DB_PATH: DB_PATH, WDG_API_AUTH_MODE: 'off' },
+		env: { ...process.env, WDG_DB_PATH: DB_PATH, WDG_PORT: String(PORT), WDG_API_AUTH_MODE: 'off', WDG_PROXY_AUTHZ_MODE: 'off' },
 		stdio: ['ignore', 'pipe', 'pipe'],
 	});
 
@@ -218,6 +221,7 @@ async function run() {
 		console.log('export_jsonl_mode_check: PASS');
 	} finally {
 		await stopServer(server);
+		fs.rmSync(TEMP_ROOT, { recursive: true, force: true });
 	}
 }
 
