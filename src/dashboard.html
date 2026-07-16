@@ -740,7 +740,7 @@
   <div class="header-right">
     <span class="last-updated" id="lastUpdated">—</span>
     <button class="btn btn-sm" id="authButton" onclick="showAuthGate()">API access</button>
-    <button class="btn btn-sm" onclick="loadAll()">Refresh</button>
+    <button class="btn btn-sm" id="refreshButton" onclick="loadAll()">Refresh</button>
     <button class="btn btn-primary btn-sm header-export" onclick="exportData()">Export JSON</button>
   </div>
 </header>
@@ -821,6 +821,8 @@
               <th onclick="sortTable('requests','user_id')">User</th>
               <th onclick="sortTable('requests','tenant_id')">Tenant</th>
               <th onclick="sortTable('requests','project_id')">Project</th>
+              <th onclick="sortTable('requests','source_app')">Source</th>
+              <th onclick="sortTable('requests','data_class')">Class</th>
               <th onclick="sortTable('requests','provider')">Provider</th>
               <th onclick="sortTable('requests','model')">Model</th>
               <th onclick="sortTable('requests','workflow_id')">Workflow</th>
@@ -855,6 +857,8 @@
             <tr>
               <th>Time</th>
               <th>Session</th>
+              <th>Source</th>
+              <th>Class</th>
               <th>Tool</th>
               <th>Args</th>
               <th>Result</th>
@@ -925,12 +929,14 @@ const state = {
   sessions:   [],
   sortKey:    { requests: 'created_at', sessions: 'last_seen' },
   sortAsc:    { requests: false, sessions: false },
+  hasLoaded:  false,
 };
 
 let chartRequests = null;
 let chartLatency  = null;
 let chartStatus   = null;
 let apiToken = readStoredToken();
+let refreshInFlight = false;
 
 function readStoredToken() {
   try {
@@ -982,6 +988,17 @@ function setLoadError(message) {
   }
 }
 
+function setRefreshing(refreshing) {
+  const button = document.getElementById('refreshButton');
+  if (button) {
+    button.disabled = refreshing;
+    button.textContent = refreshing ? 'Refreshing…' : 'Refresh';
+  }
+  if (refreshing && state.hasLoaded) {
+    setConnection(true, 'Refreshing data…');
+  }
+}
+
 /* ════════════════════════════════════════════════════════════════════
    API
    ════════════════════════════════════════════════════════════════════ */
@@ -998,7 +1015,13 @@ async function fetchJSON(url) {
 }
 
 async function loadAll() {
-  document.getElementById('loadingOverlay').classList.remove('hidden');
+  if (refreshInFlight) return false;
+  refreshInFlight = true;
+  const initialLoad = !state.hasLoaded;
+  if (initialLoad) {
+    document.getElementById('loadingOverlay').classList.remove('hidden');
+  }
+  setRefreshing(true);
   setLoadError('');
   try {
     // Kujo's local HTTP runtime is intentionally small; keep dashboard reads
@@ -1028,11 +1051,11 @@ async function loadAll() {
     renderErrors();
     renderSessionsTable();
 
+    state.hasLoaded = true;
     document.getElementById('lastUpdated').textContent =
       'Updated ' + new Date().toLocaleTimeString();
     setConnection(true, 'Live data connected');
     hideAuthGate();
-    document.getElementById('loadingOverlay').classList.add('hidden');
     return true;
   } catch (e) {
     console.error('Load failed:', e);
@@ -1043,9 +1066,12 @@ async function loadAll() {
     } else {
       setLoadError('Watchdog could not load telemetry: ' + (e.message || 'Unknown error'));
     }
+    return false;
+  } finally {
+    document.getElementById('loadingOverlay').classList.add('hidden');
+    setRefreshing(false);
+    refreshInFlight = false;
   }
-  document.getElementById('loadingOverlay').classList.add('hidden');
-  return false;
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -1187,6 +1213,8 @@ function renderRequestsTable() {
       <td class="cell-truncate">${safeText(r.user_id || '—')}</td>
       <td class="cell-truncate" style="max-width:120px" title="${safeText(r.tenant_id || '')}">${safeText(r.tenant_id || '—')}</td>
       <td class="cell-truncate" style="max-width:120px" title="${safeText(r.project_id || '')}">${safeText(r.project_id || '—')}</td>
+      <td><span class="badge badge-info">${safeText(r.source_app || 'legacy')}</span></td>
+      <td><span class="badge badge-${r.data_class === 'fixture' ? 'warning' : 'purple'}">${safeText(r.data_class || 'legacy')}</span></td>
       <td>${safeText(r.provider || '—')}</td>
       <td><span class="cell-mono" style="font-size:12px">${safeText(r.model || '—')}</span></td>
       <td class="cell-truncate" style="max-width:120px" title="${safeText(r.workflow_id || '')}">${safeText(r.workflow_id || '—')}</td>
@@ -1238,6 +1266,8 @@ function renderToolCallsTable() {
     <tr>
       <td class="cell-mono" style="white-space:nowrap;font-size:11px">${fmtTs(r.created_at)}</td>
       <td><span class="cell-mono" style="font-size:12px">${safeText(truncate(r.session_id, 16))}</span></td>
+      <td><span class="badge badge-info">${safeText(r.source_app || 'legacy')}</span></td>
+      <td><span class="badge badge-${r.data_class === 'fixture' ? 'warning' : 'purple'}">${safeText(r.data_class || 'legacy')}</span></td>
       <td><span class="badge badge-info">${safeText(r.tool_name)}</span></td>
       <td class="cell-truncate cell-mono" style="max-width:160px;font-size:12px" title="${escHtml(r.tool_args)}">${escHtml(truncate(r.tool_args, 50))}</td>
       <td class="cell-truncate" style="max-width:160px" title="${escHtml(r.tool_result)}">${escHtml(truncate(r.tool_result, 60))}</td>
@@ -1262,7 +1292,7 @@ function renderAgentTraces() {
   const steps     = state.agentSteps;
 
   if (!steps.length) {
-    container.innerHTML = '<div class="empty"><div class="empty-icon">🤖</div>No agent traces recorded. Run demo.kujo to seed data.</div>';
+    container.innerHTML = '<div class="empty"><div class="empty-icon">🤖</div>No agent traces recorded yet.</div>';
     setText('badgeTraces', 0);
     return;
   }

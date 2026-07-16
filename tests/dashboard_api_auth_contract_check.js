@@ -17,5 +17,10 @@ assertContains("sessionStorage.setItem('watchdogApiToken', apiToken)", 'token sh
 assertContains("sessionStorage.removeItem('watchdogApiToken')", 'dashboard should support clearing its session token');
 assertContains("e.status === 401 || e.status === 403", 'missing or invalid API tokens should open the authentication gate');
 assertContains("setLoadError('Watchdog could not load telemetry:", 'non-auth failures should be visible instead of leaving a blank dashboard');
+assertContains('const initialLoad = !state.hasLoaded;', 'dashboard should distinguish the first load from background refreshes');
+assertContains('if (initialLoad) {', 'full-screen loading UI should be limited to the initial load');
+assertContains('state.hasLoaded = true;', 'dashboard should remember that visible data has already rendered');
+assertContains('if (refreshInFlight) return false;', 'overlapping automatic and manual refreshes should be suppressed');
+assertContains("setConnection(true, 'Refreshing data…');", 'background refresh should expose a non-blocking status');
 
 console.log('dashboard_api_auth_contract_check: PASS');
