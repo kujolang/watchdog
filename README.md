@@ -165,6 +165,15 @@ Environment variables:
 | `WDG_RATE_LIMIT_BUCKET_TTL_SECS` | `600` | TTL for idle rate-limit buckets before cleanup |
 | `WDG_IDENTIFIER_MAX_LEN` | `128` | Max stored length for session/user/tenant/project/workflow/task/correlation identifiers |
 | `WDG_EXPORT_MAX_ROWS` | `10000` | Default per-kind row cap for `/api/export` requests (override via query) |
+| `WDG_BACKUP_ENABLED` | `true` | Seed automatic backup scheduling on first startup |
+| `WDG_BACKUP_INTERVAL_MINUTES` | `1440` | Initial backup frequency; later changes persist from the dashboard |
+| `WDG_BACKUP_DIR` | `data/backups` | Initial separate backup folder; absolute Dropbox/Google Drive paths are supported |
+| `WDG_BACKUP_RETENTION_COUNT` | `30` | Initial number of generated backups to retain |
+| `WDG_BACKUP_ENCRYPTION_ENABLED` | `false` | Seed AES-256 encrypted backups on first startup |
+| `WDG_BACKUP_ENCRYPTION_KEY_FILE` | empty | Mode-600 passphrase file used by OpenSSL; never returned by the API |
+| `WDG_BACKUP_SCRIPT_PATH` | `scripts/watchdog_backup.js` | Backup helper path |
+| `WDG_NODE_BIN` | `node` | Node.js executable used by the backup helper |
+| `WDG_OPENSSL_BIN` | `openssl` | OpenSSL executable used for encrypted backups |
 
 Optional `watchdog_proxy_config.json` (path controlled by `WDG_PROXY_CONFIG_PATH`):
 
@@ -312,6 +321,38 @@ export WDG_CHARTJS_LOCAL_PATH=vendor/chart.umd.min.js
 - Use `WDG_RATE_LIMIT_MAX_REQUESTS` and `WDG_RATE_LIMIT_WINDOW_SECS` to tune burst tolerance for your environment.
 - Use `WDG_RATE_LIMIT_MAX_BUCKETS` and `WDG_RATE_LIMIT_BUCKET_TTL_SECS` to bound limiter memory and evict stale buckets in long-running deployments.
 
+## Automated database backups
+
+Watchdog enables verified SQLite backups by default every 24 hours. Open the
+**Backups** dashboard tab to change the frequency, destination folder,
+retention count, encryption setting, or to create a backup immediately.
+
+- Backups use SQLite's online `VACUUM INTO` path, so Watchdog does not need to stop.
+- Each backup is checked with `PRAGMA quick_check` and receives a `.sha256` sidecar.
+- A Dropbox or Google Drive folder can be selected by entering its local synced path.
+- Scheduling is activity-aware: startup, dashboard refreshes, proxy traffic, and direct telemetry trigger a due check. If Watchdog is idle, the next activity creates the overdue backup before continuing.
+- Generated files use `watchdog-backup-<UTC timestamp>-<suffix>.db` or `.db.enc`; retention only removes files matching that pattern.
+
+For encrypted backups, create a dedicated passphrase file outside the repository:
+
+```bash
+mkdir -p "$HOME/.config/watchdog"
+openssl rand -base64 48 > "$HOME/.config/watchdog/backup-encryption-key"
+chmod 600 "$HOME/.config/watchdog/backup-encryption-key"
+export WDG_BACKUP_ENCRYPTION_KEY_FILE="$HOME/.config/watchdog/backup-encryption-key"
+```
+
+Restart Watchdog, then enable encryption in the Backups tab. Encryption uses
+AES-256-CBC with PBKDF2-SHA256 and 200,000 iterations. Restore an encrypted file:
+
+```bash
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 \
+  -in watchdog-backup-TIMESTAMP.db.enc \
+  -out restored-watchdog.db \
+  -pass file:"$HOME/.config/watchdog/backup-encryption-key"
+sqlite3 restored-watchdog.db 'PRAGMA quick_check;'
+```
+
 ---
 
 ## Integrating any OpenAI-compatible client
@@ -432,6 +473,9 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `GET` | `/api/charts/status-breakdown` | Success vs error counts |
 | `GET` | `/api/charts/provider-breakdown` | Per-provider/model breakdown |
 | `GET` | `/api/admin/diagnostics` | Protected runtime/migration/DB diagnostics summary |
+| `GET` | `/api/admin/backups` | Backup settings, schedule status, and recent run history |
+| `PUT` | `/api/admin/backups/settings` | Persist backup frequency, folder, retention, enablement, and encryption mode |
+| `POST` | `/api/admin/backups/run` | Create and verify a backup immediately |
 | `POST` | `/api/admin/prune` | Prune old telemetry rows (supports dry-run) |
 | `POST` | `/api/admin/prune-fixtures` | Remove only rows explicitly classified as fixture data (supports dry-run) |
 | `GET` | `/api/export` | Full export (`json` default or `jsonl`/`ndjson`) |
@@ -523,5 +567,7 @@ Keep root compatibility entrypoints synced from `src/`:
 ## Requirements
 
 - Kujo CLI/runtime installed
+- Node.js and the `sqlite3` CLI for automated backups
+- OpenSSL when encrypted backups are enabled
 - No API key required to run the dashboard itself
 - API key required only when proxying to an authenticated upstream

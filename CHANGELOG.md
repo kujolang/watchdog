@@ -6,6 +6,7 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 
 ## [Unreleased]
 
+- Added configurable 24-hour online SQLite backups with dashboard controls, retention, SHA-256 verification, Dropbox/Google Drive folder support, and optional AES-256 encryption.
 - Added safer proxy path/query validation with safe scalar query forwarding to upstream OpenAI-compatible endpoints.
 - Added expression indexes for timestamp filters and stricter export chunk caps for larger telemetry datasets.
 - Moved the standalone HTTP runtime smoke fixture out of the project root and added a new enterprise review follow-up checklist.

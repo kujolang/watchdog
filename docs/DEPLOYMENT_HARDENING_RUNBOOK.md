@@ -31,6 +31,12 @@ export WDG_EXPORT_MAX_ROWS=10000
 export WDG_MAX_PROXY_BODY_BYTES=1048576
 export WDG_MAX_PARSE_BODY_BYTES=524288
 export WDG_CHARTJS_LOCAL_PATH=vendor/chart.umd.min.js
+export WDG_BACKUP_ENABLED=true
+export WDG_BACKUP_INTERVAL_MINUTES=1440
+export WDG_BACKUP_DIR="$HOME/Dropbox/Watchdog Backups"
+export WDG_BACKUP_RETENTION_COUNT=30
+export WDG_BACKUP_ENCRYPTION_ENABLED=true
+export WDG_BACKUP_ENCRYPTION_KEY_FILE="$HOME/.config/watchdog/backup-encryption-key"
 ```
 
 Production profile startup policy:
@@ -128,16 +134,36 @@ curl -s -X POST http://127.0.0.1:7700/api/admin/prune \
 
 ## 5. Backup Strategy
 
-Stop Watchdog before file-level backups of SQLite artifacts.
+Use the dashboard Backups tab or the protected API to manage online SQLite
+backups. Backups are integrity-checked, receive SHA-256 sidecars, and do not
+require stopping Watchdog.
 
 ```bash
-cp "$WATCHDOG_ROOT/data/watchdog.db" "$WATCHDOG_ROOT/tmp/watchdog.db.backup"
+mkdir -p "$HOME/.config/watchdog"
+openssl rand -base64 48 > "$HOME/.config/watchdog/backup-encryption-key"
+chmod 600 "$HOME/.config/watchdog/backup-encryption-key"
+
+curl -s -X PUT http://127.0.0.1:7700/api/admin/backups/settings \
+	-H 'Content-Type: application/json' \
+	-H 'X-Watchdog-Token: replace-with-long-random-token' \
+	-d '{"enabled":true,"interval_minutes":1440,"backup_dir":"/absolute/path/to/Dropbox/Watchdog Backups","retention_count":30,"encryption_enabled":true}'
+
+curl -s -X POST http://127.0.0.1:7700/api/admin/backups/run \
+	-H 'X-Watchdog-Token: replace-with-long-random-token'
 ```
 
-Restore:
+The encryption key file must be backed up separately from encrypted database
+files. Without that key, encrypted backups cannot be recovered.
+
+Restore an encrypted backup into a separate file and validate it before
+replacing any live database:
 
 ```bash
-cp "$WATCHDOG_ROOT/tmp/watchdog.db.backup" "$WATCHDOG_ROOT/data/watchdog.db"
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 \
+	-in watchdog-backup-TIMESTAMP.db.enc \
+	-out restored-watchdog.db \
+	-pass file:"$HOME/.config/watchdog/backup-encryption-key"
+sqlite3 restored-watchdog.db 'PRAGMA quick_check;'
 ```
 
 ## 6. Troubleshooting Proxy Errors
