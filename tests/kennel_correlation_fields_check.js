@@ -154,6 +154,7 @@ async function run() {
 			{
 				'Content-Type': 'application/json',
 				'X-Observe-Session-Id': 'sess_corr_1',
+				'X-Observe-Project-Id': 'ai-chat',
 				'X-Observe-Workflow-Id': 'wf_alpha',
 				'X-Observe-Task-Id': 'task_beta',
 				'X-Observe-Correlation-Id': 'corr_gamma',
@@ -169,6 +170,9 @@ async function run() {
 		assert.ok(reqRows.length >= 1, 'session-filtered rows should include request');
 		const row = reqRows[0];
 		assert.strictEqual(row.workflow_id, 'wf_alpha');
+		assert.strictEqual(row.project_id, 'ai-chat');
+		assert.strictEqual(row.source_app, 'ai-chat');
+		assert.strictEqual(row.data_class, 'live');
 		assert.strictEqual(row.task_id, 'task_beta');
 		assert.strictEqual(row.correlation_id, 'corr_gamma');
 
