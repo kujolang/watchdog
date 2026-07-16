@@ -24,6 +24,10 @@ assertContains('${safeText(e.error_code || \'unknown\')}', 'error code should be
 assertContains('${safeText(e.provider || \'—\')}', 'error provider should be escaped');
 assertContains('${safeText(r.session_id)}', 'session table session_id should be escaped');
 assertContains('${safeText(r.user_id || \'—\')}', 'session table user_id should be escaped');
+assertContains("showRecordDetails('requests', ${index})", 'request rows should expose full record details');
+assertContains("showRecordDetails('toolCalls', ${index})", 'tool call rows should expose full record details');
+assertContains("showRecordDetails('sessions', ${index})", 'session rows should expose full record details');
+assertContains(".hidden { display: none !important; }", 'shared hidden utility must suppress populated table empty states');
 
 assertContains('const stepType = safeStepType(step.step_type);', 'trace step type must be normalized through whitelist helper');
 assertContains('${safeText(step.content)}', 'trace content should be escaped through safeText');

@@ -24,9 +24,22 @@ function makeElement(id, classes = []) {
 		value: '',
 		innerHTML: '',
 		textContent: '',
+		className: '',
+		children: [],
+		open: false,
 		style: {},
 		classList: new FakeClassList(classes),
 		click() {},
+		appendChild(child) {
+			this.children.push(child);
+			return child;
+		},
+		showModal() {
+			this.open = true;
+		},
+		close() {
+			this.open = false;
+		},
 	};
 }
 
@@ -58,7 +71,7 @@ function createHarness() {
 		'reqSearch', 'reqTenantFilter', 'reqProjectFilter', 'reqStatusFilter', 'reqProviderFilter', 'reqBody', 'reqEmpty',
 		'tcSearch', 'tcStatusFilter', 'tcBody', 'tcEmpty',
 		'traceContainer', 'errorGrid', 'sessBody', 'sessEmpty',
-		'badgeTraces',
+		'badgeTraces', 'detailDialog', 'detailTitle', 'detailBody',
 	];
 
 	requiredIds.forEach(id => {
@@ -150,6 +163,15 @@ function testRequestsFiltersSortingAndEscaping() {
 	assert.ok(elements.reqProviderFilter.innerHTML.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
 
 	context.renderRequestsTable();
+	assert.ok(elements.reqBody.innerHTML.includes("showRecordDetails('requests', 0)"), 'request rows should open full details');
+	assert.strictEqual(context.state.visibleRows.requests.length, 2, 'request detail rows should match rendered rows');
+	context.showRecordDetails('requests', 0);
+	assert.strictEqual(elements.detailDialog.open, true, 'request details dialog should open');
+	assert.strictEqual(elements.detailTitle.textContent, 'Request details');
+	assert.ok(elements.detailBody.children.length > 0, 'request details should include all record fields');
+	assert.strictEqual(elements.detailBody.children[0].children.length, 2, 'detail fields should contain a label and value');
+	context.closeRecordDetails();
+	assert.strictEqual(elements.detailDialog.open, false, 'request details dialog should close');
 	assert.ok(elements.reqBody.innerHTML.includes('&lt;img src=x onerror=1&gt;'), 'session id should be escaped');
 	assert.ok(!elements.reqBody.innerHTML.includes('<img src=x onerror=1>'), 'unsafe session id must not be injected as HTML');
 	assert.ok(elements.reqBody.innerHTML.includes('&lt;tenant-danger&gt;'), 'tenant id should be escaped');
@@ -199,6 +221,7 @@ function testToolCallsErrorsSessionsAndTracesContracts() {
 	context.renderToolCallsTable();
 	assert.ok(elements.tcBody.innerHTML.includes('&lt;b&gt;tool&lt;/b&gt;'));
 	assert.ok(!elements.tcBody.innerHTML.includes('<b>tool</b>'));
+	assert.ok(elements.tcBody.innerHTML.includes("showRecordDetails('toolCalls', 0)"), 'tool call rows should open full details');
 
 	context.state.toolCalls = [];
 	context.renderToolCallsTable();
@@ -229,6 +252,7 @@ function testToolCallsErrorsSessionsAndTracesContracts() {
 	context.renderSessionsTable();
 	assert.ok(elements.sessBody.innerHTML.includes('&lt;sid&gt;'));
 	assert.ok(!elements.sessBody.innerHTML.includes('<sid>'));
+	assert.ok(elements.sessBody.innerHTML.includes("showRecordDetails('sessions', 0)"), 'session rows should open full details');
 
 	context.state.agentSteps = [
 		{
