@@ -115,6 +115,11 @@ primary copyable examples. Prefer compact, runnable snippets in those files and
 keep repeated output formatting behind small local helpers when it improves
 scannability.
 
+The demo seeder writes to `data/watchdog-demo.db` and refuses the production
+`watchdog.db`. Demo rows are labeled `source_app=watchdog-demo` and
+`data_class=fixture`; live proxy and external application telemetry remain in
+the production database with distinct classifications.
+
 Treat `tests/` as contract and regression coverage. Do not shorten fixtures or
 expected-output checks just to reduce tokens when explicit examples make a test
 clearer.
@@ -332,6 +337,31 @@ Tenant/project values can also be supplied in JSON request bodies using
 
 If omitted, the proxy auto-generates values.
 
+### Aggregating multiple apps and API keys
+
+One Watchdog server aggregates every app that sends traffic through its
+`/proxy/v1` URL into the same telemetry database. API keys do not partition
+dashboard data. Give each app a distinct `X-Observe-Project-Id` (for example,
+`signalbox` and `ai-chat`) and the unfiltered dashboard stats include both;
+the request table can still be filtered by project when needed.
+
+Keep the three credential roles separate:
+
+- `WDG_API_AUTH_TOKEN` protects Watchdog's dashboard JSON APIs.
+- `WDG_PROXY_AUTHZ_TOKEN` controls which clients may use the proxy.
+- Upstream provider keys authenticate Watchdog to OpenAI-compatible providers.
+
+For several apps using the same upstream account, `override` mode is simplest:
+all apps share the Watchdog proxy URL/token while Watchdog injects its single
+configured upstream key. For apps with different upstream keys, use
+`passthrough` mode so each client sends its own upstream `Authorization` value,
+and send the Watchdog access credential separately in
+`X-Watchdog-Proxy-Token`. Both modes still write to the same database.
+
+A single Watchdog process currently has one upstream base URL. Routing one
+process to several different upstream providers requires named upstream
+profiles; that is separate from aggregating several apps against one provider.
+
 ---
 
 ## AI Chat integration example (no AI Chat code changes)
@@ -379,7 +409,8 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `GET` | `/api/version` | API compatibility/version metadata |
 | `GET` | `/api/proxy-config` | Effective proxy config summary |
 | `GET` | `/api/stats` | Overview stats |
-| `GET` | `/api/requests` | Latest request logs |
+| `GET` | `/api/requests` | Latest request logs; filter by `source_app` or `data_class` |
+| `POST` | `/api/telemetry/requests` | Authenticated, idempotent intake for telemetry from trusted local apps |
 | `GET` | `/api/tool-calls` | Latest tool call logs |
 | `GET` | `/api/agent-steps` | Agent step traces |
 | `GET` | `/api/audit-events` | Structured security/audit event stream |
@@ -392,6 +423,7 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `GET` | `/api/charts/provider-breakdown` | Per-provider/model breakdown |
 | `GET` | `/api/admin/diagnostics` | Protected runtime/migration/DB diagnostics summary |
 | `POST` | `/api/admin/prune` | Prune old telemetry rows (supports dry-run) |
+| `POST` | `/api/admin/prune-fixtures` | Remove only rows explicitly classified as fixture data (supports dry-run) |
 | `GET` | `/api/export` | Full export (`json` default or `jsonl`/`ndjson`) |
 
 List endpoints now support optional query parameters for pagination and filtering:
