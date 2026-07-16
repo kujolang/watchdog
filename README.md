@@ -61,6 +61,12 @@ kujo run --interpreter dashboard_server.kujo
 http://localhost:7700
 ```
 
+When `WDG_API_AUTH_MODE=token`, the dashboard opens an API access prompt.
+Enter the configured `WDG_API_AUTH_TOKEN`; the browser keeps it in
+`sessionStorage` for the current tab session and sends it as
+`X-Watchdog-Token` on dashboard API requests. A missing or invalid token is
+shown explicitly instead of leaving the dashboard in an empty loading state.
+
 ### 3) Verify proxy configuration endpoint
 
 ```bash
