@@ -158,10 +158,10 @@ Environment variables:
 | `WDG_MAX_PARSE_BODY_BYTES` | `524288` | Reject JSON request parsing over this many bytes |
 | `WDG_REDACTION_MODE` | `basic` | `basic` or `off` telemetry redaction before persistence/export |
 | `WDG_REDACT_TERMS` | `api_key,authorization,bearer,password,secret,token,sk-` | Comma-separated redaction match terms |
-| `WDG_RATE_LIMIT_MODE` | `off` | `off` or `basic` in-memory throttling for `/api/*` and `/proxy/*` |
+| `WDG_RATE_LIMIT_MODE` | `off` | `off` or `basic` SQLite-backed throttling for `/api/*` and `/proxy/*` |
 | `WDG_RATE_LIMIT_MAX_REQUESTS` | `60` | Max requests allowed per bucket per window |
 | `WDG_RATE_LIMIT_WINDOW_SECS` | `60` | Rate-limit window duration in seconds |
-| `WDG_RATE_LIMIT_MAX_BUCKETS` | `5000` | Maximum retained in-memory rate-limit buckets after eviction |
+| `WDG_RATE_LIMIT_MAX_BUCKETS` | `5000` | Maximum retained rate-limit buckets after eviction |
 | `WDG_RATE_LIMIT_BUCKET_TTL_SECS` | `600` | TTL for idle rate-limit buckets before cleanup |
 | `WDG_IDENTIFIER_MAX_LEN` | `128` | Max stored length for session/user/tenant/project/workflow/task/correlation identifiers |
 | `WDG_EXPORT_MAX_ROWS` | `10000` | Default per-kind row cap for `/api/export` requests (override via query) |
@@ -307,7 +307,7 @@ export WDG_CHARTJS_LOCAL_PATH=vendor/chart.umd.min.js
 
 ## Rate limiting
 
-- `WDG_RATE_LIMIT_MODE=basic` enables lightweight in-memory throttling for both Watchdog API routes and proxy routes.
+- `WDG_RATE_LIMIT_MODE=basic` enables lightweight SQLite-backed throttling for both Watchdog API routes and proxy routes. Persisted buckets avoid concurrent dashboard requests corrupting shared process state.
 - Buckets are keyed by `X-Observe-Session-Id` when present, otherwise by forwarded IP/host fallbacks.
 - Use `WDG_RATE_LIMIT_MAX_REQUESTS` and `WDG_RATE_LIMIT_WINDOW_SECS` to tune burst tolerance for your environment.
 - Use `WDG_RATE_LIMIT_MAX_BUCKETS` and `WDG_RATE_LIMIT_BUCKET_TTL_SECS` to bound limiter memory and evict stale buckets in long-running deployments.
@@ -394,6 +394,10 @@ host in `ALLOWED_CUSTOM_PROVIDER_HOSTS`.
 | `tool_calls` | Proxy forward events linked to request rows |
 | `agent_steps` | High-level proxy lifecycle steps (`proxy_received`, `proxy_forwarded`, `proxy_completed`, `proxy_failed`) |
 | `audit_events` | Security-sensitive operations (`api_auth_failure`, `proxy_auth_failure`, `proxy_config_view`, `prune_operation`) with actor key, result, and metadata |
+| `traces` | End-to-end workflow timing, token breakdown, and direct-API-equivalent cost components |
+| `trace_spans` | Provider-neutral workflow, model, tool, persistence, and internal timing spans |
+| `trace_events` | Ordered milestones such as connect, first token, thinking, tool execution, and persistence |
+| `rate_limit_buckets` | Short-lived request counters used when basic throttling is enabled |
 
 ---
 
@@ -413,6 +417,10 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `GET` | `/api/stats` | Overview stats |
 | `GET` | `/api/requests` | Latest request logs; filter by `source_app` or `data_class` |
 | `POST` | `/api/telemetry/requests` | Authenticated, idempotent intake for telemetry from trusted local apps |
+| `POST` | `/api/telemetry/traces` | Append independent spans/events to a trace without creating a model-request row |
+| `GET` | `/api/traces` | Latest granular traces |
+| `GET` | `/api/trace-spans` | Latest spans; filter by `trace_id` |
+| `GET` | `/api/trace-events` | Latest events; filter by `trace_id` |
 | `GET` | `/api/tool-calls` | Latest tool call logs |
 | `GET` | `/api/agent-steps` | Agent step traces |
 | `GET` | `/api/audit-events` | Structured security/audit event stream |
@@ -427,6 +435,8 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `POST` | `/api/admin/prune` | Prune old telemetry rows (supports dry-run) |
 | `POST` | `/api/admin/prune-fixtures` | Remove only rows explicitly classified as fixture data (supports dry-run) |
 | `GET` | `/api/export` | Full export (`json` default or `jsonl`/`ndjson`) |
+
+The granular contract is optional and producer-neutral. Watchdog is a passive collector: applications, model providers, and tool executors remain independently usable, and a tool can append its own telemetry without importing or depending on another tool. See [Granular Tracing](docs/GRANULAR_TRACING.md).
 
 List endpoints now support optional query parameters for pagination and filtering:
 

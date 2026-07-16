@@ -401,6 +401,19 @@
 
   .trace-steps { padding: 16px; display: flex; flex-direction: column; gap: 0; }
 
+  .trace-waterfall { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .trace-summary { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 12px; color: var(--text-muted); }
+  .span-row { display: grid; grid-template-columns: minmax(150px, 220px) minmax(240px, 1fr) 88px; gap: 12px; align-items: center; padding: 7px 0; border-top: 1px solid var(--border); }
+  button.span-row { width: 100%; border-right: 0; border-bottom: 0; border-left: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+  .span-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .span-lane { position: relative; height: 20px; background: #eef2f8; border: 1px solid var(--border); overflow: hidden; }
+  .span-bar { position: absolute; top: 2px; bottom: 2px; min-width: 3px; background: var(--accent); }
+  .span-bar.tool { background: var(--green); }
+  .span-bar.model { background: var(--purple); }
+  .span-bar.error { background: var(--red); }
+  .event-marker { position: absolute; top: 0; width: 2px; height: 100%; background: var(--orange); }
+  .trace-proxy-rollup { border: 1px solid var(--border); padding: 10px 12px; background: #f7f9fc; }
+
   .trace-step {
     display: flex;
     gap: 12px;
@@ -808,7 +821,7 @@
     <div class="stat-card purple"><div class="stat-label">Total Tokens</div><div class="stat-value" id="statTokens">—</div><div class="stat-sub">input + output</div></div>
     <div class="stat-card orange"><div class="stat-label">Sessions</div><div class="stat-value" id="statSessions">—</div><div class="stat-sub">unique</div></div>
     <div class="stat-card"><div class="stat-label">Tool Calls</div><div class="stat-value" id="statToolCalls">—</div><div class="stat-sub">logged</div></div>
-    <div class="stat-card"><div class="stat-label">Agent Steps</div><div class="stat-value" id="statAgentSteps">—</div><div class="stat-sub">traced</div></div>
+    <div class="stat-card"><div class="stat-label">Trace Spans</div><div class="stat-value" id="statAgentSteps">—</div><div class="stat-sub">granular operations</div></div>
   </div>
 
   <!-- Charts row -->
@@ -914,6 +927,23 @@
 
     <!-- ── Agent Traces tab ──────────────────── -->
     <div class="tab-panel" id="tab-traces">
+      <div class="table-toolbar">
+        <input class="search-input" id="traceSearch" placeholder="Filter traces, spans, models…" oninput="renderAgentTraces()">
+        <select class="filter-select" id="traceKindFilter" onchange="renderAgentTraces()">
+          <option value="">All span kinds</option>
+          <option value="workflow">Workflow</option>
+          <option value="model">Model</option>
+          <option value="tool">Tool</option>
+          <option value="persistence">Persistence</option>
+        </select>
+        <select class="filter-select" id="traceStatusFilter" onchange="renderAgentTraces()">
+          <option value="">All statuses</option>
+          <option value="success">Success</option>
+          <option value="error">Error</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)"><input type="checkbox" id="traceHideProxy" checked onchange="renderAgentTraces()"> Collapse proxy transport</label>
+      </div>
       <div class="trace-sessions" id="traceContainer">
         <div class="empty"><div class="empty-icon">🤖</div>No agent traces recorded.</div>
       </div>
@@ -965,6 +995,10 @@ const state = {
   requests:   [],
   toolCalls:  [],
   agentSteps: [],
+  traces:      [],
+  traceSpans:  [],
+  traceEvents: [],
+  visibleTraceSpans: [],
   errors:     [],
   sessions:   [],
   visibleRows: { requests: [], toolCalls: [], sessions: [] },
@@ -1071,6 +1105,9 @@ async function loadAll() {
     const reqs = await fetchJSON('/api/requests');
     const tools = await fetchJSON('/api/tool-calls');
     const steps = await fetchJSON('/api/agent-steps');
+    const traces = await fetchJSON('/api/traces');
+    const traceSpans = await fetchJSON('/api/trace-spans');
+    const traceEvents = await fetchJSON('/api/trace-events');
     const errs = await fetchJSON('/api/errors');
     const sess = await fetchJSON('/api/sessions');
     const chartReqData = await fetchJSON('/api/charts/requests-over-time');
@@ -1080,6 +1117,9 @@ async function loadAll() {
     state.requests   = reqs   || [];
     state.toolCalls  = tools  || [];
     state.agentSteps = steps  || [];
+    state.traces      = traces || [];
+    state.traceSpans  = traceSpans || [];
+    state.traceEvents = traceEvents || [];
     state.errors     = errs   || [];
     state.sessions   = sess   || [];
 
@@ -1127,12 +1167,12 @@ function renderStats(s) {
   setText('statTokens',    fmtNum(s.total_tokens));
   setText('statSessions',  fmtNum(s.total_sessions));
   setText('statToolCalls', fmtNum(s.total_tool_calls));
-  setText('statAgentSteps',fmtNum(s.total_agent_steps));
+  setText('statAgentSteps',fmtNum(s.total_trace_spans || s.total_agent_steps));
   setText('badgeRequests', s.total_requests);
   setText('badgeToolCalls',s.total_tool_calls);
   setText('badgeSessions', s.total_sessions);
   setText('badgeErrors',   s.total_errors);
-  setText('badgeTraces',   new Set((state.agentSteps || []).map(r => r.session_id)).size);
+  setText('badgeTraces',   state.traces.length || new Set((state.agentSteps || []).map(r => r.session_id)).size);
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -1334,59 +1374,141 @@ const STEP_ICONS = {
 
 function renderAgentTraces() {
   const container = document.getElementById('traceContainer');
-  const steps     = state.agentSteps;
+  const query = String(document.getElementById('traceSearch')?.value || '').trim().toLowerCase();
+  const kind = String(document.getElementById('traceKindFilter')?.value || '');
+  const status = String(document.getElementById('traceStatusFilter')?.value || '');
+  const hideProxy = Boolean(document.getElementById('traceHideProxy')?.checked);
+  const granular = (state.traces || []).filter(trace => {
+    const spans = (state.traceSpans || []).filter(span => span.trace_id === trace.trace_id);
+    const events = (state.traceEvents || []).filter(event => event.trace_id === trace.trace_id);
+    const haystack = [trace.trace_id, trace.session_id, trace.source_app, trace.name, trace.status,
+      ...spans.flatMap(span => [span.name, span.span_kind, span.status, span.attributes_json]),
+      ...events.flatMap(event => [event.event_name, event.attributes_json])].join(' ').toLowerCase();
+    if (query && !haystack.includes(query)) return false;
+    if (status && trace.status !== status && !spans.some(span => span.status === status)) return false;
+    if (kind === 'persistence' && !events.some(event => event.event_name === 'persistence_saved')) return false;
+    if (kind && kind !== 'persistence' && !spans.some(span => span.span_kind === kind)) return false;
+    return true;
+  });
+  const proxySteps = (state.agentSteps || []).filter(step => String(step.source_app || '').includes('proxy'));
 
-  if (!steps.length) {
+  if (!granular.length && !(state.agentSteps || []).length) {
     container.innerHTML = '<div class="empty"><div class="empty-icon">🤖</div>No agent traces recorded yet.</div>';
     setText('badgeTraces', 0);
     return;
   }
+  if (!granular.length) {
+    renderLegacyAgentTraces(container, state.agentSteps || []);
+    return;
+  }
 
-  // Group by session
-  const bySession = {};
-  steps.forEach(s => {
-    if (!bySession[s.session_id]) bySession[s.session_id] = [];
-    bySession[s.session_id].push(s);
-  });
-
-  const sessionIds = Object.keys(bySession);
-  setText('badgeTraces', sessionIds.length);
-
-  container.innerHTML = sessionIds.map((sid, idx) => {
-    const sessionSteps = bySession[sid].sort((a, b) => a.step_number - b.step_number);
-    const agentId = sessionSteps[0]?.agent_id || '—';
-    const safeSessionId = safeText(sid);
-    const safeAgentId = safeText(agentId);
+  state.visibleTraceSpans = [];
+  const traceMarkup = granular.map((trace, traceIndex) => {
+    const allSpans = (state.traceSpans || []).filter(span => span.trace_id === trace.trace_id).sort((a, b) => Number(a.started_at_ms) - Number(b.started_at_ms));
+    const spans = kind && kind !== 'persistence' ? allSpans.filter(span => span.span_kind === kind) : allSpans;
+    const events = (state.traceEvents || []).filter(event => event.trace_id === trace.trace_id);
+    const traceStart = Number(trace.started_at_ms || 0);
+    const traceDuration = Math.max(1, Number(trace.duration_ms || 0));
+    const attrs = parseTraceJson(trace.attributes_json);
+    const persistenceEvent = events.find(event => event.event_name === 'persistence_saved');
     return `
       <div class="trace-session">
-        <div class="trace-session-header" onclick="toggleTrace('trace-${idx}')">
-          <span>🤖 ${safeAgentId}</span>
-          <span class="cell-mono" style="font-size:12px;color:var(--text-muted)">${safeSessionId}</span>
-          <span class="badge badge-info" style="margin-left:auto">${sessionSteps.length} steps</span>
-          <span id="trace-toggle-${idx}" style="color:var(--text-muted)">▼</span>
+        <div class="trace-session-header" onclick="toggleTrace('trace-${traceIndex}')">
+          <span>◫ ${safeText(trace.name || 'trace')}</span>
+          <span class="cell-mono" style="font-size:12px;color:var(--text-muted)">${safeText(trace.trace_id)}</span>
+          <span class="badge ${trace.status === 'error' ? 'badge-error' : 'badge-success'}">${safeText(trace.status)}</span>
+          <span class="badge badge-info">${spans.length} spans · ${events.length} events</span>
+          <span id="trace-toggle-${traceIndex}" style="color:var(--text-muted);margin-left:auto">▼</span>
         </div>
-        <div class="trace-steps" id="trace-${idx}">
-          ${sessionSteps.map(step => {
-            const stepType = safeStepType(step.step_type);
-            const stepLabel = safeText(step.step_type || 'unknown');
-            return `
-            <div class="trace-step">
-              <div class="step-icon step-icon-${stepType}">
-                ${STEP_ICONS[stepType] || '•'}
-              </div>
-              <div class="step-body">
-                <div class="step-meta">
-                  <span class="badge badge-step-${stepType}">${stepLabel}</span>
-                  <span style="font-size:11px;color:var(--text-muted)">Step ${step.step_number}</span>
-                  <span style="font-size:11px;color:var(--text-muted);margin-left:auto">${fmtTs(step.created_at)}</span>
-                </div>
-                <div class="step-content">${safeText(step.content)}</div>
-              </div>
-            </div>`;
-          }).join('')}
+        <div class="trace-waterfall" id="trace-${traceIndex}">
+          <div class="trace-summary">
+            <span>${safeText(trace.source_app)} · ${safeText(trace.session_id)}</span>
+            <span>${fmtLatency(trace.duration_ms)} total</span>
+            <span>${fmtNum(Number(trace.input_tokens || 0) + Number(trace.output_tokens || 0))} tokens</span>
+            <span>$${fmtCost(Number(trace.input_cost_usd || 0) + Number(trace.output_cost_usd || 0))} value</span>
+            <span>${persistenceEvent ? 'Persisted ✓' : 'Persistence pending/not reported'}</span>
+            <span>TTFT ${fmtLatency(attrs.time_to_first_token_ms)}</span>
+            <span>${fmtNum(attrs.output_tokens_per_second || 0)} tok/s</span>
+          </div>
+          ${spans.map(span => renderTraceSpanRow(trace, span, events, traceStart, traceDuration)).join('') || '<div class="empty">No spans match this filter.</div>'}
         </div>
       </div>`;
   }).join('');
+
+  const legacyMarkup = renderLegacyProxyRollup(proxySteps, hideProxy);
+  container.innerHTML = traceMarkup + legacyMarkup;
+  setText('badgeTraces', granular.length || new Set((state.agentSteps || []).map(row => row.session_id)).size);
+}
+
+function renderLegacyAgentTraces(container, steps) {
+  const bySession = {};
+  steps.forEach(step => {
+    if (!bySession[step.session_id]) bySession[step.session_id] = [];
+    bySession[step.session_id].push(step);
+  });
+  const sessionIds = Object.keys(bySession);
+  container.innerHTML = sessionIds.map((sessionId, index) => {
+    const sessionSteps = bySession[sessionId].sort((a, b) => a.step_number - b.step_number);
+    return `<div class="trace-session">
+      <div class="trace-session-header" onclick="toggleTrace('legacy-trace-${index}')">
+        <span>🤖 ${safeText(sessionSteps[0]?.agent_id || '—')}</span>
+        <span class="cell-mono">${safeText(sessionId)}</span>
+        <span class="badge badge-info" style="margin-left:auto">${sessionSteps.length} steps</span>
+      </div>
+      <div class="trace-steps" id="legacy-trace-${index}">${sessionSteps.map(step => {
+        const stepType = safeStepType(step.step_type);
+        return `<div class="trace-step"><div class="step-icon step-icon-${stepType}">${STEP_ICONS[stepType] || '•'}</div><div class="step-body"><div class="step-meta"><span class="badge badge-step-${stepType}">${safeText(step.step_type || 'unknown')}</span><span>Step ${Number(step.step_number || 0)}</span><span style="margin-left:auto">${fmtTs(step.created_at)}</span></div><div class="step-content">${safeText(step.content)}</div></div></div>`;
+      }).join('')}</div>
+    </div>`;
+  }).join('');
+  setText('badgeTraces', sessionIds.length);
+}
+
+function renderTraceSpanRow(trace, span, events, traceStart, traceDuration) {
+  const spanEvents = events.filter(event => event.span_id === span.span_id);
+  const left = Math.max(0, Math.min(100, ((Number(span.started_at_ms || traceStart) - traceStart) / traceDuration) * 100));
+  const width = Math.max(0.5, Math.min(100 - left, (Number(span.duration_ms || 0) / traceDuration) * 100));
+  const detailIndex = state.visibleTraceSpans.push({
+    trace,
+    span: { ...span, attributes: parseTraceJson(span.attributes_json) },
+    events: spanEvents.map(event => ({ ...event, attributes: parseTraceJson(event.attributes_json) }))
+  }) - 1;
+  const markers = spanEvents.map(event => {
+    const markerLeft = Math.max(0, Math.min(100, ((Number(event.occurred_at_ms || traceStart) - traceStart) / traceDuration) * 100));
+    return `<span class="event-marker" style="left:${markerLeft.toFixed(2)}%" title="${safeText(event.event_name)}"></span>`;
+  }).join('');
+  const spanKindClass = safeSpanKind(span.span_kind);
+  return `<button class="span-row clickable-row" onclick="showTraceSpanDetails(${detailIndex})" aria-label="Open ${safeText(span.name)} span details">
+    <span class="span-name"><span class="badge badge-info">${safeText(span.span_kind)}</span> ${safeText(span.name)}</span>
+    <span class="span-lane"><span class="span-bar ${spanKindClass} ${span.status === 'error' ? 'error' : ''}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"></span>${markers}</span>
+    <span style="font-size:11px;color:var(--text-muted);text-align:right">${fmtLatency(span.duration_ms)}</span>
+  </button>`;
+}
+
+function safeSpanKind(value) {
+  const kind = String(value || '').toLowerCase();
+  return ['workflow', 'model', 'tool', 'persistence', 'internal'].includes(kind) ? kind : 'internal';
+}
+
+function renderLegacyProxyRollup(proxySteps, hideProxy) {
+  if (!proxySteps.length) return '';
+  return `<details class="trace-proxy-rollup" ${hideProxy ? '' : 'open'}>
+    <summary>Proxy transport · ${proxySteps.length} lifecycle events</summary>
+    <div style="padding-top:10px;font-size:12px;color:var(--text-muted)">${safeText(proxySteps.slice(0, 30).map(step => `${step.step_type} · ${step.session_id}`).join('\n'))}</div>
+  </details>`;
+}
+
+function parseTraceJson(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch (e) { return { raw: String(value) }; }
+}
+
+function showTraceSpanDetails(index) {
+  const record = state.visibleTraceSpans[index];
+  if (!record) return;
+  state.visibleRows.traceSpans = [record];
+  showRecordDetails('traceSpans', 0);
 }
 
 function toggleTrace(id) {
@@ -1464,7 +1586,7 @@ function showRecordDetails(table, index) {
   const record = rows[index];
   if (!record) return;
 
-  const labels = { requests: 'Request details', toolCalls: 'Tool call details', sessions: 'Session details' };
+  const labels = { requests: 'Request details', toolCalls: 'Tool call details', sessions: 'Session details', traceSpans: 'Trace span details' };
   setText('detailTitle', labels[table] || 'Record details');
 
   const body = document.getElementById('detailBody');

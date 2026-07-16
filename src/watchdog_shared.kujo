@@ -66,6 +66,13 @@ func ensure_schema(db) {
 
 	db_execute(db, "CREATE TABLE IF NOT EXISTS audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL DEFAULT '', actor_key TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '', metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT '')", [])
 
+	db_execute(db, "CREATE TABLE IF NOT EXISTS traces (id INTEGER PRIMARY KEY AUTOINCREMENT, trace_id TEXT NOT NULL UNIQUE, request_dbid INTEGER NOT NULL DEFAULT 0, session_id TEXT NOT NULL DEFAULT '', source_app TEXT NOT NULL DEFAULT 'legacy', data_class TEXT NOT NULL DEFAULT 'legacy', name TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'success', started_at_ms INTEGER NOT NULL DEFAULT 0, ended_at_ms INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, cached_input_tokens INTEGER NOT NULL DEFAULT 0, cache_write_input_tokens INTEGER NOT NULL DEFAULT 0, input_cost_usd REAL NOT NULL DEFAULT 0.0, output_cost_usd REAL NOT NULL DEFAULT 0.0, input_rate_per_million REAL NOT NULL DEFAULT 0.0, output_rate_per_million REAL NOT NULL DEFAULT 0.0, pricing_source TEXT NOT NULL DEFAULT '', attributes_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT '')", [])
+
+	db_execute(db, "CREATE TABLE IF NOT EXISTS trace_spans (id INTEGER PRIMARY KEY AUTOINCREMENT, trace_id TEXT NOT NULL DEFAULT '', span_id TEXT NOT NULL DEFAULT '', parent_span_id TEXT NOT NULL DEFAULT '', request_dbid INTEGER NOT NULL DEFAULT 0, session_id TEXT NOT NULL DEFAULT '', source_app TEXT NOT NULL DEFAULT 'legacy', data_class TEXT NOT NULL DEFAULT 'legacy', span_kind TEXT NOT NULL DEFAULT 'internal', name TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'success', started_at_ms INTEGER NOT NULL DEFAULT 0, ended_at_ms INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0, attributes_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT '', UNIQUE(trace_id, span_id))", [])
+
+	db_execute(db, "CREATE TABLE IF NOT EXISTS trace_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL DEFAULT '', trace_id TEXT NOT NULL DEFAULT '', span_id TEXT NOT NULL DEFAULT '', sequence INTEGER NOT NULL DEFAULT 0, event_name TEXT NOT NULL DEFAULT '', occurred_at_ms INTEGER NOT NULL DEFAULT 0, attributes_json TEXT NOT NULL DEFAULT '{}', source_app TEXT NOT NULL DEFAULT 'legacy', data_class TEXT NOT NULL DEFAULT 'legacy', created_at TEXT NOT NULL DEFAULT '', UNIQUE(trace_id, event_id))", [])
+	db_execute(db, "CREATE TABLE IF NOT EXISTS rate_limit_buckets (bucket_key TEXT PRIMARY KEY, window_start_ms INTEGER NOT NULL DEFAULT 0, request_count INTEGER NOT NULL DEFAULT 0, last_seen_ms INTEGER NOT NULL DEFAULT 0)", [])
+
 	try {
 		db_execute(db, "ALTER TABLE requests ADD COLUMN workflow_id TEXT NOT NULL DEFAULT ''", [])
 	} except err {
@@ -143,6 +150,14 @@ func ensure_schema(db) {
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_audit_events_created_at_ms ON audit_events(CAST(created_at AS INTEGER))", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_audit_events_action_result ON audit_events(action, result)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_traces_started_at ON traces(started_at_ms)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_traces_session_id ON traces(session_id)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_traces_source_status ON traces(source_app, status)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_trace_spans_trace_start ON trace_spans(trace_id, started_at_ms)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_trace_spans_kind_status ON trace_spans(span_kind, status)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_trace_events_trace_sequence ON trace_events(trace_id, sequence)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_trace_events_name_time ON trace_events(event_name, occurred_at_ms)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_last_seen ON rate_limit_buckets(last_seen_ms)", [])
 
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0001_base_schema", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0002_kennel_correlation_fields", to_string(current_timestamp())])
@@ -150,6 +165,8 @@ func ensure_schema(db) {
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0004_audit_events", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0005_time_filter_indexes", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0006_source_classification", to_string(current_timestamp())])
+	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0009_granular_trace_spans_events", to_string(current_timestamp())])
+	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0010_sqlite_rate_limit_buckets", to_string(current_timestamp())])
 
 	pricing_migration := db_query(db, "SELECT key FROM schema_migrations WHERE key = ? LIMIT 1", ["0007_direct_api_cost_estimates"])
 	if len(pricing_migration) == 0 {

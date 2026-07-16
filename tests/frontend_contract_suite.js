@@ -268,6 +268,16 @@ function testToolCallsErrorsSessionsAndTracesContracts() {
 	assert.ok(elements.traceContainer.innerHTML.includes('badge-step-planning'), 'unknown step types should normalize to planning style');
 	assert.ok(elements.traceContainer.innerHTML.includes('&lt;img src=x onerror=trace&gt;'));
 	assert.ok(!elements.traceContainer.innerHTML.includes('<img src=x onerror=trace>'));
+
+	context.state.traces = [{ trace_id: 'trace-1', session_id: 'session-1', source_app: 'independent-tool', name: 'workflow', status: 'success', started_at_ms: 1000, duration_ms: 200, attributes_json: '{}' }];
+	context.state.traceSpans = [{ trace_id: 'trace-1', span_id: 'span-1', parent_span_id: '', span_kind: 'tool\" onclick=alert(1)', name: '<tool-span>', status: 'success', started_at_ms: 1010, duration_ms: 100, attributes_json: '{}' }];
+	context.state.traceEvents = [{ trace_id: 'trace-1', span_id: '', event_id: 'persist-1', event_name: 'persistence_saved', sequence: 99, occurred_at_ms: 1200, attributes_json: '{}' }];
+	elements.traceKindFilter.value = 'persistence';
+	context.renderAgentTraces();
+	assert.ok(elements.traceContainer.innerHTML.includes('trace-waterfall'), 'granular traces should render as a waterfall');
+	assert.ok(elements.traceContainer.innerHTML.includes('Persisted ✓'), 'persistence events should remain filterable and visible');
+	assert.ok(elements.traceContainer.innerHTML.includes('&lt;tool-span&gt;'));
+	assert.ok(!elements.traceContainer.innerHTML.includes('span-bar tool&quot;'), 'span kind must not be injected into a CSS class');
 }
 
 function run() {

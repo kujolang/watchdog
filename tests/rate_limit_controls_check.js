@@ -8,6 +8,7 @@ const ROOT = path.join(__dirname, '..');
 const TMP_DIR = path.join(ROOT, 'tmp');
 const { resolveKujoBinOrThrow } = require('./_kujo_bin');
 const KUJO_BIN = resolveKujoBinOrThrow(__filename);
+const API_TOKEN = 'rate-limit-api-token';
 
 function delay(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
@@ -100,7 +101,7 @@ async function startWatchdog(port, dbPath, cfgPath, envExtras) {
 
 	for (let i = 0; i < 120; i += 1) {
 		try {
-			const probe = await httpRequest(port, 'GET', '/api/stats');
+			const probe = await httpRequest(port, 'GET', '/api/stats', { 'X-Watchdog-Token': API_TOKEN });
 			if (probe.status === 200) return { child, outputRef: () => output };
 		} catch (err) {
 			if (child.exitCode != null) break;
@@ -129,19 +130,27 @@ async function runRateLimitOnScenario(upstreamPort) {
 		WDG_RATE_LIMIT_MODE: 'basic',
 		WDG_RATE_LIMIT_MAX_REQUESTS: '3',
 		WDG_RATE_LIMIT_WINDOW_SECS: '2',
+		WDG_API_AUTH_MODE: 'token',
+		WDG_API_AUTH_TOKEN: API_TOKEN,
 	});
 
 	try {
 		for (let i = 0; i < 3; i += 1) {
-			const ok = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_api' });
+			const ok = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_api', 'X-Watchdog-Token': API_TOKEN });
 			assert.strictEqual(ok.status, 200, 'within limit API request should succeed');
 		}
 
-		const blockedApi = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_api' });
+		const blockedApi = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_api', 'X-Watchdog-Token': API_TOKEN });
 		assert.strictEqual(blockedApi.status, 429, 'API should enforce rate limit');
 
-		const differentSession = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_other' });
+		const differentSession = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_other', 'X-Watchdog-Token': API_TOKEN });
 		assert.strictEqual(differentSession.status, 200, 'different session key should get separate bucket');
+
+		const concurrent = await Promise.all(Array.from({ length: 12 }, (_, index) => httpRequest(port, 'GET', '/api/stats', {
+			'X-Observe-Session-Id': 'sess_concurrent_' + index,
+			'X-Watchdog-Token': API_TOKEN,
+		})));
+		assert.ok(concurrent.every(result => result.status === 200), 'concurrent authenticated API requests should not corrupt rate-limit state');
 
 		for (let i = 0; i < 3; i += 1) {
 			const proxyOk = await httpRequest(
@@ -164,7 +173,7 @@ async function runRateLimitOnScenario(upstreamPort) {
 		assert.strictEqual(proxyBlocked.status, 429, 'proxy should enforce rate limit');
 
 		await delay(2200);
-		const afterWindow = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_api' });
+		const afterWindow = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_api', 'X-Watchdog-Token': API_TOKEN });
 		assert.strictEqual(afterWindow.status, 200, 'bucket should reset after window duration');
 	} finally {
 		await stopWatchdog(wd.child);
@@ -185,7 +194,7 @@ async function runRateLimitOffScenario(upstreamPort) {
 
 	try {
 		for (let i = 0; i < 3; i += 1) {
-			const ok = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_disabled' });
+			const ok = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_disabled', 'X-Watchdog-Token': API_TOKEN });
 			assert.strictEqual(ok.status, 200, 'rate-limit off should not throttle API calls');
 		}
 	} finally {

@@ -66,6 +66,19 @@ function httpGet(pathname) {
 	});
 }
 
+function httpPost(pathname, payload) {
+	return new Promise((resolve, reject) => {
+		const body = JSON.stringify(payload);
+		const req = http.request({ host: '127.0.0.1', port: PORT, path: pathname, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, res => {
+			let responseBody = '';
+			res.on('data', chunk => { responseBody += chunk; });
+			res.on('end', () => resolve({ status: res.statusCode || 0, body: responseBody, headers: res.headers || {} }));
+		});
+		req.on('error', reject);
+		req.end(body);
+	});
+}
+
 function parseJson(text, context) {
 	try {
 		return JSON.parse(text);
@@ -93,6 +106,7 @@ async function startServer() {
 		try {
 			const result = await httpGet('/api/stats');
 			if (result.status === 200) {
+				child.getCapturedOutput = () => output;
 				return child;
 			}
 		} catch (err) {
@@ -155,6 +169,39 @@ async function run() {
 			assert.ok(data.total_requests >= 1, 'stats.total_requests should be populated after demo seed');
 			assert.ok(Object.prototype.hasOwnProperty.call(data, 'total_tool_calls'));
 			assert.ok(Object.prototype.hasOwnProperty.call(data, 'total_agent_steps'));
+			assert.ok(Object.prototype.hasOwnProperty.call(data, 'total_traces'));
+			assert.ok(Object.prototype.hasOwnProperty.call(data, 'total_trace_spans'));
+		});
+
+		const traceId = 'trace-contract-001';
+		const intake = await httpPost('/api/telemetry/requests', {
+			source_app: 'contract-client', request_id: 'request-contract-001', session_id: 'session-contract', provider: 'ollama', model: 'glm-5.2:cloud', status: 'success', input_tokens: 100, output_tokens: 50, total_tokens: 150,
+			trace: { trace_id: traceId, name: 'independent_tool_workflow', status: 'success', started_at_ms: 1000, ended_at_ms: 1400, duration_ms: 400, cached_input_tokens: 10, attributes: { transport: 'direct', content_mode: 'off' } },
+			spans: [
+				{ span_id: 'span-model', parent_span_id: '', span_kind: 'model', name: 'provider_round', status: 'success', started_at_ms: 1000, ended_at_ms: 1200, duration_ms: 200, attributes: { time_to_first_token_ms: 25 } },
+				{ span_id: 'span-tool', parent_span_id: 'span-model', span_kind: 'tool', name: 'tool.web_search', status: 'success', started_at_ms: 1200, ended_at_ms: 1350, duration_ms: 150, attributes: { backend: 'searxng' } }
+			],
+			events: [{ event_id: 'event-tool-start', span_id: 'span-tool', sequence: 1, event_name: 'tool_started', occurred_at_ms: 1200, attributes: { tool_name: 'web_search' } }],
+			tool_calls: [{ tool_name: 'web_search', arguments: { query_chars: 12 }, result: { result_count: 3 }, status: 'success', latency_ms: 150 }]
+		});
+		if (intake.status !== 200) {
+			console.error(server.getCapturedOutput().slice(-2000));
+		}
+		assert.strictEqual(intake.status, 200, 'granular trace intake should succeed: ' + intake.body);
+
+		const append = await httpPost('/api/telemetry/traces', { source_app: 'contract-client', trace_id: traceId, session_id: 'session-contract', events: [{ event_id: 'persistence-contract', sequence: 99, event_name: 'persistence_saved', occurred_at_ms: 1450, attributes: { state: 'committed' } }] });
+		assert.strictEqual(append.status, 200, 'independent trace event append should succeed');
+
+		await assertEndpoint('/api/traces', data => {
+			const trace = data.find(row => row.trace_id === traceId);
+			assert.ok(trace, 'trace should be queryable');
+			assert.strictEqual(trace.input_tokens, 100);
+			assert.ok(trace.input_cost_usd > 0);
+		});
+		await assertEndpoint(`/api/trace-spans?trace_id=${traceId}`, data => assert.strictEqual(data.length, 2));
+		await assertEndpoint(`/api/trace-events?trace_id=${traceId}`, data => {
+			assert.strictEqual(data.length, 2);
+			assert.ok(data.some(row => row.event_name === 'persistence_saved'));
 		});
 
 		await assertEndpoint('/api/requests', data => {
@@ -204,6 +251,9 @@ async function run() {
 			assert.ok(Array.isArray(data.requests), 'export.requests should be array');
 			assert.ok(Array.isArray(data.tool_calls), 'export.tool_calls should be array');
 			assert.ok(Array.isArray(data.agent_steps), 'export.agent_steps should be array');
+			assert.ok(Array.isArray(data.traces), 'export.traces should be array');
+			assert.ok(Array.isArray(data.trace_spans), 'export.trace_spans should be array');
+			assert.ok(Array.isArray(data.trace_events), 'export.trace_events should be array');
 		});
 
 		console.log('watchdog_api_route_suite: PASS');

@@ -181,7 +181,7 @@ async function run() {
 		const records = parseJsonlLines(jsonlMode.body);
 		assert.ok(records.length > 0, 'jsonl export should include records');
 		records.forEach(record => {
-			assert.ok(['request', 'tool_call', 'agent_step'].includes(record.kind), 'jsonl kind should be recognized');
+			assert.ok(['request', 'tool_call', 'agent_step', 'trace', 'trace_span', 'trace_event'].includes(record.kind), 'jsonl kind should be recognized');
 			assert.ok(record.data && typeof record.data === 'object', 'jsonl record should include object payload');
 		});
 
@@ -201,7 +201,7 @@ async function run() {
 		const limitedJsonl = await httpGet('/api/export?format=jsonl&max_rows=1');
 		assert.strictEqual(limitedJsonl.status, 200, 'jsonl max_rows export should return 200');
 		const limitedRecords = parseJsonlLines(limitedJsonl.body);
-		assert.ok(limitedRecords.length <= 3, 'max_rows=1 should bound records across request/tool/step kinds');
+		assert.ok(limitedRecords.length <= 6, 'max_rows=1 should bound records across every exported kind');
 
 		const cappedChunkJson = await httpGet('/api/export?format=json&max_rows=1&chunk_size=50');
 		assert.strictEqual(cappedChunkJson.status, 200, 'chunk size above max_rows should still return 200');
@@ -210,13 +210,16 @@ async function run() {
 		assert.ok(cappedChunkParsed.data.requests.length <= 1, 'max_rows cap should apply to request export rows');
 		assert.ok(cappedChunkParsed.data.tool_calls.length <= 1, 'max_rows cap should apply to tool call export rows');
 		assert.ok(cappedChunkParsed.data.agent_steps.length <= 1, 'max_rows cap should apply to agent step export rows');
+		assert.ok(cappedChunkParsed.data.traces.length <= 1, 'max_rows cap should apply to trace export rows');
+		assert.ok(cappedChunkParsed.data.trace_spans.length <= 1, 'max_rows cap should apply to trace span export rows');
+		assert.ok(cappedChunkParsed.data.trace_events.length <= 1, 'max_rows cap should apply to trace event export rows');
 
 		const chunkedJsonl = await httpGet('/api/export?format=jsonl&chunk_size=1&cursor=0');
 		assert.strictEqual(chunkedJsonl.status, 200, 'chunked jsonl export should return 200');
 		assert.strictEqual(String(chunkedJsonl.headers['x-watchdog-cursor'] || ''), '0', 'jsonl cursor header should reflect cursor');
 		assert.strictEqual(String(chunkedJsonl.headers['x-watchdog-chunk-size'] || ''), '1', 'jsonl chunk-size header should reflect chunk_size');
 		const chunkedJsonlRecords = parseJsonlLines(chunkedJsonl.body);
-		assert.ok(chunkedJsonlRecords.length <= 3, 'chunked jsonl should respect chunk sizing per kind');
+		assert.ok(chunkedJsonlRecords.length <= 6, 'chunked jsonl should respect chunk sizing per kind');
 
 		console.log('export_jsonl_mode_check: PASS');
 	} finally {

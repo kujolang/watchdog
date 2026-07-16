@@ -15,6 +15,7 @@
 
 from watchdog_shared import watchdog_estimate_cost, watchdog_ensure_schema
 from watchdog_shared import watchdog_has_known_pricing
+from watchdog_shared import watchdog_cost_per_million
 
 DEFAULT_PORT := 7700
 DEFAULT_DB_PATH := "data/watchdog.db"
@@ -733,69 +734,7 @@ func rate_limit_key(req) {
 
 func normalize_rate_limit_buckets(now_ms) {
 	ttl_ms := RATE_LIMIT_BUCKET_TTL_SECS * 1000
-	entries := []
-
-	for key in keys(RATE_LIMIT_BUCKETS) {
-		bucket := safe_dict_get(RATE_LIMIT_BUCKETS, key, null)
-		if type(bucket) == "dict" {
-			window_start := to_int_or_zero(safe_dict_get(bucket, "window_start", now_ms))
-			count := to_int_or_zero(safe_dict_get(bucket, "count", 0))
-			if count < 0 {
-				count := 0
-			}
-
-			if now_ms - window_start < ttl_ms {
-				entries := push(entries, {
-					"key": to_string(key),
-					"window_start": window_start,
-					"count": count
-				})
-			}
-		}
-	}
-
-	if RATE_LIMIT_MAX_BUCKETS > 0 {
-		while len(entries) > RATE_LIMIT_MAX_BUCKETS {
-			oldest_index := 0
-			oldest_start := to_int_or_zero(safe_dict_get(entries[0], "window_start", now_ms))
-
-			i := 1
-			while i < len(entries) {
-				candidate_start := to_int_or_zero(safe_dict_get(entries[i], "window_start", now_ms))
-				if candidate_start < oldest_start {
-					oldest_start := candidate_start
-					oldest_index := i
-				}
-				i := i + 1
-			}
-
-			next_entries := []
-			i := 0
-			while i < len(entries) {
-				if i != oldest_index {
-					next_entries := push(next_entries, entries[i])
-				}
-				i := i + 1
-			}
-			entries := next_entries
-		}
-	}
-
-	normalized := {}
-	i := 0
-	while i < len(entries) {
-		entry := entries[i]
-		entry_key := to_string(safe_dict_get(entry, "key", ""))
-		if entry_key != "" {
-			normalized[entry_key] := {
-				"window_start": to_int_or_zero(safe_dict_get(entry, "window_start", now_ms)),
-				"count": to_int_or_zero(safe_dict_get(entry, "count", 0))
-			}
-		}
-		i := i + 1
-	}
-
-	RATE_LIMIT_BUCKETS := normalized
+	db_execute(db, "DELETE FROM rate_limit_buckets WHERE last_seen_ms < ?", [now_ms - ttl_ms])
 }
 
 func check_rate_limit(req) {
@@ -819,13 +758,18 @@ func check_rate_limit(req) {
 	now_ms := current_timestamp()
 	normalize_rate_limit_buckets(now_ms)
 	bucket_key := rate_limit_key(req)
-	bucket := safe_dict_get(RATE_LIMIT_BUCKETS, bucket_key, null)
+	bucket_rows := db_query(db, "SELECT window_start_ms, request_count FROM rate_limit_buckets WHERE bucket_key = ? LIMIT 1", [bucket_key])
 
-	if type(bucket) != "dict" {
-		RATE_LIMIT_BUCKETS[bucket_key] := {
-			"window_start": now_ms,
-			"count": 1
+	if len(bucket_rows) == 0 {
+		if RATE_LIMIT_MAX_BUCKETS > 0 {
+			count_rows := db_query(db, "SELECT COUNT(*) AS n FROM rate_limit_buckets", [])
+			bucket_count := to_int_or_zero(count_rows[0]["n"])
+			while bucket_count >= RATE_LIMIT_MAX_BUCKETS {
+				db_execute(db, "DELETE FROM rate_limit_buckets WHERE bucket_key = (SELECT bucket_key FROM rate_limit_buckets ORDER BY last_seen_ms ASC, bucket_key ASC LIMIT 1)", [])
+				bucket_count := bucket_count - 1
+			}
 		}
+		db_execute(db, "INSERT OR REPLACE INTO rate_limit_buckets (bucket_key, window_start_ms, request_count, last_seen_ms) VALUES (?, ?, ?, ?)", [bucket_key, now_ms, 1, now_ms])
 		return {
 			"allowed": true,
 			"status": 200,
@@ -833,13 +777,11 @@ func check_rate_limit(req) {
 		}
 	}
 
-	window_start := to_int_or_zero(safe_dict_get(bucket, "window_start", now_ms))
-	count := to_int_or_zero(safe_dict_get(bucket, "count", 0))
+	bucket := bucket_rows[0]
+	window_start := to_int_or_zero(safe_dict_get(bucket, "window_start_ms", now_ms))
+	count := to_int_or_zero(safe_dict_get(bucket, "request_count", 0))
 	if now_ms - window_start >= window_ms {
-		RATE_LIMIT_BUCKETS[bucket_key] := {
-			"window_start": now_ms,
-			"count": 1
-		}
+		db_execute(db, "INSERT OR REPLACE INTO rate_limit_buckets (bucket_key, window_start_ms, request_count, last_seen_ms) VALUES (?, ?, ?, ?)", [bucket_key, now_ms, 1, now_ms])
 		return {
 			"allowed": true,
 			"status": 200,
@@ -848,10 +790,7 @@ func check_rate_limit(req) {
 	}
 
 	next_count := count + 1
-	RATE_LIMIT_BUCKETS[bucket_key] := {
-		"window_start": window_start,
-		"count": next_count
-	}
+	db_execute(db, "INSERT OR REPLACE INTO rate_limit_buckets (bucket_key, window_start_ms, request_count, last_seen_ms) VALUES (?, ?, ?, ?)", [bucket_key, window_start, next_count, now_ms])
 
 	if next_count > RATE_LIMIT_MAX_REQUESTS {
 		return {
@@ -1296,8 +1235,6 @@ watchdog_ensure_schema(db)
 
 print("Database ready: " + DB_PATH)
 
-RATE_LIMIT_BUCKETS := {}
-
 # ---------------------------------------------------------------------------
 # Logging helpers
 # ---------------------------------------------------------------------------
@@ -1361,6 +1298,90 @@ func external_text(body, key, fallback_value, max_len) {
 	return truncate_str(redact_sensitive_text(value), max_len)
 }
 
+func external_json_summary(value, max_len) {
+	serialized := value
+	if type(value) == "dict" || type(value) == "array" {
+		serialized = to_json(value)
+	}
+	return truncate_str(redact_sensitive_text(to_string(serialized)), max_len)
+}
+
+func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class) {
+	trace := safe_dict_get(body, "trace", {})
+	has_trace_payload := has_key(body, "trace") != 0 && type(trace) == "dict"
+	if type(trace) != "dict" {
+		trace = {}
+	}
+	trace_id := external_text(trace, "trace_id", external_text(body, "trace_id", "", 160), 160)
+	if trace_id == "" {
+		return {"trace_id": "", "spans": 0, "events": 0, "tool_calls": 0}
+	}
+
+	ts := to_string(current_timestamp())
+	started_at_ms := to_int_or_zero(safe_dict_get(trace, "started_at_ms", 0))
+	ended_at_ms := to_int_or_zero(safe_dict_get(trace, "ended_at_ms", started_at_ms))
+	duration_ms := to_int_or_zero(safe_dict_get(trace, "duration_ms", ended_at_ms - started_at_ms))
+	input_tokens := to_int_or_zero(safe_dict_get(body, "input_tokens", safe_dict_get(trace, "input_tokens", 0)))
+	output_tokens := to_int_or_zero(safe_dict_get(body, "output_tokens", safe_dict_get(trace, "output_tokens", 0)))
+	cached_tokens := to_int_or_zero(safe_dict_get(trace, "cached_input_tokens", 0))
+	cache_write_tokens := to_int_or_zero(safe_dict_get(trace, "cache_write_input_tokens", 0))
+	model_name := external_text(body, "model", external_text(trace, "model", "", 160), 160)
+	rates := watchdog_cost_per_million(model_name)
+	pricing_source := ""
+	input_cost := 0.0
+	output_cost := 0.0
+	if watchdog_has_known_pricing(model_name) {
+		pricing_source = "watchdog-direct-provider-table"
+		input_cost = (input_tokens / 1000000.0) * rates["input"]
+		output_cost = (output_tokens / 1000000.0) * rates["output"]
+	}
+	if has_trace_payload {
+		db_execute(db, "INSERT INTO traces (trace_id, request_dbid, session_id, source_app, data_class, name, status, started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_input_tokens, cache_write_input_tokens, input_cost_usd, output_cost_usd, input_rate_per_million, output_rate_per_million, pricing_source, attributes_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trace_id) DO UPDATE SET status = excluded.status, ended_at_ms = CASE WHEN excluded.ended_at_ms > traces.ended_at_ms THEN excluded.ended_at_ms ELSE traces.ended_at_ms END, duration_ms = CASE WHEN excluded.ended_at_ms > traces.ended_at_ms THEN excluded.ended_at_ms - traces.started_at_ms ELSE traces.duration_ms END, input_tokens = traces.input_tokens + excluded.input_tokens, output_tokens = traces.output_tokens + excluded.output_tokens, cached_input_tokens = traces.cached_input_tokens + excluded.cached_input_tokens, cache_write_input_tokens = traces.cache_write_input_tokens + excluded.cache_write_input_tokens, input_cost_usd = traces.input_cost_usd + excluded.input_cost_usd, output_cost_usd = traces.output_cost_usd + excluded.output_cost_usd, attributes_json = excluded.attributes_json", [trace_id, request_dbid, session_id, source_app, data_class, external_text(trace, "name", "interactive_chat", 120), external_text(trace, "status", "success", 32), started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, input_cost, output_cost, rates["input"], rates["output"], pricing_source, external_json_summary(safe_dict_get(trace, "attributes", {}), 12000), ts])
+	}
+
+	span_count := 0
+	spans := safe_dict_get(body, "spans", [])
+	if type(spans) == "array" {
+		for span in spans {
+			if span_count < 128 && type(span) == "dict" {
+				span_id := external_text(span, "span_id", "", 160)
+				if span_id != "" {
+					span_started := to_int_or_zero(safe_dict_get(span, "started_at_ms", started_at_ms))
+					span_ended := to_int_or_zero(safe_dict_get(span, "ended_at_ms", span_started))
+					span_duration := to_int_or_zero(safe_dict_get(span, "duration_ms", span_ended - span_started))
+					db_execute(db, "INSERT OR IGNORE INTO trace_spans (trace_id, span_id, parent_span_id, request_dbid, session_id, source_app, data_class, span_kind, name, status, started_at_ms, ended_at_ms, duration_ms, attributes_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [trace_id, span_id, external_text(span, "parent_span_id", "", 160), request_dbid, session_id, source_app, data_class, external_text(span, "span_kind", "internal", 40), external_text(span, "name", "span", 120), external_text(span, "status", "success", 32), span_started, span_ended, span_duration, external_json_summary(safe_dict_get(span, "attributes", {}), 12000), ts])
+					span_count = span_count + 1
+				}
+			}
+		}
+	}
+
+	event_count := 0
+	events := safe_dict_get(body, "events", [])
+	if type(events) == "array" {
+		for event in events {
+			if event_count < 512 && type(event) == "dict" {
+				event_id := external_text(event, "event_id", "event-" + to_string(event_count), 160)
+				db_execute(db, "INSERT OR IGNORE INTO trace_events (event_id, trace_id, span_id, sequence, event_name, occurred_at_ms, attributes_json, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", [event_id, trace_id, external_text(event, "span_id", "", 160), to_int_or_zero(safe_dict_get(event, "sequence", event_count)), external_text(event, "event_name", "event", 120), to_int_or_zero(safe_dict_get(event, "occurred_at_ms", started_at_ms)), external_json_summary(safe_dict_get(event, "attributes", {}), 12000), source_app, data_class, ts])
+				event_count = event_count + 1
+			}
+		}
+	}
+
+	tool_count := 0
+	tool_calls := safe_dict_get(body, "tool_calls", [])
+	if type(tool_calls) == "array" {
+		for tool_call in tool_calls {
+			if tool_count < 64 && type(tool_call) == "dict" {
+				db_execute(db, "INSERT INTO tool_calls (request_dbid, session_id, tool_name, tool_args, tool_result, status, latency_ms, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", [request_dbid, session_id, external_text(tool_call, "tool_name", "unknown", 120), external_json_summary(safe_dict_get(tool_call, "arguments", {}), 4000), external_json_summary(safe_dict_get(tool_call, "result", {}), 8000), external_text(tool_call, "status", "success", 32), to_int_or_zero(safe_dict_get(tool_call, "latency_ms", 0)), source_app, data_class, ts])
+				tool_count = tool_count + 1
+			}
+		}
+	}
+
+	return {"trace_id": trace_id, "spans": span_count, "events": event_count, "tool_calls": tool_count}
+}
+
 func insert_external_request(body) {
 	source_app := external_text(body, "source_app", "external", 80)
 	request_id := external_text(body, "request_id", "", 160)
@@ -1382,7 +1403,7 @@ func insert_external_request(body) {
 	total_tokens := to_int_or_zero(safe_dict_get(body, "total_tokens", input_tokens + output_tokens))
 	model_name := external_text(body, "model", "", 160)
 	cost_usd := safe_dict_get(body, "cost_usd", 0.0)
-	if !has_key(body, "cost_usd") && watchdog_has_known_pricing(model_name) {
+	if has_key(body, "cost_usd") == 0 && watchdog_has_known_pricing(model_name) {
 		cost_usd = watchdog_estimate_cost(model_name, input_tokens * 1.0, output_tokens * 1.0)
 	}
 	latency_ms := to_int_or_zero(safe_dict_get(body, "latency_ms", 0))
@@ -1395,9 +1416,11 @@ func insert_external_request(body) {
 		request_dbid := rows[0]["id"]
 	}
 
-	step_number := next_step_number(external_text(body, "session_id", request_id, 160))
-	db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?)", [external_text(body, "session_id", request_id, 160), external_text(body, "agent_id", source_app, 120), step_number, external_text(body, "step_type", "request_completed", 80), external_text(body, "response_summary", "External telemetry recorded", 500), to_json({"request_dbid": request_dbid, "task_id": external_text(body, "task_id", "", 160), "correlation_id": external_text(body, "correlation_id", "", 160)}), source_app, "external", ts])
-	return {"ok": true, "id": request_dbid, "deduplicated": false}
+	session_id := external_text(body, "session_id", request_id, 160)
+	step_number := next_step_number(session_id)
+	db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?)", [session_id, external_text(body, "agent_id", source_app, 120), step_number, external_text(body, "step_type", "request_completed", 80), external_text(body, "response_summary", "External telemetry recorded", 500), to_json({"request_dbid": request_dbid, "task_id": external_text(body, "task_id", "", 160), "correlation_id": external_text(body, "correlation_id", "", 160)}), source_app, "external", ts])
+	trace_result := insert_trace_bundle(request_dbid, body, source_app, session_id, "external")
+	return {"ok": true, "id": request_dbid, "deduplicated": false, "trace": trace_result}
 }
 
 func insert_audit_event(action, actor_key, result, metadata) {
@@ -1451,7 +1474,7 @@ func forward_response(status_code, body_text, content_type) {
 	return apply_default_security_headers(response)
 }
 
-func export_rows_as_jsonl(request_rows, tool_rows, step_rows) {
+func export_rows_as_jsonl(request_rows, tool_rows, step_rows, trace_rows, span_rows, event_rows) {
 	lines := []
 
 	i := 0
@@ -1478,6 +1501,22 @@ func export_rows_as_jsonl(request_rows, tool_rows, step_rows) {
 			"kind": "agent_step",
 			"data": step_rows[i]
 		}))
+		i := i + 1
+	}
+
+	i := 0
+	while i < len(trace_rows) {
+		lines := push(lines, to_json({"kind": "trace", "data": trace_rows[i]}))
+		i := i + 1
+	}
+	i := 0
+	while i < len(span_rows) {
+		lines := push(lines, to_json({"kind": "trace_span", "data": span_rows[i]}))
+		i := i + 1
+	}
+	i := 0
+	while i < len(event_rows) {
+		lines := push(lines, to_json({"kind": "trace_event", "data": event_rows[i]}))
 		i := i + 1
 	}
 
@@ -2169,15 +2208,47 @@ server := server.route("POST", "/api/telemetry/requests", func(req) {
 	if !body_parse["ok"] || type(body_parse["data"]) != "dict" {
 		return api_error(400, "Request body must be a JSON object")
 	}
-	result := insert_external_request(body_parse["data"])
-	if !result["ok"] {
-		return api_error(400, result["error"])
+	try {
+		result := insert_external_request(body_parse["data"])
+		if !result["ok"] {
+			return api_error(400, result["error"])
+		}
+		insert_audit_event("external_telemetry_intake", resolve_audit_actor_key(req, "api"), "success", {
+			"request_dbid": result["id"],
+			"deduplicated": result["deduplicated"],
+			"source_app": external_text(body_parse["data"], "source_app", "external", 80)
+		})
+		return api_ok(result)
+	} except err {
+		print("External telemetry intake failed: " + to_string(err))
+		return api_error(500, "External telemetry intake failed")
 	}
-	insert_audit_event("external_telemetry_intake", resolve_audit_actor_key(req, "api"), "success", {
-		"request_dbid": result["id"],
-		"deduplicated": result["deduplicated"],
-		"source_app": external_text(body_parse["data"], "source_app", "external", 80)
-	})
+})
+
+# Append spans/events to an existing trace without requiring another model
+# request row. This keeps each producer independently usable while preserving
+# one optional, provider-neutral telemetry contract.
+server := server.route("POST", "/api/telemetry/traces", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+	body_parse := parse_json_safe(to_string(safe_dict_get(req, "body", "{}")))
+	if !body_parse["ok"] || type(body_parse["data"]) != "dict" {
+		return api_error(400, "Request body must be a JSON object")
+	}
+	body := body_parse["data"]
+	trace_id := external_text(body, "trace_id", "", 160)
+	trace := safe_dict_get(body, "trace", {})
+	if trace_id == "" && type(trace) == "dict" {
+		trace_id = external_text(trace, "trace_id", "", 160)
+	}
+	if trace_id == "" {
+		return api_error(400, "trace_id is required")
+	}
+	source_app := external_text(body, "source_app", "external", 80)
+	session_id := external_text(body, "session_id", "", 160)
+	result := insert_trace_bundle(to_int_or_zero(safe_dict_get(body, "request_dbid", 0)), body, source_app, session_id, "external")
 	return api_ok(result)
 })
 
@@ -2196,6 +2267,9 @@ server := server.route("GET", "/api/stats", func(req) {
 	sess_rows := db_query(db, "SELECT COUNT(DISTINCT session_id) AS n FROM requests", [])
 	tc_rows := db_query(db, "SELECT COUNT(*) AS n FROM tool_calls", [])
 	step_rows := db_query(db, "SELECT COUNT(*) AS n FROM agent_steps", [])
+	trace_rows := db_query(db, "SELECT COUNT(*) AS n FROM traces", [])
+	span_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_spans", [])
+	event_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_events", [])
 
 	total := total_rows[0]["n"]
 	errors := error_rows[0]["n"]
@@ -2205,6 +2279,9 @@ server := server.route("GET", "/api/stats", func(req) {
 	sess_n := sess_rows[0]["n"]
 	tc_n := tc_rows[0]["n"]
 	steps_n := step_rows[0]["n"]
+	trace_n := trace_rows[0]["n"]
+	span_n := span_rows[0]["n"]
+	event_n := event_rows[0]["n"]
 
 	error_rate := 0.0
 	if total > 0 {
@@ -2220,7 +2297,10 @@ server := server.route("GET", "/api/stats", func(req) {
 		"total_tokens": tokens,
 		"total_sessions": sess_n,
 		"total_tool_calls": tc_n,
-		"total_agent_steps": steps_n
+		"total_agent_steps": steps_n,
+		"total_traces": trace_n,
+		"total_trace_spans": span_n,
+		"total_trace_events": event_n
 	})
 })
 
@@ -2328,6 +2408,46 @@ server := server.route("GET", "/api/requests", func(req) {
 	params := push(params, offset)
 
 	rows := db_query(db, sql, params)
+	return api_ok(rows)
+})
+
+server := server.route("GET", "/api/traces", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+	limit := request_query_int(req, "limit", 100, 1, 500)
+	rows := db_query(db, "SELECT * FROM traces ORDER BY started_at_ms DESC LIMIT ?", [limit])
+	return api_ok(rows)
+})
+
+server := server.route("GET", "/api/trace-spans", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+	limit := request_query_int(req, "limit", 1000, 1, 5000)
+	trace_id := request_query_text(req, "trace_id", "")
+	if trace_id != "" {
+		rows := db_query(db, "SELECT * FROM trace_spans WHERE trace_id = ? ORDER BY started_at_ms ASC LIMIT ?", [trace_id, limit])
+		return api_ok(rows)
+	}
+	rows := db_query(db, "SELECT * FROM trace_spans ORDER BY started_at_ms DESC LIMIT ?", [limit])
+	return api_ok(rows)
+})
+
+server := server.route("GET", "/api/trace-events", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+	limit := request_query_int(req, "limit", 2000, 1, 10000)
+	trace_id := request_query_text(req, "trace_id", "")
+	if trace_id != "" {
+		rows := db_query(db, "SELECT * FROM trace_events WHERE trace_id = ? ORDER BY sequence ASC, occurred_at_ms ASC LIMIT ?", [trace_id, limit])
+		return api_ok(rows)
+	}
+	rows := db_query(db, "SELECT * FROM trace_events ORDER BY occurred_at_ms DESC LIMIT ?", [limit])
 	return api_ok(rows)
 })
 
@@ -2688,6 +2808,9 @@ server := server.route("GET", "/api/admin/diagnostics", func(req) {
 	tool_rows := db_query(db, "SELECT COUNT(*) AS n FROM tool_calls", [])
 	step_rows := db_query(db, "SELECT COUNT(*) AS n FROM agent_steps", [])
 	audit_rows := db_query(db, "SELECT COUNT(*) AS n FROM audit_events", [])
+	trace_rows := db_query(db, "SELECT COUNT(*) AS n FROM traces", [])
+	span_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_spans", [])
+	event_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_events", [])
 
 	diagnostics := {
 		"runtime": {
@@ -2713,7 +2836,10 @@ server := server.route("GET", "/api/admin/diagnostics", func(req) {
 			"requests": to_int_or_zero(request_rows[0]["n"]),
 			"tool_calls": to_int_or_zero(tool_rows[0]["n"]),
 			"agent_steps": to_int_or_zero(step_rows[0]["n"]),
-			"audit_events": to_int_or_zero(audit_rows[0]["n"])
+			"audit_events": to_int_or_zero(audit_rows[0]["n"]),
+			"traces": to_int_or_zero(trace_rows[0]["n"]),
+			"trace_spans": to_int_or_zero(span_rows[0]["n"]),
+			"trace_events": to_int_or_zero(event_rows[0]["n"])
 		}
 	}
 
@@ -2759,14 +2885,23 @@ server := server.route("POST", "/api/admin/prune", func(req) {
 	request_rows := db_query(db, "SELECT COUNT(*) AS n FROM requests WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
 	tool_rows := db_query(db, "SELECT COUNT(*) AS n FROM tool_calls WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
 	step_rows := db_query(db, "SELECT COUNT(*) AS n FROM agent_steps WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
+	trace_rows := db_query(db, "SELECT COUNT(*) AS n FROM traces WHERE started_at_ms < ?", [before_ms])
+	span_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_spans WHERE started_at_ms < ?", [before_ms])
+	event_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_events WHERE occurred_at_ms < ?", [before_ms])
 
 	counts := {
 		"requests": request_rows[0]["n"],
 		"tool_calls": tool_rows[0]["n"],
-		"agent_steps": step_rows[0]["n"]
+		"agent_steps": step_rows[0]["n"],
+		"traces": trace_rows[0]["n"],
+		"trace_spans": span_rows[0]["n"],
+		"trace_events": event_rows[0]["n"]
 	}
 
 	if !dry_run {
+		db_execute(db, "DELETE FROM trace_events WHERE occurred_at_ms < ?", [before_ms])
+		db_execute(db, "DELETE FROM trace_spans WHERE started_at_ms < ?", [before_ms])
+		db_execute(db, "DELETE FROM traces WHERE started_at_ms < ?", [before_ms])
 		db_execute(db, "DELETE FROM tool_calls WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
 		db_execute(db, "DELETE FROM agent_steps WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
 		db_execute(db, "DELETE FROM requests WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
@@ -2800,8 +2935,14 @@ server := server.route("POST", "/api/admin/prune-fixtures", func(req) {
 	request_rows := db_query(db, "SELECT COUNT(*) AS n FROM requests WHERE data_class = 'fixture'", [])
 	tool_rows := db_query(db, "SELECT COUNT(*) AS n FROM tool_calls WHERE data_class = 'fixture'", [])
 	step_rows := db_query(db, "SELECT COUNT(*) AS n FROM agent_steps WHERE data_class = 'fixture'", [])
-	counts := {"requests": request_rows[0]["n"], "tool_calls": tool_rows[0]["n"], "agent_steps": step_rows[0]["n"]}
+	trace_rows := db_query(db, "SELECT COUNT(*) AS n FROM traces WHERE data_class = 'fixture'", [])
+	span_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_spans WHERE data_class = 'fixture'", [])
+	event_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_events WHERE data_class = 'fixture'", [])
+	counts := {"requests": request_rows[0]["n"], "tool_calls": tool_rows[0]["n"], "agent_steps": step_rows[0]["n"], "traces": trace_rows[0]["n"], "trace_spans": span_rows[0]["n"], "trace_events": event_rows[0]["n"]}
 	if !dry_run {
+		db_execute(db, "DELETE FROM trace_events WHERE data_class = 'fixture'", [])
+		db_execute(db, "DELETE FROM trace_spans WHERE data_class = 'fixture'", [])
+		db_execute(db, "DELETE FROM traces WHERE data_class = 'fixture'", [])
 		db_execute(db, "DELETE FROM tool_calls WHERE data_class = 'fixture'", [])
 		db_execute(db, "DELETE FROM agent_steps WHERE data_class = 'fixture'", [])
 		db_execute(db, "DELETE FROM requests WHERE data_class = 'fixture'", [])
@@ -2904,8 +3045,63 @@ server := server.route("GET", "/api/export", func(req) {
 	step_params := push(step_params, cursor)
 	steps := db_query(db, step_sql, step_params)
 
+	trace_conditions := []
+	trace_params := []
+	if session_id != "" {
+		trace_conditions := push(trace_conditions, "session_id = ?")
+		trace_params := push(trace_params, session_id)
+	}
+	if since_ms > 0 {
+		trace_conditions := push(trace_conditions, "started_at_ms >= ?")
+		trace_params := push(trace_params, since_ms)
+	}
+	if until_ms > 0 {
+		trace_conditions := push(trace_conditions, "started_at_ms <= ?")
+		trace_params := push(trace_params, until_ms)
+	}
+	trace_sql := "SELECT * FROM traces" + where_clause_from_conditions(trace_conditions) + " ORDER BY started_at_ms DESC LIMIT ? OFFSET ?"
+	trace_params := push(trace_params, chunk_size)
+	trace_params := push(trace_params, cursor)
+	traces := db_query(db, trace_sql, trace_params)
+	span_conditions := []
+	span_params := []
+	if session_id != "" {
+		span_conditions := push(span_conditions, "session_id = ?")
+		span_params := push(span_params, session_id)
+	}
+	if since_ms > 0 {
+		span_conditions := push(span_conditions, "started_at_ms >= ?")
+		span_params := push(span_params, since_ms)
+	}
+	if until_ms > 0 {
+		span_conditions := push(span_conditions, "started_at_ms <= ?")
+		span_params := push(span_params, until_ms)
+	}
+	span_sql := "SELECT * FROM trace_spans" + where_clause_from_conditions(span_conditions) + " ORDER BY started_at_ms DESC LIMIT ? OFFSET ?"
+	span_params := push(span_params, chunk_size)
+	span_params := push(span_params, cursor)
+	spans := db_query(db, span_sql, span_params)
+	event_conditions := []
+	event_params := []
+	if session_id != "" {
+		event_conditions := push(event_conditions, "trace_id IN (SELECT trace_id FROM traces WHERE session_id = ?)")
+		event_params := push(event_params, session_id)
+	}
+	if since_ms > 0 {
+		event_conditions := push(event_conditions, "occurred_at_ms >= ?")
+		event_params := push(event_params, since_ms)
+	}
+	if until_ms > 0 {
+		event_conditions := push(event_conditions, "occurred_at_ms <= ?")
+		event_params := push(event_params, until_ms)
+	}
+	event_sql := "SELECT * FROM trace_events" + where_clause_from_conditions(event_conditions) + " ORDER BY occurred_at_ms DESC LIMIT ? OFFSET ?"
+	event_params := push(event_params, chunk_size)
+	event_params := push(event_params, cursor)
+	events := db_query(db, event_sql, event_params)
+
 	has_more := false
-	if len(reqs) == chunk_size || len(tools) == chunk_size || len(steps) == chunk_size {
+	if len(reqs) == chunk_size || len(tools) == chunk_size || len(steps) == chunk_size || len(traces) == chunk_size || len(spans) == chunk_size || len(events) == chunk_size {
 		has_more := true
 	}
 
@@ -2915,7 +3111,7 @@ server := server.route("GET", "/api/export", func(req) {
 	}
 
 	if export_format == "jsonl" || export_format == "ndjson" {
-		response := export_rows_as_jsonl(reqs, tools, steps)
+		response := export_rows_as_jsonl(reqs, tools, steps, traces, spans, events)
 		response := set_header(response, "X-Watchdog-Cursor", to_string(cursor))
 		response := set_header(response, "X-Watchdog-Chunk-Size", to_string(chunk_size))
 		response := set_header(response, "X-Watchdog-Next-Cursor", to_string(next_cursor))
@@ -2944,7 +3140,10 @@ server := server.route("GET", "/api/export", func(req) {
 		},
 		"requests": reqs,
 		"tool_calls": tools,
-		"agent_steps": steps
+		"agent_steps": steps,
+		"traces": traces,
+		"trace_spans": spans,
+		"trace_events": events
 	})
 })
 
