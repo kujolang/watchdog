@@ -28,5 +28,8 @@ assertContains('idx_agent_steps_created_at', 'agent_steps.created_at index shoul
 assertContains('idx_agent_steps_created_at_ms', 'agent_steps created_at integer-expression index should exist');
 assertContains('idx_audit_events_created_at_ms', 'audit events created_at integer-expression index should exist');
 assertContains('0005_time_filter_indexes', 'time filter index migration record should exist');
+assertContains('CREATE TABLE IF NOT EXISTS backup_settings', 'backup settings table should exist');
+assertContains('CREATE TABLE IF NOT EXISTS backup_runs', 'backup run history table should exist');
+assertContains('0011_automated_backups', 'automated backup migration record should exist');
 
 console.log('schema_migration_static_check: PASS');

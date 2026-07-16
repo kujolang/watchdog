@@ -42,6 +42,16 @@ DEFAULT_RATE_LIMIT_BUCKET_TTL_SECS := 600
 DEFAULT_IDENTIFIER_MAX_LEN := 128
 DEFAULT_EXPORT_MAX_ROWS := 10000
 MAX_EXPORT_MAX_ROWS := 50000
+DEFAULT_BACKUP_ENABLED := "true"
+DEFAULT_BACKUP_INTERVAL_MINUTES := 1440
+DEFAULT_BACKUP_DIR := "data/backups"
+DEFAULT_BACKUP_RETENTION_COUNT := 30
+DEFAULT_BACKUP_ENCRYPTION_ENABLED := "false"
+DEFAULT_BACKUP_SCRIPT_PATH := "scripts/watchdog_backup.js"
+DEFAULT_NODE_BIN := "node"
+DEFAULT_OPENSSL_BIN := "openssl"
+MIN_BACKUP_INTERVAL_MINUTES := 15
+MAX_BACKUP_INTERVAL_MINUTES := 43200
 API_CONTRACT_VERSION := "v1"
 API_CONTRACT_STATUS := "stable"
 
@@ -1159,6 +1169,15 @@ RATE_LIMIT_MAX_BUCKETS := positive_int_or_fallback(parse_int_env_many(["WDG_RATE
 RATE_LIMIT_BUCKET_TTL_SECS := positive_int_or_fallback(parse_int_env_many(["WDG_RATE_LIMIT_BUCKET_TTL_SECS"], DEFAULT_RATE_LIMIT_BUCKET_TTL_SECS), DEFAULT_RATE_LIMIT_BUCKET_TTL_SECS)
 IDENTIFIER_MAX_LEN := positive_int_or_fallback(parse_int_env_many(["WDG_IDENTIFIER_MAX_LEN"], DEFAULT_IDENTIFIER_MAX_LEN), DEFAULT_IDENTIFIER_MAX_LEN)
 EXPORT_MAX_ROWS := positive_int_or_fallback(parse_int_env_many(["WDG_EXPORT_MAX_ROWS"], DEFAULT_EXPORT_MAX_ROWS), DEFAULT_EXPORT_MAX_ROWS)
+BACKUP_DEFAULT_ENABLED := parse_bool_value(env_or_many(["WDG_BACKUP_ENABLED"], DEFAULT_BACKUP_ENABLED), true)
+BACKUP_DEFAULT_INTERVAL_MINUTES := positive_int_or_fallback(parse_int_env_many(["WDG_BACKUP_INTERVAL_MINUTES"], DEFAULT_BACKUP_INTERVAL_MINUTES), DEFAULT_BACKUP_INTERVAL_MINUTES)
+BACKUP_DEFAULT_DIR := env_or_many(["WDG_BACKUP_DIR"], DEFAULT_BACKUP_DIR)
+BACKUP_DEFAULT_RETENTION_COUNT := positive_int_or_fallback(parse_int_env_many(["WDG_BACKUP_RETENTION_COUNT"], DEFAULT_BACKUP_RETENTION_COUNT), DEFAULT_BACKUP_RETENTION_COUNT)
+BACKUP_DEFAULT_ENCRYPTION_ENABLED := parse_bool_value(env_or_many(["WDG_BACKUP_ENCRYPTION_ENABLED"], DEFAULT_BACKUP_ENCRYPTION_ENABLED), false)
+BACKUP_ENCRYPTION_KEY_FILE := env_or_many(["WDG_BACKUP_ENCRYPTION_KEY_FILE"], "")
+BACKUP_SCRIPT_PATH := env_or_many(["WDG_BACKUP_SCRIPT_PATH"], DEFAULT_BACKUP_SCRIPT_PATH)
+NODE_BIN := env_or_many(["WDG_NODE_BIN"], DEFAULT_NODE_BIN)
+OPENSSL_BIN := env_or_many(["WDG_OPENSSL_BIN"], DEFAULT_OPENSSL_BIN)
 
 func print_lines(line_values) {
 	for line in line_values {
@@ -1189,6 +1208,10 @@ kv("Rate limit max buckets", RATE_LIMIT_MAX_BUCKETS)
 kv("Rate limit bucket ttl seconds", RATE_LIMIT_BUCKET_TTL_SECS)
 kv("Identifier max length", IDENTIFIER_MAX_LEN)
 kv("Export max rows", EXPORT_MAX_ROWS)
+kv("Backup default enabled", BACKUP_DEFAULT_ENABLED)
+kv("Backup default interval minutes", BACKUP_DEFAULT_INTERVAL_MINUTES)
+kv("Backup default directory", BACKUP_DEFAULT_DIR)
+kv("Backup encryption key configured", BACKUP_ENCRYPTION_KEY_FILE != "")
 if API_AUTH_MODE != "token" {
 	print_lines([
 		"Warning: API auth is disabled and Kujo http_server listens on all interfaces.",
@@ -1232,6 +1255,7 @@ print("")
 
 db := db_connect("sqlite", DB_PATH)
 watchdog_ensure_schema(db)
+db_execute(db, "INSERT OR IGNORE INTO backup_settings (id, enabled, interval_minutes, backup_dir, retention_count, encryption_enabled, updated_at_ms) VALUES (1, ?, ?, ?, ?, ?, ?)", [BACKUP_DEFAULT_ENABLED, BACKUP_DEFAULT_INTERVAL_MINUTES, BACKUP_DEFAULT_DIR, BACKUP_DEFAULT_RETENTION_COUNT, BACKUP_DEFAULT_ENCRYPTION_ENABLED, current_timestamp()])
 
 print("Database ready: " + DB_PATH)
 
@@ -1439,6 +1463,243 @@ func insert_audit_event(action, actor_key, result, metadata) {
 		meta_str,
 		ts
 	])
+}
+
+# ---------------------------------------------------------------------------
+# Automated database backups
+# ---------------------------------------------------------------------------
+
+BACKUP_IN_PROGRESS := false
+
+func backup_process_success(proc) {
+	if type(proc) == "dict" {
+		return parse_bool_value(safe_dict_get(proc, "success", false), false)
+	}
+	try {
+		return parse_bool_value(proc.success, false)
+	} except err {
+		return false
+	}
+}
+
+func backup_process_exitcode(proc) {
+	if type(proc) == "dict" {
+		return to_int_or_zero(safe_dict_get(proc, "exitcode", 127))
+	}
+	try {
+		return to_int_or_zero(proc.exitcode)
+	} except err {
+		return 127
+	}
+}
+
+func backup_process_stdout(proc) {
+	if type(proc) == "dict" {
+		return to_string(safe_dict_get(proc, "stdout", ""))
+	}
+	try {
+		return to_string(proc.stdout)
+	} except err {
+		return ""
+	}
+}
+
+func backup_process_stderr(proc) {
+	if type(proc) == "dict" {
+		return to_string(safe_dict_get(proc, "stderr", ""))
+	}
+	try {
+		return to_string(proc.stderr)
+	} except err {
+		return ""
+	}
+}
+
+func bool_as_int(value) {
+	if parse_bool_value(value, false) {
+		return 1
+	}
+	return 0
+}
+
+func validate_backup_dir(raw_value) {
+	dir := trim(to_string(raw_value))
+	if dir == "" {
+		return {"ok": false, "error": "Backup directory is required"}
+	}
+	if contains(dir, "\n") || contains(dir, "\r") {
+		return {"ok": false, "error": "Backup directory contains unsupported control characters"}
+	}
+	parts := split(replace(dir, "\\", "/"), "/")
+	for part in parts {
+		if trim(to_string(part)) == ".." {
+			return {"ok": false, "error": "Backup directory must not contain parent-directory segments"}
+		}
+	}
+	return {"ok": true, "path": dir, "error": ""}
+}
+
+func read_backup_settings() {
+	rows := db_query(db, "SELECT enabled, interval_minutes, backup_dir, retention_count, encryption_enabled, updated_at_ms FROM backup_settings WHERE id = 1 LIMIT 1", [])
+	if len(rows) == 0 {
+		return {
+			"enabled": BACKUP_DEFAULT_ENABLED,
+			"interval_minutes": BACKUP_DEFAULT_INTERVAL_MINUTES,
+			"backup_dir": BACKUP_DEFAULT_DIR,
+			"retention_count": BACKUP_DEFAULT_RETENTION_COUNT,
+			"encryption_enabled": BACKUP_DEFAULT_ENCRYPTION_ENABLED,
+			"updated_at_ms": 0
+		}
+	}
+	row := rows[0]
+	return {
+		"enabled": to_int_or_zero(row["enabled"]) == 1,
+		"interval_minutes": to_int_or_zero(row["interval_minutes"]),
+		"backup_dir": to_string(row["backup_dir"]),
+		"retention_count": to_int_or_zero(row["retention_count"]),
+		"encryption_enabled": to_int_or_zero(row["encryption_enabled"]) == 1,
+		"updated_at_ms": to_int_or_zero(row["updated_at_ms"])
+	}
+}
+
+func backup_last_success_ms() {
+	rows := db_query(db, "SELECT COALESCE(MAX(finished_at_ms),0) AS last_success_ms FROM backup_runs WHERE status = 'success'", [])
+	return to_int_or_zero(rows[0]["last_success_ms"])
+}
+
+func backup_last_attempt_ms() {
+	rows := db_query(db, "SELECT COALESCE(MAX(started_at_ms),0) AS last_attempt_ms FROM backup_runs", [])
+	return to_int_or_zero(rows[0]["last_attempt_ms"])
+}
+
+func backup_runs(limit_value) {
+	return db_query(db, "SELECT id, trigger_type, status, backup_path, checksum_path, size_bytes, encrypted, error_message, started_at_ms, finished_at_ms FROM backup_runs ORDER BY started_at_ms DESC LIMIT ?", [limit_value])
+}
+
+func backup_status_payload() {
+	settings := read_backup_settings()
+	last_success_ms := backup_last_success_ms()
+	next_due_at_ms := 0
+	if settings["enabled"] {
+		next_due_at_ms = last_success_ms + (settings["interval_minutes"] * 60 * 1000)
+		if last_success_ms == 0 {
+			next_due_at_ms = current_timestamp()
+		}
+	}
+	return {
+		"settings": settings,
+		"encryption_key_configured": BACKUP_ENCRYPTION_KEY_FILE != "",
+		"backup_in_progress": BACKUP_IN_PROGRESS,
+		"last_success_at_ms": last_success_ms,
+		"next_due_at_ms": next_due_at_ms,
+		"runs": backup_runs(25),
+		"limits": {
+			"min_interval_minutes": MIN_BACKUP_INTERVAL_MINUTES,
+			"max_interval_minutes": MAX_BACKUP_INTERVAL_MINUTES,
+			"max_retention_count": 3650
+		}
+	}
+}
+
+func create_backup_run(trigger_type) {
+	if BACKUP_IN_PROGRESS {
+		return {"ok": false, "error": "A Watchdog backup is already in progress"}
+	}
+	BACKUP_IN_PROGRESS = true
+	started_ms := current_timestamp()
+	settings := read_backup_settings()
+	run_id := 0
+
+	if settings["encryption_enabled"] && BACKUP_ENCRYPTION_KEY_FILE == "" {
+		error_message := "Backup encryption is enabled but WDG_BACKUP_ENCRYPTION_KEY_FILE is not configured"
+		db_execute(db, "INSERT INTO backup_runs (trigger_type, status, error_message, started_at_ms, finished_at_ms) VALUES (?, 'failed', ?, ?, ?)", [trigger_type, error_message, started_ms, current_timestamp()])
+		id_rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
+		run_id = to_int_or_zero(id_rows[0]["id"])
+		insert_audit_event("backup_operation", "system", "failed", {"trigger": trigger_type, "reason": "encryption_key_not_configured"})
+		BACKUP_IN_PROGRESS = false
+		return {"ok": false, "error": error_message}
+	}
+
+	args := [NODE_BIN, BACKUP_SCRIPT_PATH, "--db", DB_PATH, "--out-dir", settings["backup_dir"], "--retention-count", to_string(settings["retention_count"])]
+	result_path := ".watchdog-backup-result-" + to_string(current_timestamp()) + "-" + to_string(random_int(100000, 999999)) + ".json"
+	args := push(args, "--result-file")
+	args := push(args, result_path)
+	if settings["encryption_enabled"] {
+		args := push(args, "--encryption-key-file")
+		args := push(args, BACKUP_ENCRYPTION_KEY_FILE)
+		args := push(args, "--openssl-bin")
+		args := push(args, OPENSSL_BIN)
+	}
+
+	proc := null
+	try {
+		proc = spawn_process(args)
+	} except err {
+		proc = {"success": false, "exitcode": 127, "stdout": "", "stderr": to_string(err)}
+	}
+
+	stdout_text := trim(backup_process_stdout(proc))
+	if file_exists(result_path) {
+		try {
+			stdout_text = trim(read_file(result_path))
+			delete_file(result_path)
+		} except cleanup_err {
+			# Result cleanup is best-effort; backup success is determined below.
+		}
+	}
+	parsed := parse_json_safe(stdout_text)
+	if backup_process_success(proc) && backup_process_exitcode(proc) == 0 && parsed["ok"] && type(parsed["data"]) == "dict" && parse_bool_value(safe_dict_get(parsed["data"], "ok", false), false) {
+		data := parsed["data"]
+		finished_ms := current_timestamp()
+		backup_path := truncate_str(to_string(safe_dict_get(data, "path", "")), 1000)
+		checksum_path := truncate_str(to_string(safe_dict_get(data, "checksum_path", "")), 1000)
+		size_bytes := to_int_or_zero(safe_dict_get(data, "size_bytes", 0))
+		encrypted := bool_as_int(safe_dict_get(data, "encrypted", false))
+		db_execute(db, "INSERT INTO backup_runs (trigger_type, status, backup_path, checksum_path, size_bytes, encrypted, started_at_ms, finished_at_ms) VALUES (?, 'success', ?, ?, ?, ?, ?, ?)", [trigger_type, backup_path, checksum_path, size_bytes, encrypted, started_ms, finished_ms])
+		id_rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
+		run_id = to_int_or_zero(id_rows[0]["id"])
+		insert_audit_event("backup_operation", "system", "success", {"trigger": trigger_type, "encrypted": encrypted == 1, "size_bytes": size_bytes})
+		BACKUP_IN_PROGRESS = false
+		return {"ok": true, "run_id": run_id, "backup_path": backup_path, "checksum_path": checksum_path, "size_bytes": size_bytes, "encrypted": encrypted == 1}
+	}
+
+	error_message := "Backup helper failed"
+	if parsed["ok"] && type(parsed["data"]) == "dict" {
+		error_message = to_string(safe_dict_get(parsed["data"], "error", error_message))
+	} else {
+		stderr_text := trim(backup_process_stderr(proc))
+		if stderr_text != "" {
+			error_message = stderr_text
+		} else if stdout_text != "" {
+			error_message = stdout_text
+		}
+	}
+	error_message = truncate_str(redact_sensitive_text(error_message), 500)
+	db_execute(db, "INSERT INTO backup_runs (trigger_type, status, error_message, started_at_ms, finished_at_ms) VALUES (?, 'failed', ?, ?, ?)", [trigger_type, error_message, started_ms, current_timestamp()])
+	id_rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
+	run_id = to_int_or_zero(id_rows[0]["id"])
+	insert_audit_event("backup_operation", "system", "failed", {"trigger": trigger_type, "reason": error_message})
+	BACKUP_IN_PROGRESS = false
+	return {"ok": false, "run_id": run_id, "error": error_message}
+}
+
+func maybe_run_scheduled_backup() {
+	settings := read_backup_settings()
+	if !settings["enabled"] || BACKUP_IN_PROGRESS {
+		return {"ok": true, "ran": false}
+	}
+	now_ms := current_timestamp()
+	last_success_ms := backup_last_success_ms()
+	last_attempt_ms := backup_last_attempt_ms()
+	interval_ms := settings["interval_minutes"] * 60 * 1000
+	if last_success_ms > 0 && now_ms - last_success_ms < interval_ms {
+		return {"ok": true, "ran": false}
+	}
+	if last_attempt_ms > last_success_ms && now_ms - last_attempt_ms < (15 * 60 * 1000) {
+		return {"ok": true, "ran": false}
+	}
+	result := create_backup_run("scheduled")
+	return {"ok": result["ok"], "ran": true, "result": result}
 }
 
 # ---------------------------------------------------------------------------
@@ -1696,6 +1957,7 @@ func joined_proxy_action(params) {
 }
 
 func proxy_route_dispatch(req) {
+	maybe_run_scheduled_backup()
 	rate_limit_response := enforce_rate_limit(req)
 	if type(rate_limit_response) != "null" {
 		return rate_limit_response
@@ -2040,6 +2302,7 @@ func proxy_forward(req, resource, action) {
 # HTTP Server + Routes
 # ---------------------------------------------------------------------------
 
+maybe_run_scheduled_backup()
 server := http_server(PORT)
 
 server := server.route("GET", "/healthz", func(req) {
@@ -2203,6 +2466,7 @@ server := server.route("POST", "/api/telemetry/requests", func(req) {
 	if !auth["allowed"] {
 		return api_error(auth["status"], auth["error"])
 	}
+	maybe_run_scheduled_backup()
 
 	body_parse := parse_json_safe(to_string(safe_dict_get(req, "body", "{}")))
 	if !body_parse["ok"] || type(body_parse["data"]) != "dict" {
@@ -2233,6 +2497,7 @@ server := server.route("POST", "/api/telemetry/traces", func(req) {
 	if !auth["allowed"] {
 		return api_error(auth["status"], auth["error"])
 	}
+	maybe_run_scheduled_backup()
 	body_parse := parse_json_safe(to_string(safe_dict_get(req, "body", "{}")))
 	if !body_parse["ok"] || type(body_parse["data"]) != "dict" {
 		return api_error(400, "Request body must be a JSON object")
@@ -2258,6 +2523,7 @@ server := server.route("GET", "/api/stats", func(req) {
 	if !auth["allowed"] {
 		return api_error(auth["status"], auth["error"])
 	}
+	maybe_run_scheduled_backup()
 
 	total_rows := db_query(db, "SELECT COUNT(*) AS n FROM requests", [])
 	error_rows := db_query(db, "SELECT COUNT(*) AS n FROM requests WHERE status = 'error'", [])
@@ -2811,6 +3077,8 @@ server := server.route("GET", "/api/admin/diagnostics", func(req) {
 	trace_rows := db_query(db, "SELECT COUNT(*) AS n FROM traces", [])
 	span_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_spans", [])
 	event_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_events", [])
+	backup_run_rows := db_query(db, "SELECT COUNT(*) AS n FROM backup_runs", [])
+	backup_settings := read_backup_settings()
 
 	diagnostics := {
 		"runtime": {
@@ -2829,7 +3097,11 @@ server := server.route("GET", "/api/admin/diagnostics", func(req) {
 			"rate_limit_bucket_ttl_secs": RATE_LIMIT_BUCKET_TTL_SECS,
 			"redaction_mode": REDACTION_MODE,
 			"identifier_max_len": IDENTIFIER_MAX_LEN,
-			"export_max_rows": EXPORT_MAX_ROWS
+			"export_max_rows": EXPORT_MAX_ROWS,
+			"backup_enabled": backup_settings["enabled"],
+			"backup_interval_minutes": backup_settings["interval_minutes"],
+			"backup_encryption_enabled": backup_settings["encryption_enabled"],
+			"backup_encryption_key_configured": BACKUP_ENCRYPTION_KEY_FILE != ""
 		},
 		"migrations": migration_rows,
 		"db_stats": {
@@ -2839,11 +3111,66 @@ server := server.route("GET", "/api/admin/diagnostics", func(req) {
 			"audit_events": to_int_or_zero(audit_rows[0]["n"]),
 			"traces": to_int_or_zero(trace_rows[0]["n"]),
 			"trace_spans": to_int_or_zero(span_rows[0]["n"]),
-			"trace_events": to_int_or_zero(event_rows[0]["n"])
+			"trace_events": to_int_or_zero(event_rows[0]["n"]),
+			"backup_runs": to_int_or_zero(backup_run_rows[0]["n"])
 		}
 	}
 
 	return api_ok(diagnostics)
+})
+
+server := server.route("GET", "/api/admin/backups", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+	maybe_run_scheduled_backup()
+	return api_ok(backup_status_payload())
+})
+
+server := server.route("PUT", "/api/admin/backups/settings", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+	body_parse := parse_json_with_limit(to_string(safe_dict_get(req, "body", "{}")), MAX_PARSE_BODY_BYTES)
+	if !body_parse["ok"] || type(body_parse["data"]) != "dict" {
+		return api_error(400, "Request body must be a JSON object")
+	}
+	body := body_parse["data"]
+	current := read_backup_settings()
+	enabled := parse_bool_value(safe_dict_get(body, "enabled", current["enabled"]), current["enabled"])
+	interval_minutes := to_int_or_zero(safe_dict_get(body, "interval_minutes", current["interval_minutes"]))
+	retention_count := to_int_or_zero(safe_dict_get(body, "retention_count", current["retention_count"]))
+	encryption_enabled := parse_bool_value(safe_dict_get(body, "encryption_enabled", current["encryption_enabled"]), current["encryption_enabled"])
+	backup_dir_check := validate_backup_dir(safe_dict_get(body, "backup_dir", current["backup_dir"]))
+	if !backup_dir_check["ok"] {
+		return api_error(400, backup_dir_check["error"])
+	}
+	if interval_minutes < MIN_BACKUP_INTERVAL_MINUTES || interval_minutes > MAX_BACKUP_INTERVAL_MINUTES {
+		return api_error(400, "Backup interval must be between " + to_string(MIN_BACKUP_INTERVAL_MINUTES) + " and " + to_string(MAX_BACKUP_INTERVAL_MINUTES) + " minutes")
+	}
+	if retention_count < 1 || retention_count > 3650 {
+		return api_error(400, "Backup retention count must be between 1 and 3650")
+	}
+	if encryption_enabled && BACKUP_ENCRYPTION_KEY_FILE == "" {
+		return api_error(400, "Configure WDG_BACKUP_ENCRYPTION_KEY_FILE before enabling encrypted backups")
+	}
+	db_execute(db, "UPDATE backup_settings SET enabled = ?, interval_minutes = ?, backup_dir = ?, retention_count = ?, encryption_enabled = ?, updated_at_ms = ? WHERE id = 1", [bool_as_int(enabled), interval_minutes, backup_dir_check["path"], retention_count, bool_as_int(encryption_enabled), current_timestamp()])
+	insert_audit_event("backup_settings_update", resolve_audit_actor_key(req, "api"), "success", {"enabled": enabled, "interval_minutes": interval_minutes, "retention_count": retention_count, "encryption_enabled": encryption_enabled})
+	return api_ok(backup_status_payload())
+})
+
+server := server.route("POST", "/api/admin/backups/run", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+	result := create_backup_run("manual")
+	if !result["ok"] {
+		return api_error(500, result["error"])
+	}
+	return api_ok({"run": result, "status": backup_status_payload()})
 })
 
 server := server.route("POST", "/api/admin/prune", func(req) {

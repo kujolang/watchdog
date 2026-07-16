@@ -740,6 +740,18 @@
   .detail-field:last-child { border-bottom: 0; }
   .detail-label { color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
   .detail-value { min-width: 0; margin: 0; color: var(--text); font: 12px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .backup-layout { display: grid; grid-template-columns: minmax(300px, 420px) 1fr; gap: 20px; padding: 20px; }
+  .backup-card { border: 1px solid var(--border); background: #fff; padding: 18px; }
+  .backup-card h3 { color: #031b4e; font-size: 15px; margin-bottom: 14px; }
+  .backup-field { display: grid; gap: 6px; margin-bottom: 14px; }
+  .backup-field label { color: #526184; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  .backup-input { width: 100%; border: 1px solid #b9c2d6; background: #fff; color: var(--text); padding: 9px 10px; font: 13px var(--font-mono); outline: none; }
+  .backup-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 105, 255, .12); }
+  .backup-check { display: flex; align-items: center; gap: 9px; color: var(--text); font-size: 13px; }
+  .backup-help { color: var(--text-muted); font-size: 12px; }
+  .backup-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+  .backup-status { min-height: 22px; margin-top: 12px; font-size: 12px; color: var(--text-muted); }
+  .backup-status.error { color: var(--red); }
 
   @media (max-width: 1000px) { .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 700px) {
@@ -750,6 +762,7 @@
     .stats-grid { grid-template-columns: 1fr 1fr; }
     .auth-form { flex-direction: column; }
     .detail-field { grid-template-columns: 1fr; gap: 4px; }
+    .backup-layout { grid-template-columns: 1fr; padding: 14px; }
   }
   @media (max-width: 430px) { .stats-grid { grid-template-columns: 1fr; } }
 </style>
@@ -848,6 +861,7 @@
       <button class="tab-btn" onclick="switchTab('traces',this)">Agent Traces <span class="tab-badge" id="badgeTraces">0</span></button>
       <button class="tab-btn" onclick="switchTab('errors',this)">Errors <span class="tab-badge" id="badgeErrors">0</span></button>
       <button class="tab-btn" onclick="switchTab('sessions',this)">Sessions <span class="tab-badge" id="badgeSessions">0</span></button>
+      <button class="tab-btn" onclick="switchTab('backups',this)">Backups <span class="tab-badge" id="badgeBackups">0</span></button>
     </div>
 
     <!-- ── Requests tab ───────────────────────── -->
@@ -979,6 +993,50 @@
       <div id="sessEmpty" class="empty hidden"><div class="empty-icon">👤</div>No sessions found.</div>
     </div>
 
+    <!-- ── Backups tab ───────────────────────── -->
+    <div class="tab-panel" id="tab-backups">
+      <div class="backup-layout">
+        <section class="backup-card">
+          <h3>Automated database backups</h3>
+          <div class="backup-field">
+            <label for="backupDir">Backup folder</label>
+            <input class="backup-input" id="backupDir" type="text" placeholder="/path/to/Dropbox/Watchdog Backups">
+            <div class="backup-help">Use any local folder, including a Dropbox or Google Drive-synced folder.</div>
+          </div>
+          <div class="backup-field">
+            <label for="backupInterval">Frequency in minutes</label>
+            <input class="backup-input" id="backupInterval" type="number" min="15" max="43200" step="1">
+            <div class="backup-help">1440 = daily, 720 = every 12 hours, 10080 = weekly.</div>
+          </div>
+          <div class="backup-field">
+            <label for="backupRetention">Backups to retain</label>
+            <input class="backup-input" id="backupRetention" type="number" min="1" max="3650" step="1">
+          </div>
+          <div class="backup-field"><label class="backup-check"><input id="backupEnabled" type="checkbox"> Enable automatic backups</label></div>
+          <div class="backup-field">
+            <label class="backup-check"><input id="backupEncryption" type="checkbox"> Encrypt backups with AES-256</label>
+            <div class="backup-help" id="backupEncryptionHelp">Encryption requires a server-side key file.</div>
+          </div>
+          <div class="backup-actions">
+            <button class="btn btn-primary" type="button" id="backupSaveButton" onclick="saveBackupSettings()">Save settings</button>
+            <button class="btn" type="button" id="backupRunButton" onclick="runBackupNow()">Back up now</button>
+          </div>
+          <div class="backup-status" id="backupStatus" role="status"></div>
+        </section>
+        <section class="backup-card">
+          <h3>Backup history</h3>
+          <div class="backup-help" id="backupScheduleSummary">Loading backup status…</div>
+          <div class="table-wrap" style="margin-top:14px;max-height:420px">
+            <table>
+              <thead><tr><th>Started</th><th>Trigger</th><th>Status</th><th>Encrypted</th><th>Size</th><th>File</th></tr></thead>
+              <tbody id="backupRunsBody"></tbody>
+            </table>
+          </div>
+          <div id="backupRunsEmpty" class="empty hidden"><div class="empty-icon">▣</div>No backups have run yet.</div>
+        </section>
+      </div>
+    </div>
+
   </div><!-- /tabs-section -->
 
 </main>
@@ -1001,6 +1059,7 @@ const state = {
   visibleTraceSpans: [],
   errors:     [],
   sessions:   [],
+  backups:    null,
   visibleRows: { requests: [], toolCalls: [], sessions: [] },
   sortKey:    { requests: 'created_at', sessions: 'last_seen' },
   sortAsc:    { requests: false, sessions: false },
@@ -1077,9 +1136,10 @@ function setRefreshing(refreshing) {
 /* ════════════════════════════════════════════════════════════════════
    API
    ════════════════════════════════════════════════════════════════════ */
-async function fetchJSON(url) {
-  const headers = apiToken ? { 'X-Watchdog-Token': apiToken } : {};
-  const r = await fetch(url, { headers });
+async function fetchJSON(url, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (apiToken) headers['X-Watchdog-Token'] = apiToken;
+  const r = await fetch(url, { ...options, headers });
   const j = await r.json();
   if (r.ok === false || j.ok === false) {
     const error = new Error(j.error || ('Request failed with status ' + (r.status || 'unknown')));
@@ -1102,6 +1162,7 @@ async function loadAll() {
     // Kujo's local HTTP runtime is intentionally small; keep dashboard reads
     // sequential so one browser refresh cannot exhaust its request workers.
     const stats = await fetchJSON('/api/stats');
+    const backups = await fetchJSON('/api/admin/backups');
     const reqs = await fetchJSON('/api/requests');
     const tools = await fetchJSON('/api/tool-calls');
     const steps = await fetchJSON('/api/agent-steps');
@@ -1122,6 +1183,7 @@ async function loadAll() {
     state.traceEvents = traceEvents || [];
     state.errors     = errs   || [];
     state.sessions   = sess   || [];
+    state.backups    = backups || null;
 
     renderStats(stats);
     renderCharts(chartReqData, chartLatData, chartStatusData);
@@ -1131,6 +1193,7 @@ async function loadAll() {
     renderAgentTraces();
     renderErrors();
     renderSessionsTable();
+    renderBackups();
 
     state.hasLoaded = true;
     document.getElementById('lastUpdated').textContent =
@@ -1572,6 +1635,102 @@ function renderSessionsTable() {
 }
 
 /* ════════════════════════════════════════════════════════════════════
+   Backups
+   ════════════════════════════════════════════════════════════════════ */
+function renderBackups(forceFormUpdate = false) {
+  const data = state.backups || {};
+  const settings = data.settings || {};
+  const runs = Array.isArray(data.runs) ? data.runs : [];
+  const firstRender = !state.hasLoaded;
+  if (forceFormUpdate || firstRender) {
+    document.getElementById('backupDir').value = settings.backup_dir || '';
+    document.getElementById('backupInterval').value = settings.interval_minutes || 1440;
+    document.getElementById('backupRetention').value = settings.retention_count || 30;
+    document.getElementById('backupEnabled').checked = Boolean(settings.enabled);
+    document.getElementById('backupEncryption').checked = Boolean(settings.encryption_enabled);
+  }
+
+  const encryptionToggle = document.getElementById('backupEncryption');
+  encryptionToggle.disabled = !data.encryption_key_configured;
+  setText('backupEncryptionHelp', data.encryption_key_configured
+    ? 'A protected server-side encryption key is configured.'
+    : 'Set WDG_BACKUP_ENCRYPTION_KEY_FILE on the server to enable encryption.');
+
+  const nextDue = Number(data.next_due_at_ms || 0);
+  const lastSuccess = Number(data.last_success_at_ms || 0);
+  setText('backupScheduleSummary', settings.enabled
+    ? `Last successful backup: ${lastSuccess ? fmtTs(lastSuccess) : 'none yet'} · Next due: ${nextDue ? fmtTs(nextDue) : 'on next activity'}`
+    : 'Automatic backups are disabled. Manual backups remain available.');
+  setText('badgeBackups', runs.filter(run => run.status === 'success').length);
+
+  const tbody = document.getElementById('backupRunsBody');
+  const empty = document.getElementById('backupRunsEmpty');
+  if (!runs.length) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  tbody.innerHTML = runs.map(run => `
+    <tr>
+      <td class="cell-mono" style="white-space:nowrap;font-size:11px">${fmtTs(run.started_at_ms)}</td>
+      <td>${safeText(run.trigger_type || '—')}</td>
+      <td><span class="badge badge-${run.status === 'success' ? 'success' : 'error'}">${safeText(run.status || 'unknown')}</span></td>
+      <td>${Number(run.encrypted || 0) === 1 ? 'Yes' : 'No'}</td>
+      <td style="white-space:nowrap">${fmtBytes(run.size_bytes)}</td>
+      <td class="cell-mono cell-truncate" title="${safeText(run.backup_path || run.error_message || '')}">${safeText(run.backup_path || run.error_message || '—')}</td>
+    </tr>`).join('');
+}
+
+function setBackupStatus(message, isError = false) {
+  const el = document.getElementById('backupStatus');
+  el.textContent = message || '';
+  el.classList[isError ? 'add' : 'remove']('error');
+}
+
+async function saveBackupSettings() {
+  const button = document.getElementById('backupSaveButton');
+  button.disabled = true;
+  setBackupStatus('Saving backup settings…');
+  try {
+    const data = await fetchJSON('/api/admin/backups/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        enabled: document.getElementById('backupEnabled').checked,
+        interval_minutes: Number(document.getElementById('backupInterval').value),
+        backup_dir: document.getElementById('backupDir').value,
+        retention_count: Number(document.getElementById('backupRetention').value),
+        encryption_enabled: document.getElementById('backupEncryption').checked,
+      }),
+    });
+    state.backups = data;
+    renderBackups(true);
+    setBackupStatus('Backup settings saved.');
+  } catch (err) {
+    setBackupStatus(err.message || 'Could not save backup settings.', true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function runBackupNow() {
+  const button = document.getElementById('backupRunButton');
+  button.disabled = true;
+  setBackupStatus('Creating and verifying backup…');
+  try {
+    const data = await fetchJSON('/api/admin/backups/run', { method: 'POST' });
+    state.backups = data.status;
+    renderBackups(true);
+    setBackupStatus(`Backup complete: ${data.run.backup_path}`);
+  } catch (err) {
+    setBackupStatus(err.message || 'Backup failed.', true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
    Tabs
    ════════════════════════════════════════════════════════════════════ */
 function switchTab(name, btn) {
@@ -1664,6 +1823,15 @@ function fmtNum(n) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
   if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K';
   return n.toLocaleString();
+}
+
+function fmtBytes(n) {
+  n = Number(n || 0);
+  if (!n) return '—';
+  if (n >= 1024 * 1024 * 1024) return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+  if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(2) + ' MB';
+  if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+  return n + ' B';
 }
 
 function fmtCost(n) {

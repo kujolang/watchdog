@@ -12,7 +12,7 @@ function assertContains(snippet, message) {
 
 assertContains('id="authGate"', 'dashboard should provide an API authentication gate');
 assertContains('id="apiToken" type="password"', 'API token input should be a password field');
-assertContains("{ 'X-Watchdog-Token': apiToken }", 'dashboard requests should send the configured API token');
+assertContains("headers['X-Watchdog-Token'] = apiToken", 'dashboard requests should send the configured API token');
 assertContains("sessionStorage.setItem('watchdogApiToken', apiToken)", 'token should persist only for the browser session');
 assertContains("sessionStorage.removeItem('watchdogApiToken')", 'dashboard should support clearing its session token');
 assertContains("e.status === 401 || e.status === 403", 'missing or invalid API tokens should open the authentication gate');

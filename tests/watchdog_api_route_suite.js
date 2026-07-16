@@ -122,10 +122,12 @@ async function startServer() {
 }
 
 async function stopServer(child) {
-	if (!child || child.killed) return;
+	if (!child || child.exitCode != null) return;
 	child.kill('SIGTERM');
-	await delay(250);
-	if (!child.killed) {
+	for (let i = 0; i < 10 && child.exitCode == null; i += 1) {
+		await delay(50);
+	}
+	if (child.exitCode == null) {
 		child.kill('SIGKILL');
 	}
 }

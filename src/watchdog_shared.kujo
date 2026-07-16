@@ -72,6 +72,8 @@ func ensure_schema(db) {
 
 	db_execute(db, "CREATE TABLE IF NOT EXISTS trace_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL DEFAULT '', trace_id TEXT NOT NULL DEFAULT '', span_id TEXT NOT NULL DEFAULT '', sequence INTEGER NOT NULL DEFAULT 0, event_name TEXT NOT NULL DEFAULT '', occurred_at_ms INTEGER NOT NULL DEFAULT 0, attributes_json TEXT NOT NULL DEFAULT '{}', source_app TEXT NOT NULL DEFAULT 'legacy', data_class TEXT NOT NULL DEFAULT 'legacy', created_at TEXT NOT NULL DEFAULT '', UNIQUE(trace_id, event_id))", [])
 	db_execute(db, "CREATE TABLE IF NOT EXISTS rate_limit_buckets (bucket_key TEXT PRIMARY KEY, window_start_ms INTEGER NOT NULL DEFAULT 0, request_count INTEGER NOT NULL DEFAULT 0, last_seen_ms INTEGER NOT NULL DEFAULT 0)", [])
+	db_execute(db, "CREATE TABLE IF NOT EXISTS backup_settings (id INTEGER PRIMARY KEY CHECK(id = 1), enabled INTEGER NOT NULL DEFAULT 1, interval_minutes INTEGER NOT NULL DEFAULT 1440, backup_dir TEXT NOT NULL DEFAULT 'data/backups', retention_count INTEGER NOT NULL DEFAULT 30, encryption_enabled INTEGER NOT NULL DEFAULT 0, updated_at_ms INTEGER NOT NULL DEFAULT 0)", [])
+	db_execute(db, "CREATE TABLE IF NOT EXISTS backup_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, trigger_type TEXT NOT NULL DEFAULT 'scheduled', status TEXT NOT NULL DEFAULT 'running', backup_path TEXT NOT NULL DEFAULT '', checksum_path TEXT NOT NULL DEFAULT '', size_bytes INTEGER NOT NULL DEFAULT 0, encrypted INTEGER NOT NULL DEFAULT 0, error_message TEXT NOT NULL DEFAULT '', started_at_ms INTEGER NOT NULL DEFAULT 0, finished_at_ms INTEGER NOT NULL DEFAULT 0)", [])
 
 	try {
 		db_execute(db, "ALTER TABLE requests ADD COLUMN workflow_id TEXT NOT NULL DEFAULT ''", [])
@@ -158,6 +160,8 @@ func ensure_schema(db) {
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_trace_events_trace_sequence ON trace_events(trace_id, sequence)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_trace_events_name_time ON trace_events(event_name, occurred_at_ms)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_last_seen ON rate_limit_buckets(last_seen_ms)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_backup_runs_finished_at ON backup_runs(finished_at_ms)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_backup_runs_status ON backup_runs(status)", [])
 
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0001_base_schema", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0002_kennel_correlation_fields", to_string(current_timestamp())])
@@ -167,6 +171,7 @@ func ensure_schema(db) {
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0006_source_classification", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0009_granular_trace_spans_events", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0010_sqlite_rate_limit_buckets", to_string(current_timestamp())])
+	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0011_automated_backups", to_string(current_timestamp())])
 
 	pricing_migration := db_query(db, "SELECT key FROM schema_migrations WHERE key = ? LIMIT 1", ["0007_direct_api_cost_estimates"])
 	if len(pricing_migration) == 0 {
