@@ -9,12 +9,14 @@ telemetry in Kujo applications.
 
 It combines an OpenAI-compatible proxy with a local SQLite telemetry store so
 humans and agents can inspect model calls, tool calls, agent steps, latency,
-token usage, cost, and failures through a dashboard and JSON APIs.
+token usage, estimated direct-API value, and failures through a dashboard and JSON APIs.
 
 Point your Kujo AI app at Watchdog's `/proxy/v1` endpoint and keep your normal
 OpenAI-style request paths. Watchdog forwards requests upstream, captures
 structured traces, and serves a local dashboard plus JSON APIs for debugging,
 bounded performance tuning, and usage analysis.
+
+Cost fields are estimated direct-provider equivalents, not subscription invoices. See [Direct API value estimates](docs/PRICING_ESTIMATES.md) for model mappings, rates, and limitations.
 
 Watchdog is part of Kujo’s Control layer: visible state, bounded telemetry,
 structured exports, regression signals, and reviewable local monitoring data.

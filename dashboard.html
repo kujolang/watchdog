@@ -792,7 +792,7 @@
     <div>
       <div class="page-kicker">Telemetry overview</div>
       <h1 class="page-title">Model traffic at a glance</h1>
-      <p class="page-subtitle">Requests, cost, latency, errors, and agent activity from the local Watchdog proxy.</p>
+      <p class="page-subtitle">Requests, estimated direct-API value, latency, errors, and agent activity from Watchdog telemetry.</p>
     </div>
     <div class="connection-state" id="connectionState"><span class="connection-dot"></span><span id="connectionText">Connecting</span></div>
   </section>
@@ -802,7 +802,7 @@
   <!-- Stats row -->
   <div class="stats-grid" id="statsGrid">
     <div class="stat-card accent"><div class="stat-label">Total Requests</div><div class="stat-value" id="statRequests">—</div><div class="stat-sub">all time</div></div>
-    <div class="stat-card green"><div class="stat-label">Total Cost</div><div class="stat-value" id="statCost">—</div><div class="stat-sub">USD estimated</div></div>
+    <div class="stat-card green"><div class="stat-label">Est. API Value</div><div class="stat-value" id="statCost">—</div><div class="stat-sub">direct API equivalent</div></div>
     <div class="stat-card yellow"><div class="stat-label">Avg Latency</div><div class="stat-value" id="statLatency">—</div><div class="stat-sub">successful calls</div></div>
     <div class="stat-card red"><div class="stat-label">Error Rate</div><div class="stat-value" id="statErrorRate">—</div><div class="stat-sub" id="statErrorSub">—</div></div>
     <div class="stat-card purple"><div class="stat-label">Total Tokens</div><div class="stat-value" id="statTokens">—</div><div class="stat-sub">input + output</div></div>
@@ -871,7 +871,7 @@
               <th onclick="sortTable('requests','status')">Status</th>
               <th onclick="sortTable('requests','latency_ms')">Latency</th>
               <th onclick="sortTable('requests','total_tokens')">Tokens</th>
-              <th onclick="sortTable('requests','cost_usd')">Cost</th>
+              <th onclick="sortTable('requests','cost_usd')">Est. Value</th>
               <th>Prompt</th>
             </tr>
           </thead>
@@ -937,7 +937,7 @@
               <th>Requests</th>
               <th>Errors</th>
               <th>Tokens</th>
-              <th>Cost</th>
+              <th>Est. Value</th>
               <th>Avg Latency</th>
               <th>Started</th>
               <th>Last Seen</th>
