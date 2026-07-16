@@ -14,6 +14,7 @@
 #   POST http://localhost:7700/proxy/v1/chat/completions
 
 from watchdog_shared import watchdog_estimate_cost, watchdog_ensure_schema
+from watchdog_shared import watchdog_has_known_pricing
 
 DEFAULT_PORT := 7700
 DEFAULT_DB_PATH := "data/watchdog.db"
@@ -1379,11 +1380,15 @@ func insert_external_request(body) {
 	input_tokens := to_int_or_zero(safe_dict_get(body, "input_tokens", 0))
 	output_tokens := to_int_or_zero(safe_dict_get(body, "output_tokens", 0))
 	total_tokens := to_int_or_zero(safe_dict_get(body, "total_tokens", input_tokens + output_tokens))
+	model_name := external_text(body, "model", "", 160)
 	cost_usd := safe_dict_get(body, "cost_usd", 0.0)
+	if !has_key(body, "cost_usd") && watchdog_has_known_pricing(model_name) {
+		cost_usd = watchdog_estimate_cost(model_name, input_tokens * 1.0, output_tokens * 1.0)
+	}
 	latency_ms := to_int_or_zero(safe_dict_get(body, "latency_ms", 0))
 	ts := to_string(current_timestamp())
 
-	db_execute(db, "INSERT INTO requests (session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [external_text(body, "session_id", request_id, 160), external_text(body, "user_id", "", 120), external_text(body, "tenant_id", "", 120), external_text(body, "project_id", "", 120), external_text(body, "workflow_id", "", 120), external_text(body, "task_id", "", 160), external_text(body, "correlation_id", "", 160), external_text(body, "provider", "external", 160), external_text(body, "model", "", 160), request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, external_text(body, "finish_reason", "", 80), external_text(body, "error_code", "", 80), external_text(body, "error_message", "", 500), external_text(body, "prompt_summary", "", 500), external_text(body, "response_summary", "", 500), source_app, "external", ts])
+	db_execute(db, "INSERT INTO requests (session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [external_text(body, "session_id", request_id, 160), external_text(body, "user_id", "", 120), external_text(body, "tenant_id", "", 120), external_text(body, "project_id", "", 120), external_text(body, "workflow_id", "", 120), external_text(body, "task_id", "", 160), external_text(body, "correlation_id", "", 160), external_text(body, "provider", "external", 160), model_name, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, external_text(body, "finish_reason", "", 80), external_text(body, "error_code", "", 80), external_text(body, "error_message", "", 500), external_text(body, "prompt_summary", "", 500), external_text(body, "response_summary", "", 500), source_app, "external", ts])
 	rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
 	request_dbid := 0
 	if len(rows) > 0 {

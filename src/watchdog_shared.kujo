@@ -11,14 +11,41 @@ func cost_per_million(model) {
 		"gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
 		"deepseek-chat": {"input": 0.07, "output": 1.10},
 		"deepseek-reasoner": {"input": 0.55, "output": 2.19},
-		"openai/gpt-4.1-mini": {"input": 0.40, "output": 1.60}
+		"openai/gpt-4.1-mini": {"input": 0.40, "output": 1.60},
+		"glm-5.2": {"input": 1.40, "output": 4.40},
+		"glm-5.2:cloud": {"input": 1.40, "output": 4.40},
+		"kimi-k2.7-code": {"input": 0.95, "output": 4.00},
+		"kimi-k2.7-code:cloud": {"input": 0.95, "output": 4.00},
+		"minimax-m3": {"input": 0.30, "output": 1.20},
+		"minimax-m3:cloud": {"input": 0.30, "output": 1.20},
+		"qwen3.5": {"input": 0.60, "output": 3.60},
+		"qwen3.5:397b": {"input": 0.60, "output": 3.60},
+		"qwen3.5:397b-cloud": {"input": 0.60, "output": 3.60},
+		"qwen3.5-397b-a17b": {"input": 0.60, "output": 3.60}
 	}
 
-	if has_key(table, model) {
-		return table[model]
+	model_key := to_lower(trim(to_string(model)))
+	if has_key(table, model_key) {
+		return table[model_key]
 	}
 
 	return {"input": 1.00, "output": 3.00}
+}
+
+func has_known_pricing(model) {
+	known_models := [
+		"gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo",
+		"deepseek-chat", "deepseek-reasoner", "openai/gpt-4.1-mini",
+		"glm-5.2", "glm-5.2:cloud", "kimi-k2.7-code", "kimi-k2.7-code:cloud",
+		"minimax-m3", "minimax-m3:cloud", "qwen3.5", "qwen3.5:397b", "qwen3.5:397b-cloud", "qwen3.5-397b-a17b"
+	]
+	model_key := to_lower(trim(to_string(model)))
+	for known_model in known_models {
+		if model_key == known_model {
+			return true
+		}
+	}
+	return false
 }
 
 func estimate_cost(model, input_tokens, output_tokens) {
@@ -123,8 +150,33 @@ func ensure_schema(db) {
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0004_audit_events", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0005_time_filter_indexes", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0006_source_classification", to_string(current_timestamp())])
+
+	pricing_migration := db_query(db, "SELECT key FROM schema_migrations WHERE key = ? LIMIT 1", ["0007_direct_api_cost_estimates"])
+	if len(pricing_migration) == 0 {
+		zero_cost_rows := db_query(db, "SELECT id, model, input_tokens, output_tokens FROM requests WHERE cost_usd = 0 AND (input_tokens > 0 OR output_tokens > 0)", [])
+		for row in zero_cost_rows {
+			if has_known_pricing(row["model"]) {
+				estimated_cost := estimate_cost(row["model"], row["input_tokens"] * 1.0, row["output_tokens"] * 1.0)
+				db_execute(db, "UPDATE requests SET cost_usd = ? WHERE id = ? AND cost_usd = 0", [estimated_cost, row["id"]])
+			}
+		}
+		db_execute(db, "INSERT INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0007_direct_api_cost_estimates", to_string(current_timestamp())])
+	}
+
+	ai_chat_pricing_migration := db_query(db, "SELECT key FROM schema_migrations WHERE key = ? LIMIT 1", ["0008_ai_chat_direct_api_reprice"])
+	if len(ai_chat_pricing_migration) == 0 {
+		ai_chat_rows := db_query(db, "SELECT id, model, input_tokens, output_tokens FROM requests WHERE source_app = 'ai-chat' AND (input_tokens > 0 OR output_tokens > 0)", [])
+		for row in ai_chat_rows {
+			if has_known_pricing(row["model"]) {
+				estimated_cost := estimate_cost(row["model"], row["input_tokens"] * 1.0, row["output_tokens"] * 1.0)
+				db_execute(db, "UPDATE requests SET cost_usd = ? WHERE id = ?", [estimated_cost, row["id"]])
+			}
+		}
+		db_execute(db, "INSERT INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0008_ai_chat_direct_api_reprice", to_string(current_timestamp())])
+	}
 }
 
 export watchdog_cost_per_million := cost_per_million
 export watchdog_estimate_cost := estimate_cost
+export watchdog_has_known_pricing := has_known_pricing
 export watchdog_ensure_schema := ensure_schema
