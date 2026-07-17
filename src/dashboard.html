@@ -1703,28 +1703,33 @@ function renderInsights() {
   const summary = outcomes.summary || {};
   const context = data.context_pressure || {};
   const contextSummary = context.summary || {};
+  const latency = data.latency_waterfall || {};
+  const latencySummary = latency.summary || {};
   const successRuns = Number(summary.success_signal_runs || 0);
   const successfulCost = Number(summary.successful_cost_usd || 0);
   const toolRows = data.tool_effectiveness || [];
-  const waterfallRows = data.latency_waterfall || [];
+  const waterfallRows = latency.by_kind || [];
   const sequenceRows = data.workflow_sequences || [];
   const runRows = outcomes.runs || [];
   const trendRows = (context.trend || []).slice(-12).reverse();
+  const growthRows = (context.growth || []).slice(0, 10);
 
   const runMarkup = runRows.length ? runRows.map(run => {
-    const failed = Number(run.error_count || 0) > 0;
-    const outcome = failed ? 'failed' : 'success signal';
+    const failed = run.observed_outcome === 'failed' || Number(run.error_count || 0) > 0;
+    const outcome = run.observed_outcome === 'completed' ? 'completed' : (failed ? 'failed' : 'success signal');
     const runLabel = run.task_id || run.workflow_id || run.run_key || 'unscoped';
-    return `<tr><td title="${safeText(runLabel)}">${safeText(truncate(runLabel, 28))}</td><td><span class="badge ${failed ? 'badge-error' : 'badge-success'}">${outcome}</span></td><td>${fmtNum(run.request_rounds)}</td><td>${Math.max(Number(run.request_rounds || 0) - 1, 0)}</td><td>${fmtNum(run.retry_signals)}</td><td>${fmtNum(run.tool_count)}</td><td>$${fmtCost(run.total_cost_usd)}</td><td>${fmtLatency(run.avg_latency_ms)}</td></tr>`;
-  }).join('') : '<tr><td colspan="8">No runs available.</td></tr>';
+    const stage = run.failure_stage || '—';
+    return `<tr><td title="${safeText(runLabel)}">${safeText(truncate(runLabel, 28))}</td><td><span class="badge ${failed ? 'badge-error' : 'badge-success'}">${outcome}</span></td><td>${fmtNum(run.completion_signals)}</td><td>${safeText(stage)}</td><td>${fmtNum(run.request_rounds)}</td><td>${fmtNum(run.retry_signals)}</td><td>${fmtNum(run.tool_count)}</td><td>$${fmtCost(run.total_cost_usd)}</td><td>${fmtLatency(run.avg_latency_ms)}</td></tr>`;
+  }).join('') : '<tr><td colspan="9">No runs available.</td></tr>';
   const toolMarkup = toolRows.length ? toolRows.slice(0, 12).map(tool => {
     const calls = Number(tool.call_count || 0);
     const successRate = calls ? (Number(tool.success_count || 0) * 100) / calls : 0;
-    return `<tr><td>${safeText(tool.tool_name || 'unknown')}</td><td>${fmtNum(calls)}</td><td>${fmtPct(successRate)}%</td><td>${fmtNum(tool.error_count)}</td><td>${fmtLatency(tool.avg_latency_ms)}</td><td>${fmtLatency(tool.max_latency_ms)}</td><td>${fmtLatency(tool.total_latency_ms)}</td></tr>`;
-  }).join('') : '<tr><td colspan="7">No tool calls available.</td></tr>';
+    return `<tr><td>${safeText(tool.tool_name || 'unknown')}</td><td>${fmtNum(calls)}</td><td>${fmtPct(successRate)}%</td><td>${fmtNum(tool.error_count)}</td><td>${fmtNum(tool.successful_session_count)}</td><td>${fmtNum(tool.failed_session_count)}</td><td>${fmtLatency(tool.avg_latency_ms)}</td><td>${fmtLatency(tool.total_latency_ms)}</td></tr>`;
+  }).join('') : '<tr><td colspan="8">No tool calls available.</td></tr>';
   const waterfallMarkup = waterfallRows.length ? waterfallRows.map(row => `<tr><td>${safeText(row.span_kind || 'internal')}</td><td>${fmtNum(row.span_count)}</td><td>${fmtLatency(row.total_duration_ms)}</td><td>${fmtLatency(row.avg_duration_ms)}</td><td>${fmtLatency(row.max_duration_ms)}</td></tr>`).join('') : '<tr><td colspan="5">No trace spans available.</td></tr>';
-  const sequenceMarkup = sequenceRows.length ? sequenceRows.slice(0, 12).map(row => `<tr><td>${safeText(row.from_step)}</td><td>${safeText(row.to_step)}</td><td>${fmtNum(row.transition_count)}</td></tr>`).join('') : '<tr><td colspan="3">No sequential agent steps available.</td></tr>';
+  const sequenceMarkup = sequenceRows.length ? sequenceRows.slice(0, 12).map(row => `<tr><td>${safeText(row.from_step)}</td><td>${safeText(row.to_step)}</td><td>${fmtNum(row.transition_count)}</td><td>${fmtNum(row.successful_session_count)}</td><td>${fmtNum(row.failed_session_count)}</td></tr>`).join('') : '<tr><td colspan="5">No sequential agent steps available.</td></tr>';
   const trendMarkup = trendRows.length ? trendRows.map(row => `<tr><td>h+${safeText(row.hour_bucket)}</td><td>${fmtNum(row.trace_count)}</td><td>${fmtNum(row.avg_input_tokens)}</td><td>${fmtNum(row.max_input_tokens)}</td><td>${fmtNum(row.avg_cached_input_tokens)}</td></tr>`).join('') : '<tr><td colspan="5">No trace context data available.</td></tr>';
+  const growthMarkup = growthRows.length ? growthRows.map(row => `<tr><td>${safeText(truncate(row.session_id, 28))}</td><td>${fmtNum(row.trace_count)}</td><td>${fmtNum(row.first_input_tokens)}</td><td>${fmtNum(row.max_input_tokens)}</td><td>${fmtNum(row.input_growth_tokens)}</td></tr>`).join('') : '<tr><td colspan="5">No per-session context growth data available.</td></tr>';
 
   container.innerHTML = `
     <section class="insight-card wide">
@@ -1735,21 +1740,22 @@ function renderInsights() {
         <div class="insight-stat"><div class="insight-stat-label">Failed runs</div><div class="insight-stat-value">${fmtNum(summary.failed_runs)}</div></div>
         <div class="insight-stat"><div class="insight-stat-label">Cost / success signal</div><div class="insight-stat-value">$${fmtCost(successRuns ? successfulCost / successRuns : 0)}</div></div>
       </div>
-      <table class="insight-table"><thead><tr><th>Run / task</th><th>Outcome</th><th>Rounds</th><th>Extra rounds</th><th>Retry signals</th><th>Tools</th><th>Cost</th><th>Avg latency</th></tr></thead><tbody>${runMarkup}</tbody></table>
-      <div class="insight-note">Runs are grouped by task ID, workflow ID, or session ID. “Success signal” means no recorded request error; explicit task-completion events can make this classification stronger.</div>
+      <table class="insight-table"><thead><tr><th>Run / task</th><th>Outcome</th><th>Completion</th><th>Failure stage</th><th>Rounds</th><th>Retry signals</th><th>Tools</th><th>Cost</th><th>Avg latency</th></tr></thead><tbody>${runMarkup}</tbody></table>
+      <div class="insight-note">Runs are grouped by task ID, workflow ID, or session ID. Completion is based on explicit task/workflow events when present; otherwise the dashboard reports a success signal when no request error was recorded.</div>
     </section>
     <section class="insight-card wide">
       <h3>Tool effectiveness</h3>
-      <table class="insight-table"><thead><tr><th>Tool</th><th>Calls</th><th>Success</th><th>Errors</th><th>Avg latency</th><th>Max latency</th><th>Total time</th></tr></thead><tbody>${toolMarkup}</tbody></table>
+      <table class="insight-table"><thead><tr><th>Tool</th><th>Calls</th><th>Success</th><th>Errors</th><th>Successful sessions</th><th>Failed sessions</th><th>Avg latency</th><th>Total time</th></tr></thead><tbody>${toolMarkup}</tbody></table>
     </section>
     <section class="insight-card">
       <h3>Latency waterfall by span kind</h3>
       <table class="insight-table"><thead><tr><th>Kind</th><th>Spans</th><th>Total</th><th>Average</th><th>Max</th></tr></thead><tbody>${waterfallMarkup}</tbody></table>
+      <div class="insight-note">${fmtLatency(latencySummary.total_trace_duration_ms)} total trace time; ${fmtLatency(latencySummary.total_span_duration_ms)} attributed to spans.</div>
     </section>
     <section class="insight-card">
       <h3>Common workflow transitions</h3>
-      <table class="insight-table"><thead><tr><th>From</th><th>To</th><th>Count</th></tr></thead><tbody>${sequenceMarkup}</tbody></table>
-      <div class="insight-note">Transitions are inferred from consecutive numbered agent steps within a session.</div>
+      <table class="insight-table"><thead><tr><th>From</th><th>To</th><th>Count</th><th>Successful sessions</th><th>Failed sessions</th></tr></thead><tbody>${sequenceMarkup}</tbody></table>
+      <div class="insight-note">Transitions are inferred from consecutive numbered agent steps within a session and linked to request outcomes where available.</div>
     </section>
     <section class="insight-card wide">
       <h3>Context pressure</h3>
@@ -1758,8 +1764,10 @@ function renderInsights() {
         <div class="insight-stat"><div class="insight-stat-label">Average input</div><div class="insight-stat-value">${fmtNum(contextSummary.avg_input_tokens)}</div></div>
         <div class="insight-stat"><div class="insight-stat-label">Largest input</div><div class="insight-stat-value">${fmtNum(contextSummary.max_input_tokens)}</div></div>
         <div class="insight-stat"><div class="insight-stat-label">Average cached</div><div class="insight-stat-value">${fmtNum(contextSummary.avg_cached_input_tokens)}</div></div>
+        <div class="insight-stat"><div class="insight-stat-label">Compaction sessions</div><div class="insight-stat-value">${fmtNum(contextSummary.compaction_sessions)}</div></div>
       </div>
       <table class="insight-table"><thead><tr><th>Hour</th><th>Traces</th><th>Avg input</th><th>Max input</th><th>Avg cached</th></tr></thead><tbody>${trendMarkup}</tbody></table>
+      <table class="insight-table"><thead><tr><th>Session</th><th>Traces</th><th>First input</th><th>Max input</th><th>Growth</th></tr></thead><tbody>${growthMarkup}</tbody></table>
     </section>`;
 }
 

@@ -285,7 +285,7 @@ function testToolCallsErrorsSessionsAndTracesContracts() {
 			runs: [{ run_key: '<run>', request_rounds: 2, error_count: 0, retry_signals: 1, tool_count: 2, total_cost_usd: 0.01, avg_latency_ms: 40 }],
 		},
 		tool_effectiveness: [{ tool_name: '<tool>', call_count: 2, success_count: 2, error_count: 0, avg_latency_ms: 20, max_latency_ms: 30, total_latency_ms: 40 }],
-		latency_waterfall: [{ span_kind: 'tool', span_count: 1, total_duration_ms: 20, avg_duration_ms: 20, max_duration_ms: 20 }],
+			latency_waterfall: { by_kind: [{ span_kind: 'tool', span_count: 1, total_duration_ms: 20, avg_duration_ms: 20, max_duration_ms: 20 }], summary: { total_trace_duration_ms: 20, total_span_duration_ms: 20 } },
 		workflow_sequences: [{ from_step: 'planning', to_step: 'tool_call', transition_count: 1 }],
 		context_pressure: { summary: { trace_count: 1, avg_input_tokens: 10, max_input_tokens: 12, avg_cached_input_tokens: 2 }, trend: [] },
 	};

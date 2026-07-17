@@ -25,5 +25,9 @@ assertContains('request_query_int(req, "until_ms"', 'until_ms support should be 
 assertContains('server := server.route("GET", "/api/tool-calls", func(req)', 'Tool calls endpoint should support query params');
 assertContains('server := server.route("GET", "/api/agent-steps", func(req)', 'Agent steps endpoint should support query params');
 assertContains('server := server.route("GET", "/api/sessions", func(req)', 'Sessions endpoint should support query params');
+assertContains('server := server.route("GET", "/api/insights", func(req)', 'Agent insights endpoint should be present');
+assertContains('AS failure_stage', 'Agent insights should expose failure stages');
+assertContains('"tool_effectiveness":', 'Agent insights should expose tool effectiveness');
+assertContains('"context_pressure":', 'Agent insights should expose context pressure');
 
 console.log('api_query_support_static_check: PASS');
