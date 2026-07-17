@@ -1320,17 +1320,19 @@ function renderCharts(reqData, latData, statusData, toolData) {
   });
   const toolEntries = Object.entries(toolCounts).sort((a, b) => b[1] - a[1]);
   chartTools = new Chart(document.getElementById('chartTools'), {
-    type: 'radar',
+    type: 'scatter',
     data: {
-      labels: toolEntries.map(([name]) => name),
-      datasets: [{ label: 'Calls', data: toolEntries.map(([, count]) => count),
-        borderColor: '#7c3aed', backgroundColor: '#7c3aed33', pointBackgroundColor: '#7c3aed',
-        pointBorderColor: '#ffffff', pointHoverBackgroundColor: '#ffffff', pointHoverBorderColor: '#7c3aed' }],
+      datasets: [{ label: 'Calls', data: toolEntries.map(([name, count], index) => ({ x: index, y: count, toolName: name })),
+        borderColor: '#7c3aed', backgroundColor: '#7c3aed', pointRadius: 7, pointHoverRadius: 9 }],
     },
     options: { ...CHART_DEFAULTS, responsive: true, maintainAspectRatio: false,
-      scales: { r: { beginAtZero: true, ticks: { color: '#6b7796', backdropColor: 'transparent', precision: 0 },
-        grid: { color: '#e8ecf3' }, angleLines: { color: '#e8ecf3' }, pointLabels: { color: '#6b7796' } } },
-      plugins: { ...CHART_DEFAULTS.plugins, legend: { display: false } } },
+      scales: {
+        x: { min: -0.5, max: Math.max(toolEntries.length - 0.5, 0.5), ticks: { color: '#6b7796', stepSize: 1,
+          callback: value => toolEntries[value] ? toolEntries[value][0] : '' }, grid: { color: '#e8ecf3' } },
+        y: { beginAtZero: true, ticks: { color: '#6b7796', precision: 0 }, grid: { color: '#e8ecf3' } },
+      },
+      plugins: { ...CHART_DEFAULTS.plugins, legend: { display: false },
+        tooltip: { callbacks: { label: context => `${context.raw.toolName}: ${context.raw.y} calls` } } } },
   });
 }
 
