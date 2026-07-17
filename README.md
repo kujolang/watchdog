@@ -497,6 +497,7 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `GET` | `/api/audit-events` | Structured security/audit event stream |
 | `GET` | `/api/errors` | Error aggregates |
 | `GET` | `/api/sessions` | Per-session aggregates |
+| `GET` | `/api/insights` | Agent run outcomes, tool effectiveness, latency by span kind, workflow transitions, and context-pressure summaries |
 | `GET` | `/api/charts/requests-over-time` | Hourly request/error counts |
 | `GET` | `/api/charts/cost-over-time` | Hourly cost totals |
 | `GET` | `/api/charts/latency-hist` | Latency buckets |
@@ -511,6 +512,8 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `GET` | `/api/export` | Full export (`json` default or `jsonl`/`ndjson`) |
 
 The granular contract is optional and producer-neutral. Watchdog is a passive collector: applications, model providers, and tool executors remain independently usable, and a tool can append its own telemetry without importing or depending on another tool. See [Granular Tracing](docs/GRANULAR_TRACING.md).
+
+`/api/insights` is intentionally labeled as observed telemetry: runs are grouped by task ID, workflow ID, or session ID; a success signal means no request error was recorded; retry signals are inferred from retry-named trace events; and context pressure is derived from trace token fields. Producers can make these classifications stronger by sending explicit task-completion and retry events.
 
 List endpoints now support optional query parameters for pagination and filtering:
 

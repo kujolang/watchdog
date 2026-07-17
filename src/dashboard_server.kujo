@@ -3057,6 +3057,38 @@ server := server.route("GET", "/api/sessions", func(req) {
 	return api_ok(rows)
 })
 
+server := server.route("GET", "/api/insights", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	run_key_sql := "COALESCE(NULLIF(task_id,''), NULLIF(workflow_id,''), NULLIF(session_id,''), NULLIF(request_id,''), CAST(id AS TEXT))"
+	run_rows := db_query(db, "SELECT " + run_key_sql + " AS run_key, MAX(workflow_id) AS workflow_id, MAX(task_id) AS task_id, COUNT(*) AS request_rounds, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS error_count, COALESCE(SUM(total_tokens),0) AS total_tokens, COALESCE(SUM(cost_usd),0) AS total_cost_usd, COALESCE(AVG(latency_ms),0) AS avg_latency_ms, MAX(latency_ms) AS max_latency_ms, MAX(created_at) AS last_seen, (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = MAX(requests.session_id)) AS tool_count, (SELECT COUNT(*) FROM trace_events te JOIN traces tr ON tr.trace_id = te.trace_id WHERE tr.session_id = MAX(requests.session_id) AND lower(te.event_name) LIKE '%retry%') AS retry_signals FROM requests GROUP BY " + run_key_sql + " ORDER BY last_seen DESC LIMIT 100", [])
+	run_summary_rows := db_query(db, "SELECT COUNT(*) AS total_runs, SUM(CASE WHEN error_count = 0 THEN 1 ELSE 0 END) AS success_signal_runs, SUM(CASE WHEN error_count > 0 THEN 1 ELSE 0 END) AS failed_runs, COALESCE(SUM(total_cost_usd),0) AS total_cost_usd, COALESCE(SUM(CASE WHEN error_count = 0 THEN total_cost_usd ELSE 0 END),0) AS successful_cost_usd FROM (SELECT " + run_key_sql + " AS run_key, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS error_count, COALESCE(SUM(cost_usd),0) AS total_cost_usd FROM requests GROUP BY " + run_key_sql + ")", [])
+
+	tool_rows := db_query(db, "SELECT tool_name, COUNT(*) AS call_count, SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS success_count, SUM(CASE WHEN status='success' THEN 0 ELSE 1 END) AS error_count, COALESCE(AVG(latency_ms),0) AS avg_latency_ms, MAX(latency_ms) AS max_latency_ms, COALESCE(SUM(latency_ms),0) AS total_latency_ms, COUNT(DISTINCT session_id) AS session_count FROM tool_calls GROUP BY tool_name ORDER BY call_count DESC LIMIT 100", [])
+
+	waterfall_rows := db_query(db, "SELECT span_kind, COUNT(*) AS span_count, COALESCE(SUM(duration_ms),0) AS total_duration_ms, COALESCE(AVG(duration_ms),0) AS avg_duration_ms, MAX(duration_ms) AS max_duration_ms FROM trace_spans GROUP BY span_kind ORDER BY total_duration_ms DESC", [])
+	sequence_rows := db_query(db, "SELECT a.step_type AS from_step, b.step_type AS to_step, COUNT(*) AS transition_count FROM agent_steps a JOIN agent_steps b ON b.session_id = a.session_id AND b.step_number = a.step_number + 1 WHERE a.step_type != '' AND b.step_type != '' GROUP BY a.step_type, b.step_type ORDER BY transition_count DESC LIMIT 50", [])
+	context_summary_rows := db_query(db, "SELECT COUNT(*) AS trace_count, COALESCE(AVG(input_tokens),0) AS avg_input_tokens, COALESCE(MAX(input_tokens),0) AS max_input_tokens, COALESCE(AVG(cached_input_tokens),0) AS avg_cached_input_tokens, COALESCE(AVG(output_tokens),0) AS avg_output_tokens, COALESCE(AVG(duration_ms),0) AS avg_duration_ms FROM traces", [])
+	context_trend_rows := db_query(db, "SELECT CAST(started_at_ms / 3600000 AS INTEGER) AS hour_bucket, COALESCE(AVG(input_tokens),0) AS avg_input_tokens, MAX(input_tokens) AS max_input_tokens, COALESCE(AVG(cached_input_tokens),0) AS avg_cached_input_tokens, COUNT(*) AS trace_count FROM traces GROUP BY hour_bucket ORDER BY hour_bucket ASC LIMIT 72", [])
+
+	return api_ok({
+		"run_outcomes": {
+			"summary": run_summary_rows[0],
+			"runs": run_rows
+		},
+		"tool_effectiveness": tool_rows,
+		"latency_waterfall": waterfall_rows,
+		"workflow_sequences": sequence_rows,
+		"context_pressure": {
+			"summary": context_summary_rows[0],
+			"trend": context_trend_rows
+		}
+	})
+})
+
 server := server.route("GET", "/api/charts/requests-over-time", func(req) {
 	auth := require_api_auth(req)
 	if !auth["allowed"] {
