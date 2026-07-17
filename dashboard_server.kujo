@@ -1133,6 +1133,86 @@ func effective_proxy_config(config_path) {
 	return cfg
 }
 
+func effective_upstream_profiles(config_path) {
+	profiles := {
+		"default": effective_proxy_config(config_path)
+	}
+	file_cfg := read_proxy_config_file(config_path)
+	raw_profiles := safe_dict_get(file_cfg, "upstream_profiles", {})
+	if type(raw_profiles) != "dict" {
+		return profiles
+	}
+
+	for profile_name in keys(raw_profiles) {
+		name := trim(to_string(profile_name))
+		profile_cfg := raw_profiles[profile_name]
+		if name == "" || type(profile_cfg) != "dict" {
+			continue
+		}
+
+		cfg := merge_config_maps({
+			"upstream_base_url": DEFAULT_UPSTREAM_BASE_URL,
+			"auth_mode": DEFAULT_AUTH_MODE,
+			"upstream_api_key": "",
+			"upstream_api_key_env": ""
+		}, profile_cfg)
+		cfg["upstream_base_url"] := normalize_base_url(string_dict_get(cfg, "upstream_base_url", DEFAULT_UPSTREAM_BASE_URL))
+		auth_mode := to_lower(trim(string_dict_get(cfg, "auth_mode", DEFAULT_AUTH_MODE)))
+		if auth_mode != "override" {
+			auth_mode := "passthrough"
+		}
+		cfg["auth_mode"] := auth_mode
+		profiles[name] := cfg
+	}
+
+	return profiles
+}
+
+func effective_named_upstream_profile(config_path, profile_name) {
+	file_cfg := read_proxy_config_file(config_path)
+	raw_profiles := safe_dict_get(file_cfg, "upstream_profiles", {})
+	if type(raw_profiles) != "dict" || !has_key(raw_profiles, profile_name) {
+		return {}
+	}
+	profile_cfg := raw_profiles[profile_name]
+	if type(profile_cfg) != "dict" {
+		return {}
+	}
+	cfg := merge_config_maps({
+		"upstream_base_url": DEFAULT_UPSTREAM_BASE_URL,
+		"auth_mode": DEFAULT_AUTH_MODE,
+		"upstream_api_key": "",
+		"upstream_api_key_env": ""
+	}, profile_cfg)
+	cfg["upstream_base_url"] := normalize_base_url(string_dict_get(cfg, "upstream_base_url", DEFAULT_UPSTREAM_BASE_URL))
+	auth_mode := to_lower(trim(string_dict_get(cfg, "auth_mode", DEFAULT_AUTH_MODE)))
+	if auth_mode != "override" {
+		auth_mode := "passthrough"
+	}
+	cfg["auth_mode"] := auth_mode
+	return cfg
+}
+
+func select_upstream_profile(req) {
+	headers := safe_dict_get(req, "headers", {})
+	profile_name := trim(get_header(headers, "X-Watchdog-Upstream-Profile"))
+	if profile_name == "" {
+		profile_name := "default"
+	}
+	profiles := effective_upstream_profiles(PROXY_CONFIG_PATH)
+	if !has_key(profiles, profile_name) {
+		return {
+			"ok": false,
+			"error": "Unknown Watchdog upstream profile: " + profile_name
+		}
+	}
+	return {
+		"ok": true,
+		"name": profile_name,
+		"config": profiles[profile_name]
+	}
+}
+
 func resolve_override_api_key(cfg) {
 	raw := string_dict_get(cfg, "upstream_api_key", "")
 	if raw != "" {
@@ -1979,8 +2059,25 @@ func proxy_route_dispatch(req) {
 	return proxy_forward(req, resource, action)
 }
 
+func proxy_forward_named_upstream(req, resource, action, upstream_profile) {
+	file_cfg := read_proxy_config_file(PROXY_CONFIG_PATH)
+	raw_profiles := safe_dict_get(file_cfg, "upstream_profiles", {})
+	profile_cfg := raw_profiles[upstream_profile]
+	cfg := merge_config_maps({"upstream_base_url": DEFAULT_UPSTREAM_BASE_URL, "auth_mode": DEFAULT_AUTH_MODE, "upstream_api_key": "", "upstream_api_key_env": ""}, profile_cfg)
+	cfg["upstream_base_url"] := normalize_base_url(string_dict_get(cfg, "upstream_base_url", DEFAULT_UPSTREAM_BASE_URL))
+	return proxy_forward_with_config(req, resource, action, cfg, "named")
+}
+
 func proxy_forward(req, resource, action) {
-	cfg := effective_proxy_config(PROXY_CONFIG_PATH)
+	headers_in := safe_dict_get(req, "headers", {})
+	requested_upstream_profile := trim(get_header(headers_in, "X-Watchdog-Upstream-Profile"))
+	if requested_upstream_profile != "" && requested_upstream_profile != "default" {
+		return proxy_forward_named_upstream(req, resource, action, requested_upstream_profile)
+	}
+	return proxy_forward_with_config(req, resource, action, effective_proxy_config(PROXY_CONFIG_PATH), "default")
+}
+
+func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 	headers_in := safe_dict_get(req, "headers", {})
 
 	resource_clean := trim(to_string(resource))
@@ -2030,10 +2127,11 @@ func proxy_forward(req, resource, action) {
 		agent_id_hint := "proxy:" + resource_clean
 		latency_ms := current_timestamp() - started_ms
 		error_message := to_string(path_validation["error"])
-		request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, cfg["upstream_base_url"], "", "", "error", 0, 0, 0, 0.0, latency_ms, "", "unsafe_proxy_path", error_message, "", "")
+		request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, upstream_profile, "", "", "error", 0, 0, 0, 0.0, latency_ms, "", "unsafe_proxy_path", error_message, "", "")
 		insert_tool_call_row(request_dbid, session_id_hint, "proxy_forward", {
 			"method": method,
 			"path": forwarded_path,
+			"upstream_profile": upstream_profile,
 			"upstream_url": upstream_url
 		}, {
 			"error": error_message
@@ -2060,10 +2158,11 @@ func proxy_forward(req, resource, action) {
 		agent_id_hint := "proxy:" + resource_clean
 		latency_ms := current_timestamp() - started_ms
 		error_message := "Proxy request body exceeds configured max bytes: " + to_string(MAX_PROXY_BODY_BYTES)
-		request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, cfg["upstream_base_url"], "", "", "error", 0, 0, 0, 0.0, latency_ms, "", "payload_too_large", error_message, "", "")
+		request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, upstream_profile, "", "", "error", 0, 0, 0, 0.0, latency_ms, "", "payload_too_large", error_message, "", "")
 		insert_tool_call_row(request_dbid, session_id_hint, "proxy_forward", {
 			"method": method,
 			"path": forwarded_path,
+			"upstream_profile": upstream_profile,
 			"upstream_url": upstream_url
 		}, {
 			"error": error_message
@@ -2102,10 +2201,11 @@ func proxy_forward(req, resource, action) {
 				error_message := "JSON body exceeds configured parse limit: " + to_string(MAX_PARSE_BODY_BYTES)
 			}
 
-			request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, cfg["upstream_base_url"], "", "", "error", 0, 0, 0, 0.0, latency_ms, "", error_code, error_message, "", "")
+			request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, upstream_profile, "", "", "error", 0, 0, 0, 0.0, latency_ms, "", error_code, error_message, "", "")
 			insert_tool_call_row(request_dbid, session_id_hint, "proxy_forward", {
 				"method": method,
 				"path": forwarded_path,
+				"upstream_profile": upstream_profile,
 				"upstream_url": upstream_url
 			}, {
 				"error": error_message
@@ -2136,6 +2236,7 @@ func proxy_forward(req, resource, action) {
 
 	insert_agent_step_row(session_id, agent_id, "proxy_received", "Received proxy request for " + forwarded_path, {
 		"method": method,
+		"upstream_profile": upstream_profile,
 		"upstream_url": upstream_url,
 		"auth_mode": cfg["auth_mode"]
 	})
@@ -2147,7 +2248,7 @@ func proxy_forward(req, resource, action) {
 		override_key := resolve_override_api_key(cfg)
 		if override_key == "" {
 			latency_ms := current_timestamp() - started_ms
-			insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, cfg["upstream_base_url"], model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "proxy_auth_missing", "Proxy auth_mode=override but no API key is configured.", prompt_summary, "")
+			insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "proxy_auth_missing", "Proxy auth_mode=override but no API key is configured.", prompt_summary, "")
 			insert_agent_step_row(session_id, agent_id, "proxy_failed", "Proxy override mode is missing an upstream API key.", {"upstream_url": upstream_url})
 			return api_error(500, "Proxy auth_mode=override requires WDG_UPSTREAM_API_KEY or WDG_UPSTREAM_API_KEY_ENV")
 		}
@@ -2179,6 +2280,7 @@ func proxy_forward(req, resource, action) {
 
 	insert_agent_step_row(session_id, agent_id, "proxy_forwarded", "Forwarded request to upstream.", {
 		"upstream_url": upstream_url,
+		"upstream_profile": upstream_profile,
 		"method": method,
 		"auth_mode": cfg["auth_mode"]
 	})
@@ -2241,11 +2343,12 @@ func proxy_forward(req, resource, action) {
 
 			latency_ms := current_timestamp() - started_ms
 			cost_usd := watchdog_estimate_cost(model_name, usage["input_tokens"] * 1.0, usage["output_tokens"] * 1.0)
-			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, cfg["upstream_base_url"], model_name, request_id, status_label, usage["input_tokens"], usage["output_tokens"], usage["total_tokens"], cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary)
+			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, request_id, status_label, usage["input_tokens"], usage["output_tokens"], usage["total_tokens"], cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary)
 
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
 				"path": forwarded_path,
+				"upstream_profile": upstream_profile,
 				"upstream_url": upstream_url
 			}, {
 				"status_code": status_code,
@@ -2265,10 +2368,11 @@ func proxy_forward(req, resource, action) {
 		}
 		case Err(err): {
 			latency_ms := current_timestamp() - started_ms
-			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, cfg["upstream_base_url"], model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "network_error", to_string(err), prompt_summary, "")
+			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "network_error", to_string(err), prompt_summary, "")
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
 				"path": forwarded_path,
+				"upstream_profile": upstream_profile,
 				"upstream_url": upstream_url
 			}, {
 				"error": to_string(err)
@@ -2281,10 +2385,11 @@ func proxy_forward(req, resource, action) {
 		}
 		case other: {
 			latency_ms := current_timestamp() - started_ms
-			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, cfg["upstream_base_url"], model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "transport_error", "Unexpected http_request result type: " + type(other), prompt_summary, "")
+			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "transport_error", "Unexpected http_request result type: " + type(other), prompt_summary, "")
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
 				"path": forwarded_path,
+				"upstream_profile": upstream_profile,
 				"upstream_url": upstream_url
 			}, {
 				"error": "Unexpected http_request result type: " + type(other)
@@ -2359,10 +2464,23 @@ server := server.route("GET", "/api/proxy-config", func(req) {
 
 	cfg := effective_proxy_config(PROXY_CONFIG_PATH)
 	override_key := resolve_override_api_key(cfg)
+	profiles := effective_upstream_profiles(PROXY_CONFIG_PATH)
+	profile_summaries := []
+	for profile_name in keys(profiles) {
+		profile_cfg := profiles[profile_name]
+		profile_override_key := resolve_override_api_key(profile_cfg)
+		profile_summaries := push(profile_summaries, {
+			"name": profile_name,
+			"upstream_base_url": profile_cfg["upstream_base_url"],
+			"auth_mode": profile_cfg["auth_mode"],
+			"has_override_api_key": len(trim(profile_override_key)) > 0
+		})
+	}
 	payload := {
 		"upstream_base_url": cfg["upstream_base_url"],
 		"auth_mode": cfg["auth_mode"],
 		"has_override_api_key": len(trim(override_key)) > 0,
+		"upstream_profiles": profile_summaries,
 		"api_auth_mode": API_AUTH_MODE,
 		"api_auth_enabled": API_AUTH_MODE == "token",
 		"proxy_auth_mode": PROXY_AUTHZ_MODE,

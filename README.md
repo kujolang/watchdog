@@ -188,6 +188,37 @@ Optional `watchdog_proxy_config.json` (path controlled by `WDG_PROXY_CONFIG_PATH
 
 Precedence: env vars override file values, and file values override defaults.
 
+### Named upstream profiles
+
+One Watchdog server can proxy several provider accounts into the same telemetry
+database and dashboard. Keep the existing top-level values as the `default`
+profile, then add named entries for additional accounts:
+
+```json
+{
+  "upstream_base_url": "https://ollama.com/v1",
+  "auth_mode": "override",
+  "upstream_api_key_env": "OLLAMA_PERSONAL_API_KEY",
+  "upstream_profiles": {
+    "openrouter-work": {
+      "upstream_base_url": "https://openrouter.ai/api/v1",
+      "auth_mode": "override",
+      "upstream_api_key_env": "OPENROUTER_WORK_API_KEY"
+    },
+    "ollama-work": {
+      "upstream_base_url": "https://ollama.com/v1",
+      "auth_mode": "override",
+      "upstream_api_key_env": "OLLAMA_WORK_API_KEY"
+    }
+  }
+}
+```
+
+Clients select a configured non-default profile with the trusted proxy header
+`X-Watchdog-Upstream-Profile: openrouter-work`. Unknown profile names are
+rejected before any upstream request. The dashboard records the selected profile
+name as the request provider, making account/provider filtering unambiguous.
+
 ---
 
 ## Proxy routes
@@ -401,9 +432,8 @@ configured upstream key. For apps with different upstream keys, use
 and send the Watchdog access credential separately in
 `X-Watchdog-Proxy-Token`. Both modes still write to the same database.
 
-A single Watchdog process currently has one upstream base URL. Routing one
-process to several different upstream providers requires named upstream
-profiles; that is separate from aggregating several apps against one provider.
+Named upstream profiles let one Watchdog process route several provider
+accounts while retaining one telemetry database and dashboard.
 
 ---
 
