@@ -183,7 +183,7 @@
   /* ── Chart grid ────────────────────────────────────────────────── */
   .charts-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     grid-template-rows: auto auto;
     gap: 16px;
   }
@@ -851,6 +851,10 @@
       <div class="chart-title">Status breakdown</div>
       <div class="chart-wrap" style="height:200px"><canvas id="chartStatus"></canvas></div>
     </div>
+    <div class="chart-card">
+      <div class="chart-title">Tool calls by type</div>
+      <div class="chart-wrap"><canvas id="chartTools"></canvas></div>
+    </div>
   </div>
 
   <!-- Tabs -->
@@ -1069,6 +1073,7 @@ const state = {
 let chartRequests = null;
 let chartLatency  = null;
 let chartStatus   = null;
+let chartTools    = null;
 let apiToken = readStoredToken();
 let refreshInFlight = false;
 
@@ -1186,7 +1191,7 @@ async function loadAll() {
     state.backups    = backups || null;
 
     renderStats(stats);
-    renderCharts(chartReqData, chartLatData, chartStatusData);
+    renderCharts(chartReqData, chartLatData, chartStatusData, state.toolCalls);
     populateProviderFilter();
     renderRequestsTable();
     renderToolCallsTable();
@@ -1249,7 +1254,7 @@ const CHART_DEFAULTS = {
   },
 };
 
-function renderCharts(reqData, latData, statusData) {
+function renderCharts(reqData, latData, statusData, toolData) {
   // ── Requests over time ──
   if (chartRequests) chartRequests.destroy();
   const rLabels = (reqData || []).map(r => 'h+' + r.hour_bucket);
@@ -1304,6 +1309,28 @@ function renderCharts(reqData, latData, statusData) {
       plugins: { legend: { position: 'right', labels: { color: '#6b7796', boxWidth: 12 } } },
       cutout: '65%',
     },
+  });
+
+  // ── Tool calls by type ──
+  if (chartTools) chartTools.destroy();
+  const toolCounts = {};
+  (toolData || []).forEach(tool => {
+    const name = String(tool.tool_name || 'unknown');
+    toolCounts[name] = (toolCounts[name] || 0) + 1;
+  });
+  const toolEntries = Object.entries(toolCounts).sort((a, b) => b[1] - a[1]);
+  chartTools = new Chart(document.getElementById('chartTools'), {
+    type: 'radar',
+    data: {
+      labels: toolEntries.map(([name]) => name),
+      datasets: [{ label: 'Calls', data: toolEntries.map(([, count]) => count),
+        borderColor: '#7c3aed', backgroundColor: '#7c3aed33', pointBackgroundColor: '#7c3aed',
+        pointBorderColor: '#ffffff', pointHoverBackgroundColor: '#ffffff', pointHoverBorderColor: '#7c3aed' }],
+    },
+    options: { ...CHART_DEFAULTS, responsive: true, maintainAspectRatio: false,
+      scales: { r: { beginAtZero: true, ticks: { color: '#6b7796', backdropColor: 'transparent', precision: 0 },
+        grid: { color: '#e8ecf3' }, angleLines: { color: '#e8ecf3' }, pointLabels: { color: '#6b7796' } } },
+      plugins: { ...CHART_DEFAULTS.plugins, legend: { display: false } } },
   });
 }
 
