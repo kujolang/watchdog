@@ -210,6 +210,22 @@
 
   .chart-wrap { position: relative; height: 200px; }
 
+  .insights-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 20px; }
+  .insight-card { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; background: var(--surface); }
+  .insight-card.wide { grid-column: 1 / -1; }
+  .insight-card h3 { margin-bottom: 14px; font-size: 14px; color: var(--text); }
+  .insight-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .insight-stat { padding: 12px; border: 1px solid var(--border); background: var(--surface2); }
+  .insight-stat-label { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .insight-stat-value { margin-top: 5px; color: var(--text); font-size: 20px; font-weight: 700; }
+  .insight-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .insight-table th, .insight-table td { padding: 8px 6px; border-bottom: 1px solid var(--border); text-align: left; }
+  .insight-table th { color: var(--text-muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+  .insight-table td:not(:first-child), .insight-table th:not(:first-child) { text-align: right; }
+  .insight-note { margin-top: 10px; color: var(--text-muted); font-size: 11px; }
+
+  @media (max-width: 900px) { .insights-grid, .insight-stats { grid-template-columns: 1fr; } .insight-card.wide { grid-column: auto; } }
+
   /* ── Tabs ──────────────────────────────────────────────────────── */
   .tabs-section {
     background: var(--surface);
@@ -648,6 +664,8 @@
 
   .chart-card { padding: 22px; }
   .chart-title { color: #031b4e; font-size: 13px; letter-spacing: 0; text-transform: none; }
+  .insight-card, .insight-stat { background: #fff; }
+  .insight-card h3, .insight-stat-value { color: #031b4e; }
   .tabs-header, thead th { background: #f7f9fc; }
   .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
   .table-toolbar { background: #fff; }
@@ -865,6 +883,7 @@
       <button class="tab-btn" onclick="switchTab('traces',this)">Agent Traces <span class="tab-badge" id="badgeTraces">0</span></button>
       <button class="tab-btn" onclick="switchTab('errors',this)">Errors <span class="tab-badge" id="badgeErrors">0</span></button>
       <button class="tab-btn" onclick="switchTab('sessions',this)">Sessions <span class="tab-badge" id="badgeSessions">0</span></button>
+      <button class="tab-btn" onclick="switchTab('insights',this)">Agent Insights</button>
       <button class="tab-btn" onclick="switchTab('backups',this)">Backups <span class="tab-badge" id="badgeBackups">0</span></button>
     </div>
 
@@ -997,6 +1016,13 @@
       <div id="sessEmpty" class="empty hidden"><div class="empty-icon">👤</div>No sessions found.</div>
     </div>
 
+    <!-- ── Agent insights tab ─────────────────── -->
+    <div class="tab-panel" id="tab-insights">
+      <div class="insights-grid" id="insightsContainer">
+        <div class="empty" style="grid-column:1/-1"><div class="empty-icon">📈</div>No agent insights recorded yet.</div>
+      </div>
+    </div>
+
     <!-- ── Backups tab ───────────────────────── -->
     <div class="tab-panel" id="tab-backups">
       <div class="backup-layout">
@@ -1063,6 +1089,7 @@ const state = {
   visibleTraceSpans: [],
   errors:     [],
   sessions:   [],
+  insights:   null,
   backups:    null,
   visibleRows: { requests: [], toolCalls: [], sessions: [] },
   sortKey:    { requests: 'created_at', sessions: 'last_seen' },
@@ -1176,6 +1203,7 @@ async function loadAll() {
     const traceEvents = await fetchJSON('/api/trace-events');
     const errs = await fetchJSON('/api/errors');
     const sess = await fetchJSON('/api/sessions');
+    const insights = await fetchJSON('/api/insights');
     const chartReqData = await fetchJSON('/api/charts/requests-over-time');
     const chartLatData = await fetchJSON('/api/charts/latency-hist');
     const chartStatusData = await fetchJSON('/api/charts/status-breakdown');
@@ -1188,6 +1216,7 @@ async function loadAll() {
     state.traceEvents = traceEvents || [];
     state.errors     = errs   || [];
     state.sessions   = sess   || [];
+    state.insights   = insights || null;
     state.backups    = backups || null;
 
     renderStats(stats);
@@ -1198,6 +1227,7 @@ async function loadAll() {
     renderAgentTraces();
     renderErrors();
     renderSessionsTable();
+    renderInsights();
     renderBackups();
 
     state.hasLoaded = true;
@@ -1661,6 +1691,76 @@ function renderSessionsTable() {
       <td class="cell-mono" style="font-size:11px;white-space:nowrap">${fmtTs(r.started_at)}</td>
       <td class="cell-mono" style="font-size:11px;white-space:nowrap">${fmtTs(r.last_seen)}</td>
     </tr>`).join('');
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Agent insights
+   ════════════════════════════════════════════════════════════════════ */
+function renderInsights() {
+  const container = document.getElementById('insightsContainer');
+  const data = state.insights || {};
+  const outcomes = data.run_outcomes || {};
+  const summary = outcomes.summary || {};
+  const context = data.context_pressure || {};
+  const contextSummary = context.summary || {};
+  const successRuns = Number(summary.success_signal_runs || 0);
+  const successfulCost = Number(summary.successful_cost_usd || 0);
+  const toolRows = data.tool_effectiveness || [];
+  const waterfallRows = data.latency_waterfall || [];
+  const sequenceRows = data.workflow_sequences || [];
+  const runRows = outcomes.runs || [];
+  const trendRows = (context.trend || []).slice(-12).reverse();
+
+  const runMarkup = runRows.length ? runRows.map(run => {
+    const failed = Number(run.error_count || 0) > 0;
+    const outcome = failed ? 'failed' : 'success signal';
+    const runLabel = run.task_id || run.workflow_id || run.run_key || 'unscoped';
+    return `<tr><td title="${safeText(runLabel)}">${safeText(truncate(runLabel, 28))}</td><td><span class="badge ${failed ? 'badge-error' : 'badge-success'}">${outcome}</span></td><td>${fmtNum(run.request_rounds)}</td><td>${Math.max(Number(run.request_rounds || 0) - 1, 0)}</td><td>${fmtNum(run.retry_signals)}</td><td>${fmtNum(run.tool_count)}</td><td>$${fmtCost(run.total_cost_usd)}</td><td>${fmtLatency(run.avg_latency_ms)}</td></tr>`;
+  }).join('') : '<tr><td colspan="8">No runs available.</td></tr>';
+  const toolMarkup = toolRows.length ? toolRows.slice(0, 12).map(tool => {
+    const calls = Number(tool.call_count || 0);
+    const successRate = calls ? (Number(tool.success_count || 0) * 100) / calls : 0;
+    return `<tr><td>${safeText(tool.tool_name || 'unknown')}</td><td>${fmtNum(calls)}</td><td>${fmtPct(successRate)}%</td><td>${fmtNum(tool.error_count)}</td><td>${fmtLatency(tool.avg_latency_ms)}</td><td>${fmtLatency(tool.max_latency_ms)}</td><td>${fmtLatency(tool.total_latency_ms)}</td></tr>`;
+  }).join('') : '<tr><td colspan="7">No tool calls available.</td></tr>';
+  const waterfallMarkup = waterfallRows.length ? waterfallRows.map(row => `<tr><td>${safeText(row.span_kind || 'internal')}</td><td>${fmtNum(row.span_count)}</td><td>${fmtLatency(row.total_duration_ms)}</td><td>${fmtLatency(row.avg_duration_ms)}</td><td>${fmtLatency(row.max_duration_ms)}</td></tr>`).join('') : '<tr><td colspan="5">No trace spans available.</td></tr>';
+  const sequenceMarkup = sequenceRows.length ? sequenceRows.slice(0, 12).map(row => `<tr><td>${safeText(row.from_step)}</td><td>${safeText(row.to_step)}</td><td>${fmtNum(row.transition_count)}</td></tr>`).join('') : '<tr><td colspan="3">No sequential agent steps available.</td></tr>';
+  const trendMarkup = trendRows.length ? trendRows.map(row => `<tr><td>h+${safeText(row.hour_bucket)}</td><td>${fmtNum(row.trace_count)}</td><td>${fmtNum(row.avg_input_tokens)}</td><td>${fmtNum(row.max_input_tokens)}</td><td>${fmtNum(row.avg_cached_input_tokens)}</td></tr>`).join('') : '<tr><td colspan="5">No trace context data available.</td></tr>';
+
+  container.innerHTML = `
+    <section class="insight-card wide">
+      <h3>Run outcomes and efficiency</h3>
+      <div class="insight-stats">
+        <div class="insight-stat"><div class="insight-stat-label">Observed runs</div><div class="insight-stat-value">${fmtNum(summary.total_runs)}</div></div>
+        <div class="insight-stat"><div class="insight-stat-label">Success signals</div><div class="insight-stat-value">${fmtNum(summary.success_signal_runs)}</div></div>
+        <div class="insight-stat"><div class="insight-stat-label">Failed runs</div><div class="insight-stat-value">${fmtNum(summary.failed_runs)}</div></div>
+        <div class="insight-stat"><div class="insight-stat-label">Cost / success signal</div><div class="insight-stat-value">$${fmtCost(successRuns ? successfulCost / successRuns : 0)}</div></div>
+      </div>
+      <table class="insight-table"><thead><tr><th>Run / task</th><th>Outcome</th><th>Rounds</th><th>Extra rounds</th><th>Retry signals</th><th>Tools</th><th>Cost</th><th>Avg latency</th></tr></thead><tbody>${runMarkup}</tbody></table>
+      <div class="insight-note">Runs are grouped by task ID, workflow ID, or session ID. “Success signal” means no recorded request error; explicit task-completion events can make this classification stronger.</div>
+    </section>
+    <section class="insight-card wide">
+      <h3>Tool effectiveness</h3>
+      <table class="insight-table"><thead><tr><th>Tool</th><th>Calls</th><th>Success</th><th>Errors</th><th>Avg latency</th><th>Max latency</th><th>Total time</th></tr></thead><tbody>${toolMarkup}</tbody></table>
+    </section>
+    <section class="insight-card">
+      <h3>Latency waterfall by span kind</h3>
+      <table class="insight-table"><thead><tr><th>Kind</th><th>Spans</th><th>Total</th><th>Average</th><th>Max</th></tr></thead><tbody>${waterfallMarkup}</tbody></table>
+    </section>
+    <section class="insight-card">
+      <h3>Common workflow transitions</h3>
+      <table class="insight-table"><thead><tr><th>From</th><th>To</th><th>Count</th></tr></thead><tbody>${sequenceMarkup}</tbody></table>
+      <div class="insight-note">Transitions are inferred from consecutive numbered agent steps within a session.</div>
+    </section>
+    <section class="insight-card wide">
+      <h3>Context pressure</h3>
+      <div class="insight-stats">
+        <div class="insight-stat"><div class="insight-stat-label">Traces measured</div><div class="insight-stat-value">${fmtNum(contextSummary.trace_count)}</div></div>
+        <div class="insight-stat"><div class="insight-stat-label">Average input</div><div class="insight-stat-value">${fmtNum(contextSummary.avg_input_tokens)}</div></div>
+        <div class="insight-stat"><div class="insight-stat-label">Largest input</div><div class="insight-stat-value">${fmtNum(contextSummary.max_input_tokens)}</div></div>
+        <div class="insight-stat"><div class="insight-stat-label">Average cached</div><div class="insight-stat-value">${fmtNum(contextSummary.avg_cached_input_tokens)}</div></div>
+      </div>
+      <table class="insight-table"><thead><tr><th>Hour</th><th>Traces</th><th>Avg input</th><th>Max input</th><th>Avg cached</th></tr></thead><tbody>${trendMarkup}</tbody></table>
+    </section>`;
 }
 
 /* ════════════════════════════════════════════════════════════════════

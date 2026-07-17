@@ -70,7 +70,7 @@ function createHarness() {
 	const requiredIds = [
 		'reqSearch', 'reqTenantFilter', 'reqProjectFilter', 'reqStatusFilter', 'reqProviderFilter', 'reqBody', 'reqEmpty',
 		'tcSearch', 'tcStatusFilter', 'tcBody', 'tcEmpty',
-		'traceContainer', 'errorGrid', 'sessBody', 'sessEmpty',
+		'traceContainer', 'errorGrid', 'sessBody', 'sessEmpty', 'insightsContainer',
 		'badgeTraces', 'detailDialog', 'detailTitle', 'detailBody',
 	];
 
@@ -278,6 +278,21 @@ function testToolCallsErrorsSessionsAndTracesContracts() {
 	assert.ok(elements.traceContainer.innerHTML.includes('Persisted ✓'), 'persistence events should remain filterable and visible');
 	assert.ok(elements.traceContainer.innerHTML.includes('&lt;tool-span&gt;'));
 	assert.ok(!elements.traceContainer.innerHTML.includes('span-bar tool&quot;'), 'span kind must not be injected into a CSS class');
+
+	context.state.insights = {
+		run_outcomes: {
+			summary: { total_runs: 1, success_signal_runs: 1, failed_runs: 0, successful_cost_usd: 0.01 },
+			runs: [{ run_key: '<run>', request_rounds: 2, error_count: 0, retry_signals: 1, tool_count: 2, total_cost_usd: 0.01, avg_latency_ms: 40 }],
+		},
+		tool_effectiveness: [{ tool_name: '<tool>', call_count: 2, success_count: 2, error_count: 0, avg_latency_ms: 20, max_latency_ms: 30, total_latency_ms: 40 }],
+		latency_waterfall: [{ span_kind: 'tool', span_count: 1, total_duration_ms: 20, avg_duration_ms: 20, max_duration_ms: 20 }],
+		workflow_sequences: [{ from_step: 'planning', to_step: 'tool_call', transition_count: 1 }],
+		context_pressure: { summary: { trace_count: 1, avg_input_tokens: 10, max_input_tokens: 12, avg_cached_input_tokens: 2 }, trend: [] },
+	};
+	context.renderInsights();
+	assert.ok(elements.insightsContainer.innerHTML.includes('&lt;run&gt;'), 'insight run labels should be escaped');
+	assert.ok(elements.insightsContainer.innerHTML.includes('&lt;tool&gt;'), 'insight tool labels should be escaped');
+	assert.ok(elements.insightsContainer.innerHTML.includes('Tool effectiveness'));
 }
 
 function run() {
