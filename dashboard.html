@@ -978,7 +978,7 @@
               <th onclick="sortTable('requests','status')">Status</th>
               <th onclick="sortTable('requests','latency_ms')">Latency</th>
               <th onclick="sortTable('requests','total_tokens')">Tokens</th>
-              <th onclick="sortTable('requests','cost_usd')">Est. Value</th>
+              <th onclick="sortTable('requests','cost_usd')">Cost</th>
               <th>Prompt</th>
             </tr>
           </thead>
@@ -1569,7 +1569,10 @@ function renderRequestsTable() {
       <td><span class="badge badge-${r.status === 'success' ? 'success' : 'error'}">${safeText(r.status || '')}</span></td>
       <td style="white-space:nowrap">${fmtLatency(r.latency_ms)}</td>
       <td style="white-space:nowrap">${fmtNum(r.total_tokens)}</td>
-      <td style="white-space:nowrap">$${fmtCost(r.cost_usd)}</td>
+      <td style="white-space:nowrap">
+        <div>$${fmtCost(r.cost_usd)}</div>
+        <div>${pricingKindBadge(r.pricing_kind, r.pricing_source, r.priced_model)}</div>
+      </td>
       <td class="cell-truncate" style="max-width:200px" title="${escHtml(r.prompt_summary || '')}">${escHtml(truncate(r.prompt_summary, 60))}</td>
     </tr>`).join('');
 }
@@ -1688,7 +1691,8 @@ function renderAgentTraces() {
             <span>${safeText(trace.source_app)} · ${safeText(trace.session_id)}</span>
             <span>${fmtLatency(trace.duration_ms)} total</span>
             <span>${fmtNum(Number(trace.input_tokens || 0) + Number(trace.output_tokens || 0))} tokens</span>
-            <span>$${fmtCost(Number(trace.input_cost_usd || 0) + Number(trace.output_cost_usd || 0))} value</span>
+            <span>$${fmtCost(traceTotalCost(trace))} value</span>
+            <span>${pricingKindBadge(trace.pricing_kind, trace.pricing_source, trace.priced_model)}</span>
             <span>${persistenceEvent ? 'Persisted ✓' : 'Persistence pending/not reported'}</span>
             <span>TTFT ${fmtLatency(attrs.time_to_first_token_ms)}</span>
             <span>${fmtNum(attrs.output_tokens_per_second || 0)} tok/s</span>
@@ -2125,6 +2129,34 @@ function fmtCost(n) {
   if (n === 0) return '0.0000';
   if (n < 0.0001) return n.toExponential(2);
   return n.toFixed(4);
+}
+
+function pricingKindMeta(kind) {
+  switch (String(kind || 'unknown')) {
+    case 'catalog':
+      return { label: 'catalog estimate', badge: 'info' };
+    case 'provider_reported':
+      return { label: 'provider reported', badge: 'success' };
+    case 'fallback':
+      return { label: 'fallback estimate', badge: 'warning' };
+    default:
+      return { label: 'unknown / unpriced', badge: 'purple' };
+  }
+}
+
+function pricingKindBadge(kind, source, pricedModel) {
+  const meta = pricingKindMeta(kind);
+  const titleParts = [meta.label];
+  if (source) titleParts.push(String(source));
+  if (pricedModel) titleParts.push('priced as ' + String(pricedModel));
+  return `<span class="badge badge-${meta.badge}" title="${safeText(titleParts.join(' · '))}">${safeText(meta.label)}</span>`;
+}
+
+function traceTotalCost(trace) {
+  return Number(trace.input_cost_usd || 0)
+    + Number(trace.output_cost_usd || 0)
+    + Number(trace.cached_input_cost_usd || 0)
+    + Number(trace.cache_write_input_cost_usd || 0);
 }
 
 function fmtLatency(ms) {
