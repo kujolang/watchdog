@@ -132,6 +132,8 @@ function testRequestsFiltersSortingAndEscaping() {
 	context.state.rangePreset = 'all';
 	context.initializeRangeFilter();
 	assert.strictEqual(elements.globalRangeSummary.textContent, 'All time');
+	assert.strictEqual(elements.globalRangeStartField.classList.contains('hidden'), true, 'preset mode should keep custom start hidden');
+	assert.strictEqual(elements.globalRangeEndField.classList.contains('hidden'), true, 'preset mode should keep custom end hidden');
 
 	context.state.rangePreset = 'custom';
 	context.initializeRangeFilter();
