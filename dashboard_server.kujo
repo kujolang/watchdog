@@ -464,7 +464,7 @@ func time_range_bounds(req) {
 	since_ms := request_query_int(req, "since_ms", 0, 0, 9223372036854775807)
 	until_ms := request_query_int(req, "until_ms", 0, 0, 9223372036854775807)
 	if until_ms <= 0 {
-		until_ms := now_ms()
+		until_ms := current_timestamp()
 	}
 	if since_ms <= 0 || since_ms >= until_ms {
 		return {
@@ -480,19 +480,20 @@ func time_range_bounds(req) {
 	}
 }
 
-func chart_bucket_size_ms(req) {
-	bounds := time_range_bounds(req)
-	span_ms := to_int_or_zero(bounds["span_ms"])
-	if span_ms <= 0 || span_ms <= 72 * 3600000 {
-		return 3600000
-	}
-	if span_ms <= 14 * 24 * 3600000 {
-		return 6 * 3600000
-	}
-	if span_ms <= 120 * 24 * 3600000 {
+func chart_bucket_size_ms_for_span(span_ms) {
+	if span_ms <= 0 {
 		return 24 * 3600000
 	}
-	return 7 * 24 * 3600000
+	if span_ms <= 48 * 3600000 {
+		return 3600000
+	}
+	if span_ms <= 45 * 24 * 3600000 {
+		return 24 * 3600000
+	}
+	if span_ms <= 240 * 24 * 3600000 {
+		return 7 * 24 * 3600000
+	}
+	return 30 * 24 * 3600000
 }
 func parse_bool_value(raw_value, fallback_value) {
 	if type(raw_value) == "bool" {
@@ -3170,8 +3171,12 @@ server := server.route("GET", "/api/charts/requests-over-time", func(req) {
 		conditions := push(conditions, "project_id = ?")
 		params := push(params, project_id)
 	}
-	bucket_size_ms := chart_bucket_size_ms(req)
-	sql := "SELECT CAST((CAST(created_at AS INTEGER) / " + to_string(bucket_size_ms) + ") AS INTEGER) * " + to_string(bucket_size_ms) + " AS bucket_start_ms, COUNT(*) AS total, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors FROM requests"
+	bounds := time_range_bounds(req)
+	span_ms := to_int_or_zero(bounds["span_ms"])
+	bucket_size_ms := chart_bucket_size_ms_for_span(span_ms)
+	bucket_origin_ms := to_int_or_zero(bounds["since_ms"])
+	bucket_expression := "CAST(((CAST(created_at AS INTEGER) - " + to_string(bucket_origin_ms) + ") / " + to_string(bucket_size_ms) + ") AS INTEGER) * " + to_string(bucket_size_ms) + " + " + to_string(bucket_origin_ms)
+	sql := "SELECT " + bucket_expression + " AS bucket_start_ms, " + to_string(bucket_size_ms) + " AS bucket_size_ms, COUNT(*) AS total, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors FROM requests"
 	sql := sql + where_clause_from_conditions(conditions)
 	sql := sql + " GROUP BY bucket_start_ms ORDER BY bucket_start_ms ASC"
 	rows := db_query(db, sql, params)
