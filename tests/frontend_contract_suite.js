@@ -68,10 +68,11 @@ function createHarness() {
 
 	const elements = {};
 	const requiredIds = [
+		'globalRangePreset', 'globalRangeStartField', 'globalRangeEndField', 'globalRangeStart', 'globalRangeEnd', 'globalRangeSummary',
 		'reqSearch', 'reqTenantFilter', 'reqProjectFilter', 'reqStatusFilter', 'reqProviderFilter', 'reqBody', 'reqEmpty',
 		'tcSearch', 'tcStatusFilter', 'tcBody', 'tcEmpty',
 		'traceContainer', 'errorGrid', 'sessBody', 'sessEmpty', 'insightsContainer',
-		'badgeTraces', 'detailDialog', 'detailTitle', 'detailBody',
+		'badgeTraces', 'detailDialog', 'detailTitle', 'detailBody', 'statRequestsSub',
 	];
 
 	requiredIds.forEach(id => {
@@ -127,6 +128,15 @@ function createHarness() {
 
 function testRequestsFiltersSortingAndEscaping() {
 	const { context, elements } = createHarness();
+
+	context.state.rangePreset = 'all';
+	context.initializeRangeFilter();
+	assert.strictEqual(elements.globalRangeSummary.textContent, 'All time');
+
+	context.state.rangePreset = 'custom';
+	context.initializeRangeFilter();
+	assert.strictEqual(elements.globalRangeStartField.classList.contains('hidden'), false, 'custom start field should be shown');
+	assert.strictEqual(elements.globalRangeEndField.classList.contains('hidden'), false, 'custom end field should be shown');
 
 	context.state.requests = [
 		{
@@ -202,6 +212,12 @@ function testRequestsFiltersSortingAndEscaping() {
 	context.renderRequestsTable();
 	assert.strictEqual(elements.reqBody.innerHTML, '', 'filtered no-result should clear body');
 	assert.strictEqual(elements.reqEmpty.classList.contains('hidden'), false, 'empty state should be visible');
+
+	context.state.rangePreset = '30d';
+	context.initializeRangeFilter();
+	const rangedUrl = context.buildApiUrl('/api/requests');
+	assert.ok(rangedUrl.includes('since_ms='), 'range-aware API URLs should include a start bound');
+	assert.ok(rangedUrl.includes('until_ms='), 'range-aware API URLs should include an end bound');
 }
 
 function testToolCallsErrorsSessionsAndTracesContracts() {
