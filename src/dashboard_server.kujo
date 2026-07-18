@@ -440,6 +440,25 @@ func where_clause_from_conditions(conditions) {
 	return out
 }
 
+func append_time_range_conditions(req, conditions, params, column_name) {
+	since_ms := request_query_int(req, "since_ms", 0, 0, 9223372036854775807)
+	if since_ms > 0 {
+		conditions := push(conditions, "CAST(" + column_name + " AS INTEGER) >= ?")
+		params := push(params, since_ms)
+	}
+
+	until_ms := request_query_int(req, "until_ms", 0, 0, 9223372036854775807)
+	if until_ms > 0 {
+		conditions := push(conditions, "CAST(" + column_name + " AS INTEGER) <= ?")
+		params := push(params, until_ms)
+	}
+
+	return {
+		"conditions": conditions,
+		"params": params
+	}
+}
+
 func parse_bool_value(raw_value, fallback_value) {
 	if type(raw_value) == "bool" {
 		return raw_value
@@ -2643,17 +2662,25 @@ server := server.route("GET", "/api/stats", func(req) {
 	}
 	maybe_run_scheduled_backup()
 
-	total_rows := db_query(db, "SELECT COUNT(*) AS n FROM requests", [])
-	error_rows := db_query(db, "SELECT COUNT(*) AS n FROM requests WHERE status = 'error'", [])
-	cost_rows := db_query(db, "SELECT COALESCE(SUM(cost_usd),0) AS total FROM requests", [])
-	lat_rows := db_query(db, "SELECT COALESCE(AVG(latency_ms),0) AS avg FROM requests WHERE status = 'success'", [])
-	tok_rows := db_query(db, "SELECT COALESCE(SUM(total_tokens),0) AS total FROM requests", [])
-	sess_rows := db_query(db, "SELECT COUNT(DISTINCT session_id) AS n FROM requests", [])
-	tc_rows := db_query(db, "SELECT COUNT(*) AS n FROM tool_calls", [])
-	step_rows := db_query(db, "SELECT COUNT(*) AS n FROM agent_steps", [])
-	trace_rows := db_query(db, "SELECT COUNT(*) AS n FROM traces", [])
-	span_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_spans", [])
-	event_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_events", [])
+	request_time_filter := append_time_range_conditions(req, [], [], "created_at")
+	request_where := where_clause_from_conditions(request_time_filter["conditions"])
+	total_rows := db_query(db, "SELECT COUNT(*) AS n FROM requests" + request_where, request_time_filter["params"])
+	error_rows := db_query(db, "SELECT COUNT(*) AS n FROM requests" + where_clause_from_conditions(push(request_time_filter["conditions"], "status = 'error'")), request_time_filter["params"])
+	cost_rows := db_query(db, "SELECT COALESCE(SUM(cost_usd),0) AS total FROM requests" + request_where, request_time_filter["params"])
+	lat_rows := db_query(db, "SELECT COALESCE(AVG(latency_ms),0) AS avg FROM requests" + where_clause_from_conditions(push(request_time_filter["conditions"], "status = 'success'")), request_time_filter["params"])
+	tok_rows := db_query(db, "SELECT COALESCE(SUM(total_tokens),0) AS total FROM requests" + request_where, request_time_filter["params"])
+	sess_rows := db_query(db, "SELECT COUNT(DISTINCT session_id) AS n FROM requests" + request_where, request_time_filter["params"])
+
+	tool_time_filter := append_time_range_conditions(req, [], [], "created_at")
+	tc_rows := db_query(db, "SELECT COUNT(*) AS n FROM tool_calls" + where_clause_from_conditions(tool_time_filter["conditions"]), tool_time_filter["params"])
+	step_time_filter := append_time_range_conditions(req, [], [], "created_at")
+	step_rows := db_query(db, "SELECT COUNT(*) AS n FROM agent_steps" + where_clause_from_conditions(step_time_filter["conditions"]), step_time_filter["params"])
+	trace_time_filter := append_time_range_conditions(req, [], [], "started_at_ms")
+	trace_rows := db_query(db, "SELECT COUNT(*) AS n FROM traces" + where_clause_from_conditions(trace_time_filter["conditions"]), trace_time_filter["params"])
+	span_time_filter := append_time_range_conditions(req, [], [], "started_at_ms")
+	span_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_spans" + where_clause_from_conditions(span_time_filter["conditions"]), span_time_filter["params"])
+	event_time_filter := append_time_range_conditions(req, [], [], "occurred_at_ms")
+	event_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_events" + where_clause_from_conditions(event_time_filter["conditions"]), event_time_filter["params"])
 
 	total := total_rows[0]["n"]
 	errors := error_rows[0]["n"]
@@ -2801,7 +2828,11 @@ server := server.route("GET", "/api/traces", func(req) {
 		return api_error(auth["status"], auth["error"])
 	}
 	limit := request_query_int(req, "limit", 100, 1, 500)
-	rows := db_query(db, "SELECT * FROM traces ORDER BY started_at_ms DESC LIMIT ?", [limit])
+	filter := append_time_range_conditions(req, [], [], "started_at_ms")
+	params := filter["params"]
+	sql := "SELECT * FROM traces" + where_clause_from_conditions(filter["conditions"]) + " ORDER BY started_at_ms DESC LIMIT ?"
+	params := push(params, limit)
+	rows := db_query(db, sql, params)
 	return api_ok(rows)
 })
 
@@ -2812,11 +2843,20 @@ server := server.route("GET", "/api/trace-spans", func(req) {
 	}
 	limit := request_query_int(req, "limit", 1000, 1, 5000)
 	trace_id := request_query_text(req, "trace_id", "")
+	filter := append_time_range_conditions(req, [], [], "started_at_ms")
 	if trace_id != "" {
-		rows := db_query(db, "SELECT * FROM trace_spans WHERE trace_id = ? ORDER BY started_at_ms ASC LIMIT ?", [trace_id, limit])
+		conditions := push(filter["conditions"], "trace_id = ?")
+		params := filter["params"]
+		params := push(params, trace_id)
+		sql := "SELECT * FROM trace_spans" + where_clause_from_conditions(conditions) + " ORDER BY started_at_ms ASC LIMIT ?"
+		params := push(params, limit)
+		rows := db_query(db, sql, params)
 		return api_ok(rows)
 	}
-	rows := db_query(db, "SELECT * FROM trace_spans ORDER BY started_at_ms DESC LIMIT ?", [limit])
+	params := filter["params"]
+	sql := "SELECT * FROM trace_spans" + where_clause_from_conditions(filter["conditions"]) + " ORDER BY started_at_ms DESC LIMIT ?"
+	params := push(params, limit)
+	rows := db_query(db, sql, params)
 	return api_ok(rows)
 })
 
@@ -2827,11 +2867,20 @@ server := server.route("GET", "/api/trace-events", func(req) {
 	}
 	limit := request_query_int(req, "limit", 2000, 1, 10000)
 	trace_id := request_query_text(req, "trace_id", "")
+	filter := append_time_range_conditions(req, [], [], "occurred_at_ms")
 	if trace_id != "" {
-		rows := db_query(db, "SELECT * FROM trace_events WHERE trace_id = ? ORDER BY sequence ASC, occurred_at_ms ASC LIMIT ?", [trace_id, limit])
+		conditions := push(filter["conditions"], "trace_id = ?")
+		params := filter["params"]
+		params := push(params, trace_id)
+		sql := "SELECT * FROM trace_events" + where_clause_from_conditions(conditions) + " ORDER BY sequence ASC, occurred_at_ms ASC LIMIT ?"
+		params := push(params, limit)
+		rows := db_query(db, sql, params)
 		return api_ok(rows)
 	}
-	rows := db_query(db, "SELECT * FROM trace_events ORDER BY occurred_at_ms DESC LIMIT ?", [limit])
+	params := filter["params"]
+	sql := "SELECT * FROM trace_events" + where_clause_from_conditions(filter["conditions"]) + " ORDER BY occurred_at_ms DESC LIMIT ?"
+	params := push(params, limit)
+	rows := db_query(db, sql, params)
 	return api_ok(rows)
 })
 
@@ -2860,17 +2909,9 @@ server := server.route("GET", "/api/audit-events", func(req) {
 		params := push(params, result)
 	}
 
-	since_ms := request_query_int(req, "since_ms", 0, 0, 9223372036854775807)
-	if since_ms > 0 {
-		conditions := push(conditions, "CAST(created_at AS INTEGER) >= ?")
-		params := push(params, since_ms)
-	}
-
-	until_ms := request_query_int(req, "until_ms", 0, 0, 9223372036854775807)
-	if until_ms > 0 {
-		conditions := push(conditions, "CAST(created_at AS INTEGER) <= ?")
-		params := push(params, until_ms)
-	}
+	time_filter := append_time_range_conditions(req, conditions, params, "created_at")
+	conditions := time_filter["conditions"]
+	params := time_filter["params"]
 
 	sql := "SELECT id, action, actor_key, result, metadata, created_at FROM audit_events"
 	sql := sql + where_clause_from_conditions(conditions)
@@ -2913,17 +2954,9 @@ server := server.route("GET", "/api/tool-calls", func(req) {
 		params := push(params, tool_name)
 	}
 
-	since_ms := request_query_int(req, "since_ms", 0, 0, 9223372036854775807)
-	if since_ms > 0 {
-		conditions := push(conditions, "CAST(created_at AS INTEGER) >= ?")
-		params := push(params, since_ms)
-	}
-
-	until_ms := request_query_int(req, "until_ms", 0, 0, 9223372036854775807)
-	if until_ms > 0 {
-		conditions := push(conditions, "CAST(created_at AS INTEGER) <= ?")
-		params := push(params, until_ms)
-	}
+	time_filter := append_time_range_conditions(req, conditions, params, "created_at")
+	conditions := time_filter["conditions"]
+	params := time_filter["params"]
 
 	sql := "SELECT id, request_dbid, session_id, tool_name, tool_args, tool_result, status, latency_ms, source_app, data_class, created_at FROM tool_calls"
 	sql := sql + where_clause_from_conditions(conditions)
@@ -2966,17 +2999,9 @@ server := server.route("GET", "/api/agent-steps", func(req) {
 		params := push(params, step_type)
 	}
 
-	since_ms := request_query_int(req, "since_ms", 0, 0, 9223372036854775807)
-	if since_ms > 0 {
-		conditions := push(conditions, "CAST(created_at AS INTEGER) >= ?")
-		params := push(params, since_ms)
-	}
-
-	until_ms := request_query_int(req, "until_ms", 0, 0, 9223372036854775807)
-	if until_ms > 0 {
-		conditions := push(conditions, "CAST(created_at AS INTEGER) <= ?")
-		params := push(params, until_ms)
-	}
+	time_filter := append_time_range_conditions(req, conditions, params, "created_at")
+	conditions := time_filter["conditions"]
+	params := time_filter["params"]
 
 	sql := "SELECT id, session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at FROM agent_steps"
 	sql := sql + where_clause_from_conditions(conditions)
@@ -2994,7 +3019,11 @@ server := server.route("GET", "/api/errors", func(req) {
 		return api_error(auth["status"], auth["error"])
 	}
 
-	rows := db_query(db, "SELECT error_code, error_message, COUNT(*) AS count, provider, MAX(created_at) AS last_seen FROM requests WHERE status = 'error' GROUP BY error_code, error_message ORDER BY count DESC", [])
+	filter := append_time_range_conditions(req, ["status = 'error'"], [], "created_at")
+	sql := "SELECT error_code, error_message, COUNT(*) AS count, provider, MAX(created_at) AS last_seen FROM requests"
+	sql := sql + where_clause_from_conditions(filter["conditions"])
+	sql := sql + " GROUP BY error_code, error_message ORDER BY count DESC"
+	rows := db_query(db, sql, filter["params"])
 	return api_ok(rows)
 })
 
@@ -3035,17 +3064,9 @@ server := server.route("GET", "/api/sessions", func(req) {
 		params := push(params, project_id)
 	}
 
-	since_ms := request_query_int(req, "since_ms", 0, 0, 9223372036854775807)
-	if since_ms > 0 {
-		conditions := push(conditions, "CAST(created_at AS INTEGER) >= ?")
-		params := push(params, since_ms)
-	}
-
-	until_ms := request_query_int(req, "until_ms", 0, 0, 9223372036854775807)
-	if until_ms > 0 {
-		conditions := push(conditions, "CAST(created_at AS INTEGER) <= ?")
-		params := push(params, until_ms)
-	}
+	time_filter := append_time_range_conditions(req, conditions, params, "created_at")
+	conditions := time_filter["conditions"]
+	params := time_filter["params"]
 
 	sql := "SELECT session_id, user_id, COUNT(*) AS request_count, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS error_count, COALESCE(SUM(total_tokens),0) AS total_tokens, COALESCE(SUM(cost_usd),0) AS total_cost_usd, COALESCE(AVG(latency_ms),0) AS avg_latency_ms, MIN(created_at) AS started_at, MAX(created_at) AS last_seen FROM requests"
 	sql := sql + where_clause_from_conditions(conditions)
@@ -3108,6 +3129,9 @@ server := server.route("GET", "/api/charts/requests-over-time", func(req) {
 
 	conditions := []
 	params := []
+	time_filter := append_time_range_conditions(req, conditions, params, "created_at")
+	conditions := time_filter["conditions"]
+	params := time_filter["params"]
 	tenant_id := request_query_text(req, "tenant_id", "")
 	if tenant_id != "" {
 		conditions := push(conditions, "tenant_id = ?")
@@ -3133,6 +3157,9 @@ server := server.route("GET", "/api/charts/cost-over-time", func(req) {
 
 	conditions := []
 	params := []
+	time_filter := append_time_range_conditions(req, conditions, params, "created_at")
+	conditions := time_filter["conditions"]
+	params := time_filter["params"]
 	tenant_id := request_query_text(req, "tenant_id", "")
 	if tenant_id != "" {
 		conditions := push(conditions, "tenant_id = ?")
@@ -3158,6 +3185,9 @@ server := server.route("GET", "/api/charts/latency-hist", func(req) {
 
 	conditions := ["status = 'success'"]
 	params := []
+	time_filter := append_time_range_conditions(req, conditions, params, "created_at")
+	conditions := time_filter["conditions"]
+	params := time_filter["params"]
 	tenant_id := request_query_text(req, "tenant_id", "")
 	if tenant_id != "" {
 		conditions := push(conditions, "tenant_id = ?")
@@ -3182,6 +3212,9 @@ server := server.route("GET", "/api/charts/status-breakdown", func(req) {
 
 	conditions := []
 	params := []
+	time_filter := append_time_range_conditions(req, conditions, params, "created_at")
+	conditions := time_filter["conditions"]
+	params := time_filter["params"]
 	tenant_id := request_query_text(req, "tenant_id", "")
 	if tenant_id != "" {
 		conditions := push(conditions, "tenant_id = ?")
@@ -3207,6 +3240,9 @@ server := server.route("GET", "/api/charts/provider-breakdown", func(req) {
 
 	conditions := []
 	params := []
+	time_filter := append_time_range_conditions(req, conditions, params, "created_at")
+	conditions := time_filter["conditions"]
+	params := time_filter["params"]
 	tenant_id := request_query_text(req, "tenant_id", "")
 	if tenant_id != "" {
 		conditions := push(conditions, "tenant_id = ?")
