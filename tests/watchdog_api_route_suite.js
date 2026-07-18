@@ -177,8 +177,8 @@ async function run() {
 
 		const traceId = 'trace-contract-001';
 		const intake = await httpPost('/api/telemetry/requests', {
-			source_app: 'contract-client', request_id: 'request-contract-001', session_id: 'session-contract', provider: 'ollama', model: 'glm-5.2:cloud', status: 'success', input_tokens: 100, output_tokens: 50, total_tokens: 150,
-			trace: { trace_id: traceId, name: 'independent_tool_workflow', status: 'success', started_at_ms: 1000, ended_at_ms: 1400, duration_ms: 400, cached_input_tokens: 10, attributes: { transport: 'direct', content_mode: 'off' } },
+			source_app: 'contract-client', request_id: 'request-contract-001', session_id: 'session-contract', provider: 'openrouter-work', model: 'anthropic/claude-sonnet-5', status: 'success', input_tokens: 100, output_tokens: 50, total_tokens: 150,
+			trace: { trace_id: traceId, model: 'anthropic/claude-sonnet-5', name: 'independent_tool_workflow', status: 'success', started_at_ms: 1000, ended_at_ms: 1400, duration_ms: 400, cached_input_tokens: 10, cache_write_input_tokens: 5, attributes: { transport: 'direct', content_mode: 'off' } },
 			spans: [
 				{ span_id: 'span-model', parent_span_id: '', span_kind: 'model', name: 'provider_round', status: 'success', started_at_ms: 1000, ended_at_ms: 1200, duration_ms: 200, attributes: { time_to_first_token_ms: 25 } },
 				{ span_id: 'span-tool', parent_span_id: 'span-model', span_kind: 'tool', name: 'tool.web_search', status: 'success', started_at_ms: 1200, ended_at_ms: 1350, duration_ms: 150, attributes: { backend: 'searxng' } }
@@ -199,6 +199,11 @@ async function run() {
 			assert.ok(trace, 'trace should be queryable');
 			assert.strictEqual(trace.input_tokens, 100);
 			assert.ok(trace.input_cost_usd > 0);
+			assert.ok(trace.cached_input_cost_usd > 0);
+			assert.ok(trace.cache_write_input_cost_usd > 0);
+			assert.strictEqual(trace.pricing_kind, 'catalog');
+			assert.match(String(trace.pricing_source || ''), /^openrouter-public-catalog:2026-07-18/);
+			assert.strictEqual(trace.priced_model, 'anthropic/claude-sonnet-5');
 		});
 		await assertEndpoint(`/api/trace-spans?trace_id=${traceId}`, data => assert.strictEqual(data.length, 2));
 		await assertEndpoint(`/api/trace-events?trace_id=${traceId}`, data => {
@@ -209,6 +214,12 @@ async function run() {
 		await assertEndpoint('/api/requests', data => {
 			assert.ok(Array.isArray(data), 'requests data should be array');
 			assert.ok(data.length >= 1, 'requests should have records after seed');
+			const request = data.find(row => row.request_id === 'request-contract-001');
+			assert.ok(request, 'contract request should be listed');
+			assert.strictEqual(request.pricing_kind, 'catalog');
+			assert.match(String(request.pricing_source || ''), /^openrouter-public-catalog:2026-07-18/);
+			assert.ok(Number(request.cached_input_rate_per_million || 0) > 0);
+			assert.ok(Number(request.cache_write_input_rate_per_million || 0) > 0);
 		});
 
 		await assertEndpoint('/api/tool-calls', data => {
