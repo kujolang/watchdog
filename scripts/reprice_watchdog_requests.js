@@ -3,7 +3,7 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { computeBreakdown, loadCatalog, normalizeModelId } = require('./openrouter_pricing_lib');
+const { computeBreakdown, loadOpenRouterCatalog, loadProviderCatalog, normalizeModelId } = require('./pricing_catalog_lib');
 
 const ROOT = path.join(__dirname, '..');
 const DEFAULT_DB_PATH = path.join(ROOT, 'data', 'watchdog.db');
@@ -11,6 +11,7 @@ const DEFAULT_DB_PATH = path.join(ROOT, 'data', 'watchdog.db');
 function parseArgs(argv) {
 	const out = {
 		dbPath: process.env.WDG_DB_PATH ? path.resolve(process.env.WDG_DB_PATH) : DEFAULT_DB_PATH,
+		providerCatalogPath: process.env.WDG_PROVIDER_PRICING_CATALOG_PATH ? path.resolve(process.env.WDG_PROVIDER_PRICING_CATALOG_PATH) : path.join(ROOT, 'config', 'provider_pricing_catalog.json'),
 		catalogPath: process.env.WDG_OPENROUTER_PRICING_CATALOG_PATH ? path.resolve(process.env.WDG_OPENROUTER_PRICING_CATALOG_PATH) : path.join(ROOT, 'config', 'openrouter_pricing_catalog.json'),
 		apply: false,
 		fromMs: 0,
@@ -23,6 +24,7 @@ function parseArgs(argv) {
 	for (const token of argv) {
 		if (token === '--apply') out.apply = true;
 		else if (token.startsWith('--db=')) out.dbPath = path.resolve(token.slice('--db='.length));
+		else if (token.startsWith('--provider-catalog=')) out.providerCatalogPath = path.resolve(token.slice('--provider-catalog='.length));
 		else if (token.startsWith('--catalog=')) out.catalogPath = path.resolve(token.slice('--catalog='.length));
 		else if (token.startsWith('--from-ms=')) out.fromMs = Number(token.slice('--from-ms='.length) || 0);
 		else if (token.startsWith('--until-ms=')) out.untilMs = Number(token.slice('--until-ms='.length) || 0);
@@ -123,12 +125,14 @@ function requestUpdateSql(row, breakdown, nowMs) {
 function main() {
 	const args = parseArgs(process.argv.slice(2));
 	if (!fs.existsSync(args.dbPath)) fail(`Watchdog DB not found: ${args.dbPath}`);
+	if (!fs.existsSync(args.providerCatalogPath)) fail(`Provider pricing catalog not found: ${args.providerCatalogPath}`);
 	if (!fs.existsSync(args.catalogPath)) fail(`Pricing catalog not found: ${args.catalogPath}`);
 	if (!(args.fromMs > 0 || args.untilMs > 0 || args.sourceApp || args.models.length > 0)) {
 		fail('Pass at least one bounded selector: --from-ms, --until-ms, --source-app, or --models.');
 	}
 
-	const catalog = loadCatalog(args.catalogPath);
+	const providerCatalog = loadProviderCatalog(args.providerCatalogPath);
+	const catalog = loadOpenRouterCatalog(args.catalogPath);
 	const selectorSql = whereClause(args);
 	const rows = sqliteJson(
 		args.dbPath,
@@ -166,7 +170,7 @@ function main() {
 			priced_model: String(row.priced_model || '')
 		};
 		const usage = mergeUsage(row);
-		const after = computeBreakdown(row.model, usage, { catalog });
+		const after = computeBreakdown(row.model, usage, { providerCatalog, openrouterCatalog: catalog });
 		const changed = JSON.stringify(before) !== JSON.stringify({
 			cost_usd: after.total_cost_usd,
 			input_cost_usd: after.input_cost_usd,
@@ -209,7 +213,9 @@ function main() {
 		run_id: runId,
 		dry_run: !args.apply,
 		db_path: args.dbPath,
+		provider_catalog_path: args.providerCatalogPath,
 		catalog_path: args.catalogPath,
+		provider_catalog_id: providerCatalog.catalog_id || '',
 		catalog_id: catalog.catalog_id || '',
 		selector,
 		scanned_rows: rows.length,

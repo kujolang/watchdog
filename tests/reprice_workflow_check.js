@@ -9,6 +9,7 @@ const { execFileSync } = require('child_process');
 const root = path.join(__dirname, '..');
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-reprice-'));
 const dbPath = path.join(tempRoot, 'watchdog.db');
+const providerCatalogPath = path.join(root, 'config', 'provider_pricing_catalog.json');
 const catalogPath = path.join(root, 'config', 'openrouter_pricing_catalog.json');
 const scriptPath = path.join(root, 'scripts', 'reprice_watchdog_requests.js');
 
@@ -98,13 +99,14 @@ VALUES
   (2, 'trace-2', '~anthropic/claude-haiku-latest', 100, 20, 'watchdog-fallback-estimate:v1', 'fallback');
 `);
 
-const dryRun = JSON.parse(execFileSync('node', [scriptPath, `--db=${dbPath}`, `--catalog=${catalogPath}`, '--source-app=ai-chat', '--models=openai/gpt-5.4,~anthropic/claude-haiku-latest', '--from-ms=1721260800000', '--until-ms=1721260801999'], { encoding: 'utf8' }));
+const dryRun = JSON.parse(execFileSync('node', [scriptPath, `--db=${dbPath}`, `--provider-catalog=${providerCatalogPath}`, `--catalog=${catalogPath}`, '--source-app=ai-chat', '--models=openai/gpt-5.4,~anthropic/claude-haiku-latest', '--from-ms=1721260800000', '--until-ms=1721260801999'], { encoding: 'utf8' }));
 assert.equal(dryRun.dry_run, true);
 assert.equal(dryRun.candidate_rows, 2);
+assert.equal(dryRun.provider_catalog_id, 'watchdog-provider-catalog:2026-07-18');
 assert.equal(sqlite('SELECT COUNT(*) AS n FROM pricing_reprice_runs', true)[0].n, 0, 'dry-run should not write audit rows');
 assert.equal(sqlite('SELECT pricing_kind FROM requests WHERE request_id = "req-1"', true)[0].pricing_kind, 'fallback', 'dry-run should not mutate requests');
 
-const applied = JSON.parse(execFileSync('node', [scriptPath, `--db=${dbPath}`, `--catalog=${catalogPath}`, '--source-app=ai-chat', '--models=openai/gpt-5.4,~anthropic/claude-haiku-latest', '--from-ms=1721260800000', '--until-ms=1721260801999', '--apply'], { encoding: 'utf8' }));
+const applied = JSON.parse(execFileSync('node', [scriptPath, `--db=${dbPath}`, `--provider-catalog=${providerCatalogPath}`, `--catalog=${catalogPath}`, '--source-app=ai-chat', '--models=openai/gpt-5.4,~anthropic/claude-haiku-latest', '--from-ms=1721260800000', '--until-ms=1721260801999', '--apply'], { encoding: 'utf8' }));
 assert.equal(applied.dry_run, false);
 assert.equal(applied.candidate_rows, 2);
 

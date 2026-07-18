@@ -1,6 +1,7 @@
 # Shared helpers for Watchdog modules.
 # Compatibility entrypoint mirrored from src/watchdog_shared.kujo.
 
+DEFAULT_PROVIDER_PRICING_CATALOG_PATH := "config/provider_pricing_catalog.json"
 DEFAULT_OPENROUTER_PRICING_CATALOG_PATH := "config/openrouter_pricing_catalog.json"
 DEFAULT_FALLBACK_INPUT_RATE_PER_MILLION := 1.00
 DEFAULT_FALLBACK_OUTPUT_RATE_PER_MILLION := 3.00
@@ -31,8 +32,8 @@ func normalize_model_key(model) {
 	return to_lower(trim(to_string(model)))
 }
 
-func load_openrouter_pricing_catalog() {
-	catalog_path := shared_env_or("WDG_OPENROUTER_PRICING_CATALOG_PATH", DEFAULT_OPENROUTER_PRICING_CATALOG_PATH)
+func load_pricing_catalog(env_key, fallback_path, missing_catalog_id) {
+	catalog_path := shared_env_or(env_key, fallback_path)
 	try {
 		raw := read_file(catalog_path)
 		parsed := parse_json(raw)
@@ -43,36 +44,84 @@ func load_openrouter_pricing_catalog() {
 	}
 	return {
 		"schema_version": 1,
-		"catalog_id": "missing-openrouter-catalog",
+		"catalog_id": missing_catalog_id,
 		"models": {},
 		"aliases": {}
 	}
 }
 
+func load_provider_pricing_catalog() {
+	return load_pricing_catalog("WDG_PROVIDER_PRICING_CATALOG_PATH", DEFAULT_PROVIDER_PRICING_CATALOG_PATH, "missing-provider-catalog")
+}
+
+func load_openrouter_pricing_catalog() {
+	return load_pricing_catalog("WDG_OPENROUTER_PRICING_CATALOG_PATH", DEFAULT_OPENROUTER_PRICING_CATALOG_PATH, "missing-openrouter-catalog")
+}
+
+PROVIDER_PRICING_CATALOG := load_provider_pricing_catalog()
 OPENROUTER_PRICING_CATALOG := load_openrouter_pricing_catalog()
 
-func direct_provider_table() {
-	return {
-		"gpt-4.1": {"input": 2.00, "output": 8.00},
-		"gpt-4.1-mini": {"input": 0.40, "output": 1.60},
-		"gpt-4.1-nano": {"input": 0.10, "output": 0.40},
-		"gpt-4o": {"input": 2.50, "output": 10.00},
-		"gpt-4o-mini": {"input": 0.15, "output": 0.60},
-		"gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
-		"deepseek-chat": {"input": 0.07, "output": 1.10},
-		"deepseek-reasoner": {"input": 0.55, "output": 2.19},
-		"openai/gpt-4.1-mini": {"input": 0.40, "output": 1.60},
-		"glm-5.2": {"input": 1.40, "output": 4.40},
-		"glm-5.2:cloud": {"input": 1.40, "output": 4.40},
-		"kimi-k2.7-code": {"input": 0.95, "output": 4.00},
-		"kimi-k2.7-code:cloud": {"input": 0.95, "output": 4.00},
-		"minimax-m3": {"input": 0.30, "output": 1.20},
-		"minimax-m3:cloud": {"input": 0.30, "output": 1.20},
-		"qwen3.5": {"input": 0.60, "output": 3.60},
-		"qwen3.5:397b": {"input": 0.60, "output": 3.60},
-		"qwen3.5:397b-cloud": {"input": 0.60, "output": 3.60},
-		"qwen3.5-397b-a17b": {"input": 0.60, "output": 3.60}
+func catalog_models(catalog) {
+	if has_key(catalog, "models") && type(catalog["models"]) == "dict" {
+		return catalog["models"]
 	}
+	return {}
+}
+
+func catalog_aliases(catalog) {
+	if has_key(catalog, "aliases") && type(catalog["aliases"]) == "dict" {
+		return catalog["aliases"]
+	}
+	return {}
+}
+
+func pricing_record_from_catalog(catalog, requested_model, record, priced_model, pricing_source_override) {
+	pricing_source := pricing_source_override
+	if pricing_source == "" {
+		pricing_source = to_string(record["pricing_source"])
+	}
+	has_pricing := 0
+	if has_key(record, "has_pricing") {
+		has_pricing = to_string(record["has_pricing"]) == "true" || record["has_pricing"] == true
+	}
+	if !has_pricing {
+		return {
+			"requested_model": requested_model,
+			"priced_model": priced_model,
+			"pricing_kind": "unknown",
+			"pricing_source": pricing_source,
+			"input_rate_per_million": 0.0,
+			"output_rate_per_million": 0.0,
+			"cached_input_rate_per_million": 0.0,
+			"cache_write_input_rate_per_million": 0.0
+		}
+	}
+	return {
+		"requested_model": requested_model,
+		"priced_model": priced_model,
+		"pricing_kind": "catalog",
+		"pricing_source": pricing_source,
+		"input_rate_per_million": to_float_or_zero(record["input_rate_per_million"]),
+		"output_rate_per_million": to_float_or_zero(record["output_rate_per_million"]),
+		"cached_input_rate_per_million": to_float_or_zero(record["cached_input_rate_per_million"]),
+		"cache_write_input_rate_per_million": to_float_or_zero(record["cache_write_input_rate_per_million"])
+	}
+}
+
+func lookup_catalog_pricing_record(catalog, model_key) {
+	models := catalog_models(catalog)
+	aliases := catalog_aliases(catalog)
+	if has_key(models, model_key) && type(models[model_key]) == "dict" {
+		return pricing_record_from_catalog(catalog, model_key, models[model_key], to_string(models[model_key]["priced_model"]), "")
+	}
+	if has_key(aliases, model_key) && type(aliases[model_key]) == "dict" {
+		alias_record := aliases[model_key]
+		target_model := normalize_model_key(alias_record["target_model_id"])
+		if target_model != "" && has_key(models, target_model) && type(models[target_model]) == "dict" {
+			return pricing_record_from_catalog(catalog, model_key, models[target_model], target_model, to_string(alias_record["pricing_source"]))
+		}
+	}
+	return null
 }
 
 func pricing_record(model) {
@@ -90,70 +139,19 @@ func pricing_record(model) {
 		}
 	}
 
-	direct := direct_provider_table()
-	if has_key(direct, model_key) {
-		entry := direct[model_key]
-		return {
-			"requested_model": model_key,
-			"priced_model": model_key,
-			"pricing_kind": "catalog",
-			"pricing_source": "watchdog-direct-provider-table:v1",
-			"input_rate_per_million": to_float_or_zero(entry["input"]),
-			"output_rate_per_million": to_float_or_zero(entry["output"]),
-			"cached_input_rate_per_million": 0.0,
-			"cache_write_input_rate_per_million": 0.0
-		}
+	provider_record := lookup_catalog_pricing_record(PROVIDER_PRICING_CATALOG, model_key)
+	if type(provider_record) == "dict" {
+		return provider_record
 	}
 
-	models := {}
-	if has_key(OPENROUTER_PRICING_CATALOG, "models") && type(OPENROUTER_PRICING_CATALOG["models"]) == "dict" {
-		models = OPENROUTER_PRICING_CATALOG["models"]
-	}
-	aliases := {}
-	if has_key(OPENROUTER_PRICING_CATALOG, "aliases") && type(OPENROUTER_PRICING_CATALOG["aliases"]) == "dict" {
-		aliases = OPENROUTER_PRICING_CATALOG["aliases"]
+	ollama_alias_record := lookup_catalog_pricing_record(PROVIDER_PRICING_CATALOG, "ollama-cloud/" + model_key)
+	if type(ollama_alias_record) == "dict" {
+		return ollama_alias_record
 	}
 
-	record := null
-	requested_model := model_key
-	priced_model := model_key
-	if has_key(models, model_key) {
-		record = models[model_key]
-	} else if has_key(aliases, model_key) && type(aliases[model_key]) == "dict" {
-		alias_record := aliases[model_key]
-		priced_model = normalize_model_key(alias_record["target_model_id"])
-		if priced_model != "" && has_key(models, priced_model) {
-			record = models[priced_model]
-		}
-	}
-
-	if type(record) == "dict" {
-		has_pricing := 0
-		if has_key(record, "has_pricing") {
-			has_pricing = to_string(record["has_pricing"]) == "true" || record["has_pricing"] == true
-		}
-		if !has_pricing {
-			return {
-				"requested_model": requested_model,
-				"priced_model": priced_model,
-				"pricing_kind": "unknown",
-				"pricing_source": to_string(record["pricing_source"]),
-				"input_rate_per_million": 0.0,
-				"output_rate_per_million": 0.0,
-				"cached_input_rate_per_million": 0.0,
-				"cache_write_input_rate_per_million": 0.0
-			}
-		}
-		return {
-			"requested_model": requested_model,
-			"priced_model": priced_model,
-			"pricing_kind": "catalog",
-			"pricing_source": to_string(record["pricing_source"]),
-			"input_rate_per_million": to_float_or_zero(record["input_rate_per_million"]),
-			"output_rate_per_million": to_float_or_zero(record["output_rate_per_million"]),
-			"cached_input_rate_per_million": to_float_or_zero(record["cached_input_rate_per_million"]),
-			"cache_write_input_rate_per_million": to_float_or_zero(record["cache_write_input_rate_per_million"])
-		}
+	openrouter_record := lookup_catalog_pricing_record(OPENROUTER_PRICING_CATALOG, model_key)
+	if type(openrouter_record) == "dict" {
+		return openrouter_record
 	}
 
 	return {

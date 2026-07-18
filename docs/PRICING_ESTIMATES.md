@@ -7,7 +7,9 @@ Watchdog records `cost_usd` as one of four clearly labeled kinds:
 - `provider_reported`: copied from trusted upstream telemetry that supplied its own cost
 - `unknown`: model recognized but unpriced, so Watchdog records provenance without a cost estimate
 
-For OpenRouter traffic, Watchdog now loads rates from the checked-in public catalog snapshot at [`config/openrouter_pricing_catalog.json`](../config/openrouter_pricing_catalog.json). The snapshot is refreshed from OpenRouter's public, unauthenticated Models API and can include input, output, cached-input, and cache-write rates when OpenRouter publishes them. Historical data is not silently repriced during startup.
+For direct provider traffic and provider-backed aliases, Watchdog loads rates from the checked-in local catalog at [`config/provider_pricing_catalog.json`](../config/provider_pricing_catalog.json). That catalog currently covers direct OpenAI, Anthropic, Google Gemini, Moonshot Kimi, Z.AI GLM, MiniMax, DeepSeek, and a bounded set of Ollama Cloud aliases whose closest public per-token pricing basis is known.
+
+For OpenRouter traffic, Watchdog loads rates from the checked-in public catalog snapshot at [`config/openrouter_pricing_catalog.json`](../config/openrouter_pricing_catalog.json). The snapshot is refreshed from OpenRouter's public, unauthenticated Models API and can include input, output, cached-input, and cache-write rates when OpenRouter publishes them. Historical data is not silently repriced during startup.
 
 ## Refresh the OpenRouter catalog
 
@@ -39,6 +41,16 @@ curl -s 'http://127.0.0.1:7700/api/requests?source_app=ai-chat&pricing_kind=cata
   | jq '.data[] | {request_id, model, priced_model, pricing_kind, pricing_source, cost_usd}'
 ```
 
+Common `pricing_source` patterns:
+
+- `openai-api-pricing:2026-07-18`
+- `anthropic-pricing:2026-07-18:intro-through-2026-08-31-assume-5m-cache-write`
+- `google-gemini-pricing:2026-07-18`
+- `moonshot-kimi-pricing:2026-07-18`
+- `ollama-cloud-equivalent:*`
+- `openrouter-public-catalog:2026-07-18`
+- `watchdog-fallback-estimate:v1`
+
 ## Reprice historical records
 
 Use the explicit repricing script. It is dry-run by default and requires at least one bounded selector such as a date range, model list, or source app.
@@ -48,6 +60,7 @@ Dry-run:
 ```bash
 node scripts/reprice_watchdog_requests.js \
   --db=data/watchdog.db \
+  --provider-catalog=config/provider_pricing_catalog.json \
   --source-app=ai-chat \
   --from-ms=1784332800000 \
   --until-ms=1784419199999
@@ -58,6 +71,7 @@ Apply:
 ```bash
 node scripts/reprice_watchdog_requests.js \
   --db=data/watchdog.db \
+  --provider-catalog=config/provider_pricing_catalog.json \
   --source-app=ai-chat \
   --from-ms=1784332800000 \
   --until-ms=1784419199999 \
@@ -80,6 +94,7 @@ node scripts/refresh_openrouter_pricing_catalog.js
 
 node scripts/reprice_watchdog_requests.js \
   --db=data/watchdog.db \
+  --provider-catalog=config/provider_pricing_catalog.json \
   --source-app=ai-chat \
   --from-ms=1784332800000 \
   --until-ms=1784419199999 \
@@ -88,21 +103,25 @@ node scripts/reprice_watchdog_requests.js \
 
 Apply the same command with `--apply` once the dry-run output looks correct.
 
-## Legacy direct-provider mappings
+## Provider catalog coverage
 
-Watchdog still keeps a small local direct-provider table for older non-OpenRouter model aliases already used in the repository, including:
+The local provider catalog is intentionally versioned and explicit. As of July 18, 2026 it includes:
 
-- `glm-5.2`, `glm-5.2:cloud`
-- `kimi-k2.7-code`, `kimi-k2.7-code:cloud`
-- `minimax-m3`, `minimax-m3:cloud`
-- `qwen3.5`, `qwen3.5:397b`, `qwen3.5:397b-cloud`, `qwen3.5-397b-a17b`
+- direct OpenAI text-token models used by AI Chat such as `gpt-4.1`, `gpt-4.1-mini`, and `o4-mini`
+- direct Anthropic models such as `claude-sonnet-5`, `claude-opus-4.8`, and `claude-haiku-4.5`
+- direct Google Gemini models such as `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3.1-flash-lite`, and `gemini-3-flash-preview`
+- direct Moonshot Kimi models such as `kimi-k2.7-code`, `kimi-k2.6`, and `kimi-k2.5`
+- direct Z.AI, MiniMax, and DeepSeek model IDs already surfaced by AI Chat
+- Ollama Cloud aliases only when there is a defensible public per-token equivalent from the underlying model provider
 
-Those rows are labeled as `catalog` estimates, but their `pricing_source` remains `watchdog-direct-provider-table:v1`.
+Ollama itself does not publish a public per-model token price table. When Watchdog uses an `ollama-cloud-equivalent:*` source, the estimate is based on the underlying provider's public pricing, not on an Ollama invoice or GPU-time statement.
 
 ## Limitations
 
 - Catalog pricing is still an estimate, not an invoice.
+- Some direct-provider features still cannot be priced exactly from token counts alone. Examples include OpenAI audio-minute billing and Anthropic cache-write TTL selection.
 - OpenRouter routing, workspace discounts, negotiated rates, and future price changes may differ from the snapshot Watchdog used at ingest time.
+- Ollama Cloud usage is measured by Ollama infrastructure utilization, not a public per-token invoice schedule, so `ollama-cloud-equivalent:*` rows are best-effort comparability estimates.
 - Historical prices are not reconstructed automatically; a reprice run uses the current local catalog snapshot and records that provenance.
 - Some OpenRouter models are intentionally left `unknown` when the public catalog marks pricing as unavailable.
 
