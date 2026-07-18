@@ -500,6 +500,12 @@
     flex-direction: column;
     gap: 8px;
   }
+  .error-card-button {
+    width: 100%;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
 
   .error-code {
     font-family: var(--font-mono);
@@ -786,7 +792,27 @@
   .detail-field { display: grid; grid-template-columns: minmax(130px, 180px) 1fr; gap: 18px; padding: 11px 0; border-bottom: 1px solid var(--border); }
   .detail-field:last-child { border-bottom: 0; }
   .detail-label { color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-  .detail-value { min-width: 0; margin: 0; color: var(--text); font: 12px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .detail-value { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  .detail-pre { margin: 0; color: var(--text); font: 12px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .detail-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .detail-action {
+    border: 1px solid #bfd0eb;
+    background: #f7f9fc;
+    color: #0e315c;
+    padding: 5px 8px;
+    font: 11px/1.2 var(--font);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .detail-action:hover { border-color: #8ba7d4; background: #eef4ff; }
+  .detail-related {
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 11px 0 14px;
+  }
+  .detail-related-title { color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
   .backup-layout { display: grid; grid-template-columns: minmax(300px, 420px) 1fr; gap: 20px; padding: 20px; }
   .backup-card { border: 1px solid var(--border); background: #fff; padding: 18px; }
   .backup-card h3 { color: #031b4e; font-size: 15px; margin-bottom: 14px; }
@@ -1657,6 +1683,7 @@ function renderAgentTraces() {
 
   if (!granular.length && !(state.agentSteps || []).length) {
     container.innerHTML = '<div class="empty"><div class="empty-icon">🤖</div>No agent traces recorded yet.</div>';
+    state.visibleRows.traces = [];
     setText('badgeTraces', 0);
     return;
   }
@@ -1666,6 +1693,7 @@ function renderAgentTraces() {
   }
 
   state.visibleTraceSpans = [];
+  state.visibleRows.traces = granular;
   const traceMarkup = granular.map((trace, traceIndex) => {
     const allSpans = (state.traceSpans || []).filter(span => span.trace_id === trace.trace_id).sort((a, b) => Number(a.started_at_ms) - Number(b.started_at_ms));
     const spans = kind && kind !== 'persistence' ? allSpans.filter(span => span.span_kind === kind) : allSpans;
@@ -1681,6 +1709,7 @@ function renderAgentTraces() {
           <span class="cell-mono" style="font-size:12px;color:var(--text-muted)">${safeText(trace.trace_id)}</span>
           <span class="badge ${trace.status === 'error' ? 'badge-error' : 'badge-success'}">${safeText(trace.status)}</span>
           <span class="badge badge-info">${spans.length} spans · ${events.length} events</span>
+          <button class="btn btn-sm" type="button" onclick="event.stopPropagation();showTraceRecordDetails(${traceIndex})">Details</button>
           <span id="trace-toggle-${traceIndex}" style="color:var(--text-muted);margin-left:auto">▼</span>
         </div>
         <div class="trace-waterfall" id="trace-${traceIndex}">
@@ -1774,6 +1803,10 @@ function showTraceSpanDetails(index) {
   showRecordDetails('traceSpans', 0);
 }
 
+function showTraceRecordDetails(index) {
+  showRecordDetails('traces', index);
+}
+
 function toggleTrace(id) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -1792,15 +1825,25 @@ function renderErrors() {
     grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="empty-icon">✅</div>No errors recorded — all requests succeeded.</div>';
     return;
   }
-  grid.innerHTML = errs.map(e => `
-    <div class="error-card">
+  grid.innerHTML = errs.map((e, index) => `
+    <button class="error-card error-card-button" type="button" data-error-index="${index}">
       <div class="error-code">${safeText(e.error_code || 'unknown')}</div>
       <div class="error-count">${e.count}</div>
       <div class="error-msg">${escHtml(truncate(e.error_message, 100))}</div>
       <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
         Provider: ${safeText(e.provider || '—')} · Last: ${fmtTs(e.last_seen)}
       </div>
-    </div>`).join('');
+    </button>`).join('');
+  if (grid && typeof grid.querySelectorAll === 'function') {
+    grid.querySelectorAll('[data-error-index]').forEach(node => {
+      node.onclick = () => {
+        const idx = Number(node.getAttribute('data-error-index'));
+        const error = errs[idx];
+        if (!error) return;
+        focusRequestsForError(error.error_code, error.error_message);
+      };
+    });
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -2023,11 +2066,23 @@ function showRecordDetails(table, index) {
   const record = rows[index];
   if (!record) return;
 
-  const labels = { requests: 'Request details', toolCalls: 'Tool call details', sessions: 'Session details', traceSpans: 'Trace span details' };
+  const labels = { requests: 'Request details', toolCalls: 'Tool call details', sessions: 'Session details', traces: 'Trace details', traceSpans: 'Trace span details' };
   setText('detailTitle', labels[table] || 'Record details');
 
   const body = document.getElementById('detailBody');
   body.textContent = '';
+  const recordActions = buildRecordActions(record);
+  if (recordActions.length) {
+    const related = document.createElement('section');
+    related.className = 'detail-related';
+
+    const title = document.createElement('div');
+    title.className = 'detail-related-title';
+    title.textContent = 'Related data';
+    related.appendChild(title);
+    related.appendChild(buildActionList(recordActions));
+    body.appendChild(related);
+  }
   Object.entries(record).forEach(([key, value]) => {
     const field = document.createElement('div');
     field.className = 'detail-field';
@@ -2036,9 +2091,18 @@ function showRecordDetails(table, index) {
     label.className = 'detail-label';
     label.textContent = key.replace(/_/g, ' ');
 
-    const output = document.createElement('pre');
+    const output = document.createElement('div');
     output.className = 'detail-value';
-    output.textContent = formatDetailValue(value);
+
+    const pre = document.createElement('pre');
+    pre.className = 'detail-pre';
+    pre.textContent = formatDetailValue(value);
+    output.appendChild(pre);
+
+    const fieldActions = buildReferenceActionsForField(key, value, record);
+    if (fieldActions.length) {
+      output.appendChild(buildActionList(fieldActions));
+    }
 
     field.appendChild(label);
     field.appendChild(output);
@@ -2051,8 +2115,234 @@ function showRecordDetails(table, index) {
 
 function formatDetailValue(value) {
   if (value == null || value === '') return '—';
-  if (typeof value === 'object') return JSON.stringify(value, null, 2);
-  return String(value);
+  const normalized = normalizeStructuredValue(value);
+  if (typeof normalized === 'object') return JSON.stringify(normalized, null, 2);
+  return String(normalized);
+}
+
+function normalizeStructuredValue(value, depth = 0) {
+  if (depth > 4 || value == null) return value;
+  if (typeof value === 'string') {
+    const text = String(value).trim();
+    if (!text) return value;
+    if (looksLikeStructuredText(text)) {
+      try {
+        return normalizeStructuredValue(JSON.parse(text), depth + 1);
+      } catch (err) {}
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(item => normalizeStructuredValue(item, depth + 1));
+  if (typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, normalizeStructuredValue(entry, depth + 1)]));
+  }
+  return value;
+}
+
+function looksLikeStructuredText(text) {
+  if (!text) return false;
+  return text.startsWith('{') || text.startsWith('[') || (text.startsWith('"') && (text.includes('{') || text.includes('[')));
+}
+
+function buildActionList(actions) {
+  const wrap = document.createElement('div');
+  wrap.className = 'detail-actions';
+  actions.forEach(action => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'detail-action';
+    button.textContent = action.label;
+    button.onclick = action.run;
+    wrap.appendChild(button);
+  });
+  return wrap;
+}
+
+function buildRecordActions(record) {
+  const actions = [];
+  const sessionId = getReferenceValue(record, 'session_id');
+  const traceId = getReferenceValue(record, 'trace_id');
+  const toolName = getReferenceValue(record, 'tool_name');
+  const workflowId = getReferenceValue(record, 'workflow_id');
+  const taskId = getReferenceValue(record, 'task_id');
+  const correlationId = getReferenceValue(record, 'correlation_id');
+
+  if (sessionId) {
+    const requestCount = state.requests.filter(row => String(row.session_id || '') === sessionId).length;
+    const traceCount = state.traces.filter(row => String(row.session_id || '') === sessionId).length;
+    const toolCount = state.toolCalls.filter(row => String(row.session_id || '') === sessionId).length;
+    actions.push({ label: `Session ${truncate(sessionId, 24)}`, run: () => showSessionDetailsById(sessionId) });
+    if (requestCount) actions.push({ label: `${requestCount} request${requestCount === 1 ? '' : 's'}`, run: () => filterRequestsByQuery(sessionId) });
+    if (traceCount) actions.push({ label: `${traceCount} trace${traceCount === 1 ? '' : 's'}`, run: () => filterTracesByQuery(sessionId) });
+    if (toolCount) actions.push({ label: `${toolCount} tool call${toolCount === 1 ? '' : 's'}`, run: () => filterToolCallsByQuery(sessionId) });
+  }
+  if (traceId) actions.push({ label: `Trace ${truncate(traceId, 24)}`, run: () => showTraceDetailsById(traceId) });
+  if (toolName) actions.push({ label: `Tool ${truncate(toolName, 24)}`, run: () => filterToolCallsByQuery(toolName) });
+  if (workflowId) actions.push({ label: `Workflow ${truncate(workflowId, 24)}`, run: () => filterRequestsByQuery(workflowId) });
+  if (taskId) actions.push({ label: `Task ${truncate(taskId, 24)}`, run: () => filterRequestsByQuery(taskId) });
+  if (correlationId) actions.push({ label: `Correlation ${truncate(correlationId, 24)}`, run: () => filterRequestsByQuery(correlationId) });
+  return dedupeActions(actions);
+}
+
+function buildReferenceActionsForField(key, value, record) {
+  const normalized = normalizeStructuredValue(value);
+  const refs = collectStructuredReferences(normalized, String(key || ''));
+  if (key === 'request_dbid' && value != null && value !== '') {
+    refs.push({ kind: 'request_dbid', value: String(value), label: String(value) });
+  }
+  if ((key === 'span_id' || key === 'parent_span_id') && value) {
+    refs.push({ kind: 'span_id', value: String(value), trace_id: getReferenceValue(record, 'trace_id'), label: String(value) });
+  }
+  const actions = refs.map(ref => actionForReference(ref)).filter(Boolean);
+  return dedupeActions(actions);
+}
+
+function collectStructuredReferences(value, keyHint = '', refs = []) {
+  if (value == null) return refs;
+  if (Array.isArray(value)) {
+    value.forEach(item => collectStructuredReferences(item, keyHint, refs));
+    return refs;
+  }
+  if (typeof value === 'object') {
+    Object.entries(value).forEach(([key, entry]) => {
+      const normalizedKey = String(key || '').toLowerCase();
+      if (entry != null && entry !== '' && isReferenceKey(normalizedKey)) {
+        refs.push({ kind: normalizedKey, value: String(entry), label: String(entry), trace_id: normalizedKey === 'span_id' || normalizedKey === 'parent_span_id' ? getReferenceValue(value, 'trace_id') : '' });
+      }
+      collectStructuredReferences(entry, normalizedKey, refs);
+    });
+    return refs;
+  }
+  if (typeof value === 'string' && isReferenceKey(String(keyHint || '').toLowerCase()) && value) {
+    refs.push({ kind: String(keyHint || '').toLowerCase(), value: String(value), label: String(value) });
+  }
+  return refs;
+}
+
+function isReferenceKey(key) {
+  return ['session_id', 'trace_id', 'span_id', 'parent_span_id', 'request_id', 'request_dbid', 'tool_name', 'workflow_id', 'task_id', 'correlation_id', 'error_code'].includes(String(key || '').toLowerCase());
+}
+
+function actionForReference(ref) {
+  const value = String(ref && ref.value || '');
+  if (!value) return null;
+  if (ref.kind === 'session_id') return { label: `Open session ${truncate(value, 24)}`, run: () => showSessionDetailsById(value) };
+  if (ref.kind === 'trace_id') return { label: `Open trace ${truncate(value, 24)}`, run: () => showTraceDetailsById(value) };
+  if (ref.kind === 'span_id' || ref.kind === 'parent_span_id') {
+    const traceId = String(ref.trace_id || '');
+    if (!traceId) return { label: `Find span ${truncate(value, 24)}`, run: () => filterTracesByQuery(value) };
+    return { label: `Open span ${truncate(value, 24)}`, run: () => showTraceSpanDetailsByIds(traceId, value) };
+  }
+  if (ref.kind === 'request_dbid') return { label: `Open request #${value}`, run: () => showRequestDetailsByDbId(value) };
+  if (ref.kind === 'request_id') return { label: `Find request ${truncate(value, 24)}`, run: () => filterRequestsByQuery(value) };
+  if (ref.kind === 'tool_name') return { label: `Find tool ${truncate(value, 24)}`, run: () => filterToolCallsByQuery(value) };
+  if (ref.kind === 'workflow_id') return { label: `Find workflow ${truncate(value, 24)}`, run: () => filterRequestsByQuery(value) };
+  if (ref.kind === 'task_id') return { label: `Find task ${truncate(value, 24)}`, run: () => filterRequestsByQuery(value) };
+  if (ref.kind === 'correlation_id') return { label: `Find correlation ${truncate(value, 24)}`, run: () => filterRequestsByQuery(value) };
+  if (ref.kind === 'error_code') return { label: `Find error ${truncate(value, 24)}`, run: () => focusRequestsForError(value, '') };
+  return null;
+}
+
+function dedupeActions(actions) {
+  const seen = new Set();
+  return actions.filter(action => {
+    if (!action || !action.label) return false;
+    if (seen.has(action.label)) return false;
+    seen.add(action.label);
+    return true;
+  });
+}
+
+function getReferenceValue(record, key) {
+  if (!record || typeof record !== 'object') return '';
+  const value = record[key];
+  return value == null ? '' : String(value);
+}
+
+function activateTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(button => button.classList.remove('active'));
+  const panel = document.getElementById('tab-' + name);
+  if (panel) panel.classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(button => {
+    if (String(button.getAttribute('onclick') || '').includes(`switchTab('${name}'`)) {
+      button.classList.add('active');
+    }
+  });
+}
+
+function filterRequestsByQuery(query) {
+  const input = document.getElementById('reqSearch');
+  if (input) input.value = String(query || '');
+  activateTab('requests');
+  renderRequestsTable();
+}
+
+function filterToolCallsByQuery(query) {
+  const input = document.getElementById('tcSearch');
+  if (input) input.value = String(query || '');
+  activateTab('toolcalls');
+  renderToolCallsTable();
+}
+
+function filterTracesByQuery(query) {
+  const input = document.getElementById('traceSearch');
+  if (input) input.value = String(query || '');
+  activateTab('traces');
+  renderAgentTraces();
+}
+
+function focusRequestsForError(errorCode, errorMessage) {
+  filterRequestsByQuery(errorCode || errorMessage || '');
+}
+
+function showSessionDetailsById(sessionId) {
+  const rows = state.sessions || [];
+  const index = rows.findIndex(row => String(row.session_id || '') === String(sessionId || ''));
+  if (index >= 0) {
+    state.visibleRows.sessions = rows;
+    showRecordDetails('sessions', index);
+    return;
+  }
+  filterRequestsByQuery(sessionId);
+}
+
+function showTraceDetailsById(traceId) {
+  const rows = state.traces || [];
+  const trace = rows.find(row => String(row.trace_id || '') === String(traceId || ''));
+  if (!trace) {
+    filterTracesByQuery(traceId);
+    return;
+  }
+  state.visibleRows.traces = [trace];
+  showRecordDetails('traces', 0);
+}
+
+function showRequestDetailsByDbId(requestDbid) {
+  const rows = state.requests || [];
+  const index = rows.findIndex(row => String(row.id || row.request_dbid || '') === String(requestDbid || ''));
+  if (index >= 0) {
+    state.visibleRows.requests = rows;
+    showRecordDetails('requests', index);
+    return;
+  }
+  filterRequestsByQuery(requestDbid);
+}
+
+function showTraceSpanDetailsByIds(traceId, spanId) {
+  const span = (state.traceSpans || []).find(row => String(row.trace_id || '') === String(traceId || '') && String(row.span_id || '') === String(spanId || ''));
+  if (!span) {
+    filterTracesByQuery(spanId || traceId);
+    return;
+  }
+  const events = (state.traceEvents || []).filter(event => String(event.trace_id || '') === String(traceId || '') && String(event.span_id || '') === String(spanId || ''));
+  const trace = (state.traces || []).find(row => String(row.trace_id || '') === String(traceId || '')) || {};
+  state.visibleRows.traceSpans = [{
+    trace,
+    span: { ...span, attributes: parseTraceJson(span.attributes_json) },
+    events: events.map(event => ({ ...event, attributes: parseTraceJson(event.attributes_json) })),
+  }];
+  showRecordDetails('traceSpans', 0);
 }
 
 function openDetailsFromKey(event, table, index) {
