@@ -21,6 +21,9 @@ assertContains('request_query_int(req, "page"', 'Page support should be parsed')
 assertContains('request_query_int(req, "page_size"', 'Page size support should be parsed');
 assertContains('request_query_int(req, "since_ms"', 'since_ms support should be parsed');
 assertContains('request_query_int(req, "until_ms"', 'until_ms support should be parsed');
+assertContains('func chart_bucket_size_ms_for_span(span_ms)', 'Request chart should select buckets from the complete range span');
+assertContains('AS bucket_size_ms', 'Request chart should expose its bucket width to the dashboard');
+assertContains('bucket_origin_ms := to_int_or_zero(bounds["since_ms"])', 'Request chart buckets should be anchored to the selected range');
 
 assertContains('server := server.route("GET", "/api/tool-calls", func(req)', 'Tool calls endpoint should support query params');
 assertContains('server := server.route("GET", "/api/agent-steps", func(req)', 'Agent steps endpoint should support query params');

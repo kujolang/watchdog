@@ -16,7 +16,7 @@ OpenAI-style request paths. Watchdog forwards requests upstream, captures
 structured traces, and serves a local dashboard plus JSON APIs for debugging,
 bounded performance tuning, and usage analysis.
 
-Cost fields are estimated direct-provider equivalents, not subscription invoices. See [Direct API value estimates](docs/PRICING_ESTIMATES.md) for model mappings, rates, and limitations.
+Cost fields are estimated direct-provider equivalents, not subscription invoices. See [Direct API value estimates](docs/PRICING_ESTIMATES.md) for the versioned OpenRouter catalog workflow, pricing provenance fields, repricing commands, model mappings, and limitations.
 
 Watchdog is part of Kujo’s Control layer: visible state, bounded telemetry,
 structured exports, regression signals, and reviewable local monitoring data.
@@ -486,7 +486,7 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `GET` | `/api/version` | API compatibility/version metadata |
 | `GET` | `/api/proxy-config` | Effective proxy config summary |
 | `GET` | `/api/stats` | Overview stats |
-| `GET` | `/api/requests` | Latest request logs; filter by `source_app` or `data_class` |
+| `GET` | `/api/requests` | Latest request logs; filter by `source_app`, `data_class`, or `pricing_kind` |
 | `POST` | `/api/telemetry/requests` | Authenticated, idempotent intake for telemetry from trusted local apps |
 | `POST` | `/api/telemetry/traces` | Append independent spans/events to a trace without creating a model-request row |
 | `GET` | `/api/traces` | Latest granular traces |

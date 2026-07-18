@@ -13,6 +13,7 @@
 # Example for chat completions:
 #   POST http://localhost:7700/proxy/v1/chat/completions
 
+from watchdog_shared import watchdog_cost_breakdown
 from watchdog_shared import watchdog_estimate_cost, watchdog_ensure_schema
 from watchdog_shared import watchdog_has_known_pricing
 from watchdog_shared import watchdog_cost_per_million
@@ -459,6 +460,41 @@ func append_time_range_conditions(req, conditions, params, column_name) {
 	}
 }
 
+func time_range_bounds(req) {
+	since_ms := request_query_int(req, "since_ms", 0, 0, 9223372036854775807)
+	until_ms := request_query_int(req, "until_ms", 0, 0, 9223372036854775807)
+	if until_ms <= 0 {
+		until_ms := current_timestamp()
+	}
+	if since_ms <= 0 || since_ms >= until_ms {
+		return {
+			"since_ms": since_ms,
+			"until_ms": until_ms,
+			"span_ms": 0
+		}
+	}
+	return {
+		"since_ms": since_ms,
+		"until_ms": until_ms,
+		"span_ms": until_ms - since_ms
+	}
+}
+
+func chart_bucket_size_ms_for_span(span_ms) {
+	if span_ms <= 0 {
+		return 24 * 3600000
+	}
+	if span_ms <= 48 * 3600000 {
+		return 3600000
+	}
+	if span_ms <= 45 * 24 * 3600000 {
+		return 24 * 3600000
+	}
+	if span_ms <= 240 * 24 * 3600000 {
+		return 7 * 24 * 3600000
+	}
+	return 30 * 24 * 3600000
+}
 func parse_bool_value(raw_value, fallback_value) {
 	if type(raw_value) == "bool" {
 		return raw_value
@@ -1449,17 +1485,9 @@ func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class)
 	cached_tokens := to_int_or_zero(safe_dict_get(trace, "cached_input_tokens", 0))
 	cache_write_tokens := to_int_or_zero(safe_dict_get(trace, "cache_write_input_tokens", 0))
 	model_name := external_text(body, "model", external_text(trace, "model", "", 160), 160)
-	rates := watchdog_cost_per_million(model_name)
-	pricing_source := ""
-	input_cost := 0.0
-	output_cost := 0.0
-	if watchdog_has_known_pricing(model_name) {
-		pricing_source = "watchdog-direct-provider-table"
-		input_cost = (input_tokens / 1000000.0) * rates["input"]
-		output_cost = (output_tokens / 1000000.0) * rates["output"]
-	}
+	pricing := watchdog_cost_breakdown(model_name, input_tokens * 1.0, output_tokens * 1.0, cached_tokens * 1.0, cache_write_tokens * 1.0)
 	if has_trace_payload {
-		db_execute(db, "INSERT INTO traces (trace_id, request_dbid, session_id, source_app, data_class, name, status, started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_input_tokens, cache_write_input_tokens, input_cost_usd, output_cost_usd, input_rate_per_million, output_rate_per_million, pricing_source, attributes_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trace_id) DO UPDATE SET status = excluded.status, ended_at_ms = CASE WHEN excluded.ended_at_ms > traces.ended_at_ms THEN excluded.ended_at_ms ELSE traces.ended_at_ms END, duration_ms = CASE WHEN excluded.ended_at_ms > traces.ended_at_ms THEN excluded.ended_at_ms - traces.started_at_ms ELSE traces.duration_ms END, input_tokens = traces.input_tokens + excluded.input_tokens, output_tokens = traces.output_tokens + excluded.output_tokens, cached_input_tokens = traces.cached_input_tokens + excluded.cached_input_tokens, cache_write_input_tokens = traces.cache_write_input_tokens + excluded.cache_write_input_tokens, input_cost_usd = traces.input_cost_usd + excluded.input_cost_usd, output_cost_usd = traces.output_cost_usd + excluded.output_cost_usd, attributes_json = excluded.attributes_json", [trace_id, request_dbid, session_id, source_app, data_class, external_text(trace, "name", "interactive_chat", 120), external_text(trace, "status", "success", 32), started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, input_cost, output_cost, rates["input"], rates["output"], pricing_source, external_json_summary(safe_dict_get(trace, "attributes", {}), 12000), ts])
+		db_execute(db, "INSERT INTO traces (trace_id, request_dbid, session_id, source_app, data_class, model, name, status, started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_input_tokens, cache_write_input_tokens, input_cost_usd, output_cost_usd, cached_input_cost_usd, cache_write_input_cost_usd, input_rate_per_million, output_rate_per_million, cached_input_rate_per_million, cache_write_input_rate_per_million, pricing_source, pricing_kind, priced_model, attributes_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trace_id) DO UPDATE SET status = excluded.status, ended_at_ms = CASE WHEN excluded.ended_at_ms > traces.ended_at_ms THEN excluded.ended_at_ms ELSE traces.ended_at_ms END, duration_ms = CASE WHEN excluded.ended_at_ms > traces.ended_at_ms THEN excluded.ended_at_ms - traces.started_at_ms ELSE traces.duration_ms END, input_tokens = traces.input_tokens + excluded.input_tokens, output_tokens = traces.output_tokens + excluded.output_tokens, cached_input_tokens = traces.cached_input_tokens + excluded.cached_input_tokens, cache_write_input_tokens = traces.cache_write_input_tokens + excluded.cache_write_input_tokens, input_cost_usd = traces.input_cost_usd + excluded.input_cost_usd, output_cost_usd = traces.output_cost_usd + excluded.output_cost_usd, cached_input_cost_usd = traces.cached_input_cost_usd + excluded.cached_input_cost_usd, cache_write_input_cost_usd = traces.cache_write_input_cost_usd + excluded.cache_write_input_cost_usd, input_rate_per_million = excluded.input_rate_per_million, output_rate_per_million = excluded.output_rate_per_million, cached_input_rate_per_million = excluded.cached_input_rate_per_million, cache_write_input_rate_per_million = excluded.cache_write_input_rate_per_million, pricing_source = excluded.pricing_source, pricing_kind = excluded.pricing_kind, priced_model = excluded.priced_model, attributes_json = excluded.attributes_json", [trace_id, request_dbid, session_id, source_app, data_class, model_name, external_text(trace, "name", "interactive_chat", 120), external_text(trace, "status", "success", 32), started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, pricing["input_cost_usd"], pricing["output_cost_usd"], pricing["cached_input_cost_usd"], pricing["cache_write_input_cost_usd"], pricing["input_rate_per_million"], pricing["output_rate_per_million"], pricing["cached_input_rate_per_million"], pricing["cache_write_input_rate_per_million"], pricing["pricing_source"], pricing["pricing_kind"], pricing["priced_model"], external_json_summary(safe_dict_get(trace, "attributes", {}), 12000), ts])
 	}
 
 	span_count := 0
@@ -1524,15 +1552,15 @@ func insert_external_request(body) {
 	input_tokens := to_int_or_zero(safe_dict_get(body, "input_tokens", 0))
 	output_tokens := to_int_or_zero(safe_dict_get(body, "output_tokens", 0))
 	total_tokens := to_int_or_zero(safe_dict_get(body, "total_tokens", input_tokens + output_tokens))
+	cached_input_tokens := to_int_or_zero(safe_dict_get(body, "cached_input_tokens", 0))
+	cache_write_input_tokens := to_int_or_zero(safe_dict_get(body, "cache_write_input_tokens", 0))
 	model_name := external_text(body, "model", "", 160)
-	cost_usd := safe_dict_get(body, "cost_usd", 0.0)
-	if has_key(body, "cost_usd") == 0 && watchdog_has_known_pricing(model_name) {
-		cost_usd = watchdog_estimate_cost(model_name, input_tokens * 1.0, output_tokens * 1.0)
-	}
+	pricing := watchdog_cost_breakdown(model_name, input_tokens * 1.0, output_tokens * 1.0, cached_input_tokens * 1.0, cache_write_input_tokens * 1.0)
+	cost_usd := safe_dict_get(body, "cost_usd", pricing["total_cost_usd"])
 	latency_ms := to_int_or_zero(safe_dict_get(body, "latency_ms", 0))
 	ts := to_string(current_timestamp())
 
-	db_execute(db, "INSERT INTO requests (session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [external_text(body, "session_id", request_id, 160), external_text(body, "user_id", "", 120), external_text(body, "tenant_id", "", 120), external_text(body, "project_id", "", 120), external_text(body, "workflow_id", "", 120), external_text(body, "task_id", "", 160), external_text(body, "correlation_id", "", 160), external_text(body, "provider", "external", 160), model_name, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, external_text(body, "finish_reason", "", 80), external_text(body, "error_code", "", 80), external_text(body, "error_message", "", 500), external_text(body, "prompt_summary", "", 500), external_text(body, "response_summary", "", 500), source_app, "external", ts])
+	db_execute(db, "INSERT INTO requests (session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cached_input_tokens, cache_write_input_tokens, cost_usd, input_cost_usd, output_cost_usd, cached_input_cost_usd, cache_write_input_cost_usd, input_rate_per_million, output_rate_per_million, cached_input_rate_per_million, cache_write_input_rate_per_million, pricing_source, pricing_kind, priced_model, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [external_text(body, "session_id", request_id, 160), external_text(body, "user_id", "", 120), external_text(body, "tenant_id", "", 120), external_text(body, "project_id", "", 120), external_text(body, "workflow_id", "", 120), external_text(body, "task_id", "", 160), external_text(body, "correlation_id", "", 160), external_text(body, "provider", "external", 160), model_name, request_id, status, input_tokens, output_tokens, total_tokens, cached_input_tokens, cache_write_input_tokens, cost_usd, pricing["input_cost_usd"], pricing["output_cost_usd"], pricing["cached_input_cost_usd"], pricing["cache_write_input_cost_usd"], pricing["input_rate_per_million"], pricing["output_rate_per_million"], pricing["cached_input_rate_per_million"], pricing["cache_write_input_rate_per_million"], pricing["pricing_source"], pricing["pricing_kind"], pricing["priced_model"], latency_ms, external_text(body, "finish_reason", "", 80), external_text(body, "error_code", "", 80), external_text(body, "error_message", "", 500), external_text(body, "prompt_summary", "", 500), external_text(body, "response_summary", "", 500), source_app, "external", ts])
 	rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
 	request_dbid := 0
 	if len(rows) > 0 {
@@ -2812,7 +2840,7 @@ server := server.route("GET", "/api/requests", func(req) {
 		params := push(params, until_ms)
 	}
 
-	sql := "SELECT id, session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, source_app, data_class, created_at FROM requests"
+	sql := "SELECT id, session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cached_input_tokens, cache_write_input_tokens, cost_usd, input_cost_usd, output_cost_usd, cached_input_cost_usd, cache_write_input_cost_usd, input_rate_per_million, output_rate_per_million, cached_input_rate_per_million, cache_write_input_rate_per_million, pricing_source, pricing_kind, priced_model, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, source_app, data_class, created_at FROM requests"
 	sql := sql + where_clause_from_conditions(conditions)
 	sql := sql + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
 	params := push(params, page_size)
@@ -3094,7 +3122,8 @@ server := server.route("GET", "/api/insights", func(req) {
 	run_summary_rows := db_query(db, "SELECT COUNT(*) AS total_runs, SUM(CASE WHEN error_count = 0 THEN 1 ELSE 0 END) AS success_signal_runs, SUM(CASE WHEN error_count > 0 THEN 1 ELSE 0 END) AS failed_runs, COALESCE(SUM(total_cost_usd),0) AS total_cost_usd, COALESCE(SUM(CASE WHEN error_count = 0 THEN total_cost_usd ELSE 0 END),0) AS successful_cost_usd FROM (" + run_base_sql + ") rb", [])
 	explicit_completion_rows := db_query(db, "SELECT COUNT(DISTINCT tr.session_id) AS completed_sessions FROM trace_events te JOIN traces tr ON tr.trace_id = te.trace_id WHERE lower(te.event_name) IN ('task_completed','workflow_completed','run_completed','task_succeeded','workflow_succeeded')", [])
 
-	tool_rows := db_query(db, "SELECT tc.tool_name, COUNT(*) AS call_count, SUM(CASE WHEN tc.status='success' THEN 1 ELSE 0 END) AS success_count, SUM(CASE WHEN tc.status='success' THEN 0 ELSE 1 END) AS error_count, COALESCE(AVG(tc.latency_ms),0) AS avg_latency_ms, MAX(tc.latency_ms) AS max_latency_ms, COALESCE(SUM(tc.latency_ms),0) AS total_latency_ms, COUNT(DISTINCT tc.session_id) AS session_count, COUNT(DISTINCT CASE WHEN r.status='error' THEN tc.session_id END) AS failed_session_count, COUNT(DISTINCT CASE WHEN r.status!='error' THEN tc.session_id END) AS successful_session_count FROM tool_calls tc LEFT JOIN requests r ON r.id = tc.request_dbid GROUP BY tc.tool_name ORDER BY call_count DESC LIMIT 100", [])
+	tool_time_filter := append_time_range_conditions(req, [], [], "tc.created_at")
+	tool_rows := db_query(db, "SELECT tc.tool_name, COUNT(*) AS call_count, SUM(CASE WHEN tc.status='success' THEN 1 ELSE 0 END) AS success_count, SUM(CASE WHEN tc.status='success' THEN 0 ELSE 1 END) AS error_count, COALESCE(AVG(tc.latency_ms),0) AS avg_latency_ms, MAX(tc.latency_ms) AS max_latency_ms, COALESCE(SUM(tc.latency_ms),0) AS total_latency_ms, COUNT(DISTINCT tc.session_id) AS session_count, COUNT(DISTINCT CASE WHEN r.status='error' THEN tc.session_id END) AS failed_session_count, COUNT(DISTINCT CASE WHEN r.status!='error' THEN tc.session_id END) AS successful_session_count FROM tool_calls tc LEFT JOIN requests r ON r.id = tc.request_dbid" + where_clause_from_conditions(tool_time_filter["conditions"]) + " GROUP BY tc.tool_name ORDER BY call_count DESC LIMIT 100", tool_time_filter["params"])
 
 	waterfall_rows := db_query(db, "SELECT span_kind, COUNT(*) AS span_count, COALESCE(SUM(duration_ms),0) AS total_duration_ms, COALESCE(AVG(duration_ms),0) AS avg_duration_ms, MAX(duration_ms) AS max_duration_ms FROM trace_spans GROUP BY span_kind ORDER BY total_duration_ms DESC", [])
 	latency_summary_rows := db_query(db, "SELECT COUNT(*) AS trace_count, COALESCE(SUM(duration_ms),0) AS total_trace_duration_ms, COALESCE(AVG(duration_ms),0) AS avg_trace_duration_ms, COALESCE((SELECT SUM(duration_ms) FROM trace_spans),0) AS total_span_duration_ms FROM traces", [])
@@ -3142,9 +3171,14 @@ server := server.route("GET", "/api/charts/requests-over-time", func(req) {
 		conditions := push(conditions, "project_id = ?")
 		params := push(params, project_id)
 	}
-	sql := "SELECT CAST(CAST(created_at AS INTEGER) / 3600000 AS INTEGER) AS hour_bucket, COUNT(*) AS total, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors FROM requests"
+	bounds := time_range_bounds(req)
+	span_ms := to_int_or_zero(bounds["span_ms"])
+	bucket_size_ms := chart_bucket_size_ms_for_span(span_ms)
+	bucket_origin_ms := to_int_or_zero(bounds["since_ms"])
+	bucket_expression := "CAST(((CAST(created_at AS INTEGER) - " + to_string(bucket_origin_ms) + ") / " + to_string(bucket_size_ms) + ") AS INTEGER) * " + to_string(bucket_size_ms) + " + " + to_string(bucket_origin_ms)
+	sql := "SELECT " + bucket_expression + " AS bucket_start_ms, " + to_string(bucket_size_ms) + " AS bucket_size_ms, COUNT(*) AS total, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors FROM requests"
 	sql := sql + where_clause_from_conditions(conditions)
-	sql := sql + " GROUP BY hour_bucket ORDER BY hour_bucket ASC LIMIT 72"
+	sql := sql + " GROUP BY bucket_start_ms ORDER BY bucket_start_ms ASC"
 	rows := db_query(db, sql, params)
 	return api_ok(rows)
 })
