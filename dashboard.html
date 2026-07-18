@@ -886,11 +886,11 @@
         </div>
         <div class="range-field hidden" id="globalRangeStartField">
           <label class="range-label" for="globalRangeStart">Start</label>
-          <input class="range-input" id="globalRangeStart" type="datetime-local" onchange="loadAll()">
+          <input class="range-input" id="globalRangeStart" type="datetime-local" onchange="handleCustomRangeChange()">
         </div>
         <div class="range-field hidden" id="globalRangeEndField">
           <label class="range-label" for="globalRangeEnd">End</label>
-          <input class="range-input" id="globalRangeEnd" type="datetime-local" onchange="loadAll()">
+          <input class="range-input" id="globalRangeEnd" type="datetime-local" onchange="handleCustomRangeChange()">
         </div>
         <div class="range-summary" id="globalRangeSummary">Last 30 days</div>
       </div>
@@ -1152,6 +1152,7 @@ const state = {
   sortKey:    { requests: 'created_at', sessions: 'last_seen' },
   sortAsc:    { requests: false, sessions: false },
   rangePreset: '30d',
+  rangeVersion: 0,
   hasLoaded:  false,
 };
 
@@ -1161,6 +1162,7 @@ let chartStatus   = null;
 let chartTools    = null;
 let apiToken = readStoredToken();
 let refreshInFlight = false;
+let refreshQueued = false;
 
 function readStoredToken() {
   try {
@@ -1253,10 +1255,20 @@ function getActiveRange() {
   const now = Date.now();
   if (preset === 'all') return { preset, sinceMs: 0, untilMs: 0, label: 'All time' };
   if (preset === '24h') return { preset, sinceMs: now - (24 * 60 * 60 * 1000), untilMs: now, label: 'Last 24 hours' };
-  if (preset === '7d') return { preset, sinceMs: now - (7 * 24 * 60 * 60 * 1000), untilMs: now, label: 'Last 7 days' };
-  if (preset === '30d') return { preset, sinceMs: now - (30 * 24 * 60 * 60 * 1000), untilMs: now, label: 'Last 30 days' };
-  if (preset === '6m') return { preset, sinceMs: now - (183 * 24 * 60 * 60 * 1000), untilMs: now, label: 'Last 6 months' };
-  if (preset === '1y') return { preset, sinceMs: now - (365 * 24 * 60 * 60 * 1000), untilMs: now, label: 'Last year' };
+  if (preset === '7d' || preset === '30d') {
+    const days = preset === '7d' ? 7 : 30;
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (days - 1));
+    return { preset, sinceMs: start.getTime(), untilMs: now, label: preset === '7d' ? 'Last 7 days' : 'Last 30 days' };
+  }
+  if (preset === '6m' || preset === '1y') {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    if (preset === '6m') start.setMonth(start.getMonth() - 6);
+    else start.setFullYear(start.getFullYear() - 1);
+    return { preset, sinceMs: start.getTime(), untilMs: now, label: preset === '6m' ? 'Last 6 months' : 'Last year' };
+  }
 
   const startMs = parseLocalDateTime(document.getElementById('globalRangeStart')?.value || '');
   const endMs = parseLocalDateTime(document.getElementById('globalRangeEnd')?.value || '');
@@ -1281,6 +1293,13 @@ function handleRangePresetChange() {
   document.getElementById('globalRangeEndField')?.classList[custom ? 'remove' : 'add']('hidden');
   applyPresetDefaults(preset);
   updateRangeSummary();
+  state.rangeVersion += 1;
+  loadAll();
+}
+
+function handleCustomRangeChange() {
+  updateRangeSummary();
+  state.rangeVersion += 1;
   loadAll();
 }
 
@@ -1294,8 +1313,7 @@ function initializeRangeFilter() {
   updateRangeSummary();
 }
 
-function buildApiUrl(basePath) {
-  const range = getActiveRange();
+function buildApiUrl(basePath, range = getActiveRange()) {
   const parts = [];
   if (range.sinceMs > 0) parts.push('since_ms=' + encodeURIComponent(String(range.sinceMs)));
   if (range.untilMs > 0) parts.push('until_ms=' + encodeURIComponent(String(range.untilMs)));
@@ -1320,8 +1338,13 @@ async function fetchJSON(url, options = {}) {
 }
 
 async function loadAll() {
-  if (refreshInFlight) return false;
+  if (refreshInFlight) {
+    refreshQueued = true;
+    return false;
+  }
   refreshInFlight = true;
+  const loadRange = getActiveRange();
+  const loadRangeVersion = state.rangeVersion;
   const initialLoad = !state.hasLoaded;
   if (initialLoad) {
     document.getElementById('loadingOverlay').classList.remove('hidden');
@@ -1332,20 +1355,25 @@ async function loadAll() {
     // Kujo's local HTTP runtime is intentionally small; keep dashboard reads
     // sequential so one browser refresh cannot exhaust its request workers.
     updateRangeSummary();
-    const stats = await fetchJSON(buildApiUrl('/api/stats'));
+    const stats = await fetchJSON(buildApiUrl('/api/stats', loadRange));
     const backups = await fetchJSON('/api/admin/backups');
-    const reqs = await fetchJSON(buildApiUrl('/api/requests'));
-    const tools = await fetchJSON(buildApiUrl('/api/tool-calls'));
-    const steps = await fetchJSON(buildApiUrl('/api/agent-steps'));
-    const traces = await fetchJSON(buildApiUrl('/api/traces'));
-    const traceSpans = await fetchJSON(buildApiUrl('/api/trace-spans'));
-    const traceEvents = await fetchJSON(buildApiUrl('/api/trace-events'));
-    const errs = await fetchJSON(buildApiUrl('/api/errors'));
-    const sess = await fetchJSON(buildApiUrl('/api/sessions'));
-    const insights = await fetchJSON('/api/insights');
-    const chartReqData = await fetchJSON(buildApiUrl('/api/charts/requests-over-time'));
-    const chartLatData = await fetchJSON(buildApiUrl('/api/charts/latency-hist'));
-    const chartStatusData = await fetchJSON(buildApiUrl('/api/charts/status-breakdown'));
+    const reqs = await fetchJSON(buildApiUrl('/api/requests', loadRange));
+    const tools = await fetchJSON(buildApiUrl('/api/tool-calls', loadRange));
+    const steps = await fetchJSON(buildApiUrl('/api/agent-steps', loadRange));
+    const traces = await fetchJSON(buildApiUrl('/api/traces', loadRange));
+    const traceSpans = await fetchJSON(buildApiUrl('/api/trace-spans', loadRange));
+    const traceEvents = await fetchJSON(buildApiUrl('/api/trace-events', loadRange));
+    const errs = await fetchJSON(buildApiUrl('/api/errors', loadRange));
+    const sess = await fetchJSON(buildApiUrl('/api/sessions', loadRange));
+    const insights = await fetchJSON(buildApiUrl('/api/insights', loadRange));
+    const chartReqData = await fetchJSON(buildApiUrl('/api/charts/requests-over-time', loadRange));
+    const chartLatData = await fetchJSON(buildApiUrl('/api/charts/latency-hist', loadRange));
+    const chartStatusData = await fetchJSON(buildApiUrl('/api/charts/status-breakdown', loadRange));
+
+    if (loadRangeVersion !== state.rangeVersion) {
+      refreshQueued = true;
+      return false;
+    }
 
     state.requests   = reqs   || [];
     state.toolCalls  = tools  || [];
@@ -1358,8 +1386,8 @@ async function loadAll() {
     state.insights   = insights || null;
     state.backups    = backups || null;
 
-    renderStats(stats);
-    renderCharts(chartReqData, chartLatData, chartStatusData, state.toolCalls);
+    renderStats(stats, loadRange);
+    renderCharts(chartReqData, chartLatData, chartStatusData, (insights && insights.tool_effectiveness) || [], loadRange);
     populateProviderFilter();
     renderRequestsTable();
     renderToolCallsTable();
@@ -1389,14 +1417,17 @@ async function loadAll() {
     document.getElementById('loadingOverlay').classList.add('hidden');
     setRefreshing(false);
     refreshInFlight = false;
+    if (refreshQueued) {
+      refreshQueued = false;
+      Promise.resolve().then(loadAll);
+    }
   }
 }
 
 /* ════════════════════════════════════════════════════════════════════
    Stats
    ════════════════════════════════════════════════════════════════════ */
-function renderStats(s) {
-  const range = getActiveRange();
+function renderStats(s, range = getActiveRange()) {
   setText('statRequests',  fmtNum(s.total_requests));
   setText('statCost',      '$' + fmtCost(s.total_cost_usd));
   setText('statLatency',   fmtLatency(s.avg_latency_ms));
@@ -1425,12 +1456,48 @@ const CHART_DEFAULTS = {
   },
 };
 
-function renderCharts(reqData, latData, statusData, toolData) {
+function chartBucketSizeMsForSpan(spanMs) {
+  if (spanMs <= 48 * 60 * 60 * 1000) return 60 * 60 * 1000;
+  if (spanMs <= 45 * 24 * 60 * 60 * 1000) return 24 * 60 * 60 * 1000;
+  if (spanMs <= 240 * 24 * 60 * 60 * 1000) return 7 * 24 * 60 * 60 * 1000;
+  return 30 * 24 * 60 * 60 * 1000;
+}
+
+function normalizeRequestSeries(reqData, range) {
+  const rows = Array.isArray(reqData) ? reqData : [];
+  const rowBucketSize = Number(rows[0]?.bucket_size_ms || 0);
+  const boundedSpan = range.sinceMs > 0 && range.untilMs > range.sinceMs ? range.untilMs - range.sinceMs : 0;
+  const observedSpan = rows.length > 1
+    ? Number(rows[rows.length - 1].bucket_start_ms) - Number(rows[0].bucket_start_ms)
+    : 0;
+  const bucketSize = rowBucketSize || chartBucketSizeMsForSpan(boundedSpan || observedSpan);
+  if (!rows.length && !boundedSpan) return [];
+
+  const byBucket = new Map(rows.map(row => [Number(row.bucket_start_ms), row]));
+  const firstBucket = boundedSpan ? range.sinceMs : Number(rows[0].bucket_start_ms);
+  const endExclusive = boundedSpan
+    ? range.untilMs
+    : Number(rows[rows.length - 1].bucket_start_ms) + bucketSize;
+  const normalized = [];
+  for (let bucketStart = firstBucket; bucketStart < endExclusive; bucketStart += bucketSize) {
+    const row = byBucket.get(bucketStart);
+    normalized.push({
+      bucket_start_ms: bucketStart,
+      bucket_size_ms: bucketSize,
+      total: Number(row?.total || 0),
+      errors: Number(row?.errors || 0),
+    });
+  }
+  return normalized;
+}
+
+function renderCharts(reqData, latData, statusData, toolData, range = getActiveRange()) {
   // ── Requests over time ──
   if (chartRequests) chartRequests.destroy();
-  const rLabels = (reqData || []).map(r => 'h+' + r.hour_bucket);
-  const rTotals = (reqData || []).map(r => r.total);
-  const rErrors = (reqData || []).map(r => r.errors);
+  const requestSeries = normalizeRequestSeries(reqData, range);
+  const rLabels = requestSeries.map(r => fmtChartBucketLabel(r.bucket_start_ms, range, r.bucket_size_ms));
+  const rTotals = requestSeries.map(r => r.total);
+  const rErrors = requestSeries.map(r => r.errors);
   chartRequests = new Chart(document.getElementById('chartRequests'), {
     type: 'line',
     data: {
@@ -2099,6 +2166,24 @@ function fmtTs(ms) {
     hour:'2-digit', minute:'2-digit', second:'2-digit' });
 }
 
+function fmtChartBucketLabel(ms, range = getActiveRange(), bucketSizeMs = 0) {
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '—';
+  if (range.preset === '24h' || bucketSizeMs < 24 * 60 * 60 * 1000) {
+    return d.toLocaleString(undefined, {
+      month: '2-digit',
+      day: '2-digit',
+      year: '2-digit',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }
+  return d.toLocaleDateString(undefined, {
+    month: '2-digit',
+    day: '2-digit',
+    year: '2-digit',
+  });
+}
 function fmtDateTimeShort(ms) {
   if (!ms) return '—';
   const d = new Date(Number(ms));

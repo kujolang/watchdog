@@ -20,7 +20,8 @@ assertContains("setLoadError('Watchdog could not load telemetry:", 'non-auth fai
 assertContains('const initialLoad = !state.hasLoaded;', 'dashboard should distinguish the first load from background refreshes');
 assertContains('if (initialLoad) {', 'full-screen loading UI should be limited to the initial load');
 assertContains('state.hasLoaded = true;', 'dashboard should remember that visible data has already rendered');
-assertContains('if (refreshInFlight) return false;', 'overlapping automatic and manual refreshes should be suppressed');
+assertContains('if (refreshInFlight) {', 'overlapping automatic and manual refreshes should be detected');
+assertContains('refreshQueued = true;', 'a range change during refresh should queue a follow-up load');
 assertContains("setConnection(true, 'Refreshing data…');", 'background refresh should expose a non-blocking status');
 
 console.log('dashboard_api_auth_contract_check: PASS');

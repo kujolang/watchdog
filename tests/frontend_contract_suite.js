@@ -220,6 +220,22 @@ function testRequestsFiltersSortingAndEscaping() {
 	const rangedUrl = context.buildApiUrl('/api/requests');
 	assert.ok(rangedUrl.includes('since_ms='), 'range-aware API URLs should include a start bound');
 	assert.ok(rangedUrl.includes('until_ms='), 'range-aware API URLs should include an end bound');
+
+	const day = 24 * 60 * 60 * 1000;
+	const range = { preset: '7d', sinceMs: 10 * day, untilMs: 17 * day, label: 'Last 7 days' };
+	const normalized = context.normalizeRequestSeries([
+		{ bucket_start_ms: 10 * day, bucket_size_ms: day, total: 2, errors: 0 },
+		{ bucket_start_ms: 16 * day, bucket_size_ms: day, total: 3, errors: 1 },
+	], range);
+	assert.strictEqual(normalized.length, 7, 'seven-day charts should always render seven daily buckets');
+	assert.deepStrictEqual(Array.from(normalized, row => row.total), [2, 0, 0, 0, 0, 0, 3], 'missing dates should render as zero-value buckets');
+
+	const sixMonthRange = { preset: '6m', sinceMs: 100 * day, untilMs: 283 * day, label: 'Last 6 months' };
+	const sixMonthSeries = context.normalizeRequestSeries([
+		{ bucket_start_ms: 100 * day, bucket_size_ms: 7 * day, total: 922, errors: 0 },
+	], sixMonthRange);
+	assert.ok(sixMonthSeries.length >= 26, 'six-month charts should preserve the full selected timeline');
+	assert.strictEqual(sixMonthSeries.reduce((sum, row) => sum + row.total, 0), 922, 'zero filling must not change request totals');
 }
 
 function testToolCallsErrorsSessionsAndTracesContracts() {
