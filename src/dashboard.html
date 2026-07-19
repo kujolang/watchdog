@@ -807,24 +807,29 @@
   .json-string { color: #176b3a; }
   .json-number { color: #9a4d00; }
   .json-boolean, .json-null { color: #285bb5; font-weight: 700; }
-  .detail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
   .detail-action {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
-    border: 1px solid #bfd0eb;
-    border-radius: 5px;
-    background: #f7f9fc;
+    gap: 5px;
+    min-width: 20px;
+    min-height: 20px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
     color: #0e315c;
-    padding: 0;
+    padding: 2px;
     font: 11px/1.2 var(--font);
     font-weight: 600;
     cursor: pointer;
   }
-  .detail-action:hover, .detail-action:focus-visible { border-color: #8ba7d4; background: #eef4ff; outline: none; }
-  .detail-action-icon { font-size: 16px; line-height: 1; }
+  .detail-action svg, .table-icon-action svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .detail-action-text { border: 1px solid #bfd0eb; padding: 5px 8px; background: #f7f9fc; }
+  .detail-action:hover, .detail-action:focus-visible { color: #0055c8; background: #eef4ff; outline: none; }
+  .detail-action-text:hover, .detail-action-text:focus-visible { border-color: #8ba7d4; }
+  .table-icon-action { display: inline-flex; align-items: center; margin-left: 4px; padding: 0; border: 0; background: transparent; color: #1764bf; vertical-align: -3px; cursor: pointer; }
+  .table-icon-action:hover, .table-icon-action:focus-visible { color: #003f91; outline: 2px solid rgba(0, 105, 255, .22); outline-offset: 2px; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .detail-related {
     border-bottom: 1px solid var(--border);
@@ -1671,7 +1676,7 @@ function renderRequestsTable() {
   tbody.innerHTML = rows.map((r, index) => `
     <tr data-detail-row tabindex="0" role="button" aria-label="View full request details" onclick="showRecordDetails('requests', ${index})" onkeydown="openDetailsFromKey(event, 'requests', ${index})">
       <td class="cell-mono" style="white-space:nowrap;font-size:11px">${fmtTs(r.created_at)}</td>
-      <td><span class="cell-mono cell-truncate" style="max-width:110px;display:block" title="${safeText(r.session_id)}">${safeText(r.session_id)}</span></td>
+      <td><span class="cell-mono cell-truncate" style="max-width:110px" title="${safeText(r.session_id)}">${safeText(r.session_id)}</span>${r.session_id ? tableIconAction('external-link', `Open session ${r.session_id}`, 'showSessionDetailsById', r.session_id) : ''}</td>
       <td class="cell-truncate">${safeText(r.user_id || '—')}</td>
       <td class="cell-truncate" style="max-width:120px" title="${safeText(r.tenant_id || '')}">${safeText(r.tenant_id || '—')}</td>
       <td class="cell-truncate" style="max-width:120px" title="${safeText(r.project_id || '')}">${safeText(r.project_id || '—')}</td>
@@ -1679,9 +1684,9 @@ function renderRequestsTable() {
       <td><span class="badge badge-${r.data_class === 'fixture' ? 'warning' : 'purple'}">${safeText(r.data_class || 'legacy')}</span></td>
       <td>${safeText(r.provider || '—')}</td>
       <td><span class="cell-mono" style="font-size:12px">${safeText(r.model || '—')}</span></td>
-      <td class="cell-truncate" style="max-width:120px" title="${safeText(r.workflow_id || '')}">${safeText(r.workflow_id || '—')}</td>
-      <td class="cell-truncate" style="max-width:120px" title="${safeText(r.task_id || '')}">${safeText(r.task_id || '—')}</td>
-      <td class="cell-truncate" style="max-width:120px" title="${safeText(r.correlation_id || '')}">${safeText(r.correlation_id || '—')}</td>
+      <td class="cell-truncate" style="max-width:120px" title="${safeText(r.workflow_id || '')}">${safeText(r.workflow_id || '—')}${r.workflow_id ? tableIconAction('search', `Find workflow ${r.workflow_id}`, 'filterRequestsByQuery', r.workflow_id) : ''}</td>
+      <td class="cell-truncate" style="max-width:120px" title="${safeText(r.task_id || '')}">${safeText(r.task_id || '—')}${r.task_id ? tableIconAction('search', `Find task ${r.task_id}`, 'filterRequestsByQuery', r.task_id) : ''}</td>
+      <td class="cell-truncate" style="max-width:120px" title="${safeText(r.correlation_id || '')}">${safeText(r.correlation_id || '—')}${r.correlation_id ? tableIconAction('search', `Find correlation ${r.correlation_id}`, 'filterRequestsByQuery', r.correlation_id) : ''}</td>
       <td><span class="badge badge-${r.status === 'success' ? 'success' : 'error'}">${safeText(r.status || '')}</span></td>
       <td style="white-space:nowrap">${fmtLatency(r.latency_ms)}</td>
       <td style="white-space:nowrap">${fmtNum(r.total_tokens)}</td>
@@ -1732,10 +1737,10 @@ function renderToolCallsTable() {
   tbody.innerHTML = rows.map((r, index) => `
     <tr data-detail-row tabindex="0" role="button" aria-label="View full tool call details" onclick="showRecordDetails('toolCalls', ${index})" onkeydown="openDetailsFromKey(event, 'toolCalls', ${index})">
       <td class="cell-mono" style="white-space:nowrap;font-size:11px">${fmtTs(r.created_at)}</td>
-      <td><span class="cell-mono" style="font-size:12px">${safeText(truncate(r.session_id, 16))}</span></td>
+      <td><span class="cell-mono" style="font-size:12px">${safeText(truncate(r.session_id, 16))}</span>${r.session_id ? tableIconAction('external-link', `Open session ${r.session_id}`, 'showSessionDetailsById', r.session_id) : ''}</td>
       <td><span class="badge badge-info">${safeText(r.source_app || 'legacy')}</span></td>
       <td><span class="badge badge-${r.data_class === 'fixture' ? 'warning' : 'purple'}">${safeText(r.data_class || 'legacy')}</span></td>
-      <td><span class="badge badge-info">${safeText(r.tool_name)}</span></td>
+      <td><span class="badge badge-info">${safeText(r.tool_name)}</span>${r.tool_name ? tableIconAction('search', `Find tool ${r.tool_name}`, 'filterToolCallsByQuery', r.tool_name) : ''}</td>
       <td class="cell-truncate cell-mono" style="max-width:160px;font-size:12px" title="${escHtml(r.tool_args)}">${escHtml(truncate(r.tool_args, 50))}</td>
       <td class="cell-truncate" style="max-width:160px" title="${escHtml(r.tool_result)}">${escHtml(truncate(r.tool_result, 60))}</td>
       <td><span class="badge badge-${r.status === 'success' ? 'success' : 'error'}">${safeText(r.status || '')}</span></td>
@@ -1959,7 +1964,7 @@ function renderSessionsTable() {
 
   tbody.innerHTML = rows.map((r, index) => `
     <tr data-detail-row tabindex="0" role="button" aria-label="View full session details" onclick="showRecordDetails('sessions', ${index})" onkeydown="openDetailsFromKey(event, 'sessions', ${index})">
-      <td class="cell-mono" style="font-size:12px">${safeText(r.session_id)}</td>
+      <td class="cell-mono" style="font-size:12px">${safeText(r.session_id)}${r.session_id ? tableIconAction('external-link', `Open session ${r.session_id}`, 'showSessionDetailsById', r.session_id) : ''}</td>
       <td>${safeText(r.user_id || '—')}</td>
       <td>${r.request_count}</td>
       <td>${r.error_count > 0 ? `<span class="badge badge-error">${r.error_count}</span>` : '<span class="badge badge-success">0</span>'}</td>
@@ -2174,7 +2179,7 @@ function showRecordDetails(table, index) {
     title.className = 'detail-related-title';
     title.textContent = 'Related data';
     related.appendChild(title);
-    related.appendChild(buildActionList(recordActions));
+    related.appendChild(buildActionList(recordActions, { showLabels: true }));
     body.appendChild(related);
   }
   Object.entries(record).forEach(([key, value]) => {
@@ -2255,16 +2260,21 @@ function looksLikeStructuredText(text) {
   return text.startsWith('{') || text.startsWith('[') || (text.startsWith('"') && (text.includes('{') || text.includes('[')));
 }
 
-function buildActionList(actions) {
+function buildActionList(actions, options = {}) {
   const wrap = document.createElement('div');
   wrap.className = 'detail-actions';
   actions.forEach(action => {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'detail-action detail-action-icon';
+    button.className = `detail-action${options.showLabels ? ' detail-action-text' : ''}`;
     button.title = action.label;
     button.setAttribute?.('aria-label', action.label);
-    button.textContent = action.icon || iconForAction(action.label);
+    button.innerHTML = tablerIcon(iconForAction(action.label));
+    if (options.showLabels) {
+      const label = document.createElement('span');
+      label.textContent = shortActionLabel(action.label);
+      button.appendChild(label);
+    }
     button.onclick = action.run;
     wrap.appendChild(button);
   });
@@ -2273,9 +2283,41 @@ function buildActionList(actions) {
 
 function iconForAction(label) {
   const text = String(label || '').toLowerCase();
-  if (text.startsWith('find ')) return '⌕';
-  if (/^(\d+|no\b)/.test(text)) return '≡';
-  return '↗';
+  if (text.startsWith('find ')) return 'search';
+  if (/^(\d+|no\b)/.test(text)) return 'list';
+  return 'external-link';
+}
+
+function shortActionLabel(label) {
+  const text = String(label || '');
+  if (/^\d+\s+requests?$/i.test(text)) return text;
+  if (/^\d+\s+traces?$/i.test(text)) return text;
+  if (/^\d+\s+tool calls?$/i.test(text)) return text;
+  if (/^Open session/i.test(text)) return 'Session';
+  if (/^Open trace/i.test(text)) return 'Trace';
+  if (/^Open span/i.test(text)) return 'Span';
+  if (/^Open request/i.test(text)) return 'Request';
+  if (/^Find tool/i.test(text)) return 'Tool';
+  if (/^Find request/i.test(text)) return 'Request';
+  if (/^Find workflow/i.test(text)) return 'Workflow';
+  if (/^Find task/i.test(text)) return 'Task';
+  if (/^Find correlation/i.test(text)) return 'Correlation';
+  if (/^Find error/i.test(text)) return 'Error';
+  return truncate(text, 18);
+}
+
+function tablerIcon(name) {
+  const paths = {
+    'external-link': '<path d="M12 6h-6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/><path d="M11 13l9-9"/><path d="M15 4h5v5"/>',
+    search: '<circle cx="10" cy="10" r="7"/><path d="m21 21-6-6"/>',
+    list: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
+  };
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths['external-link']}</svg>`;
+}
+
+function tableIconAction(icon, label, handler, ...args) {
+  const serialized = args.map(arg => safeText(JSON.stringify(arg))).join(',');
+  return `<button type="button" class="table-icon-action" title="${safeText(label)}" aria-label="${safeText(label)}" onclick="event.stopPropagation();${handler}(${serialized})">${tablerIcon(icon)}</button>`;
 }
 
 function buildRecordActions(record) {

@@ -174,6 +174,7 @@ function testRequestsFiltersSortingAndEscaping() {
 
 	context.renderRequestsTable();
 	assert.ok(elements.reqBody.innerHTML.includes("showRecordDetails('requests', 0)"), 'request rows should open full details');
+	assert.ok(elements.reqBody.innerHTML.includes('table-icon-action'), 'request identifiers should append drilldown icons');
 	assert.strictEqual(context.state.visibleRows.requests.length, 2, 'request detail rows should match rendered rows');
 	context.showRecordDetails('requests', 0);
 	assert.strictEqual(elements.detailDialog.open, true, 'request details dialog should open');
@@ -184,8 +185,11 @@ function testRequestsFiltersSortingAndEscaping() {
 	assert.ok(jsonField.children[1].children[0].classList.contains('detail-json'), 'structured detail values should use the JSON viewer');
 	assert.ok(jsonField.children[1].children[0].innerHTML.includes('json-string'), 'JSON viewer should apply syntax classes');
 	const actionList = context.buildActionList([{ label: 'Open request #934', run() {} }]);
-	assert.strictEqual(actionList.children[0].textContent, '↗', 'related actions should render as compact icons');
+	assert.ok(actionList.children[0].innerHTML.includes('<svg'), 'field actions should render as plain Tabler icons');
 	assert.strictEqual(actionList.children[0].title, 'Open request #934', 'icon actions should retain a descriptive tooltip');
+	const relatedList = context.buildActionList([{ label: 'Open request #934', run() {} }], { showLabels: true });
+	assert.ok(relatedList.children[0].innerHTML.includes('<svg'), 'related actions should include a Tabler icon');
+	assert.strictEqual(relatedList.children[0].children[0].textContent, 'Request', 'related actions should include a short text label');
 	context.closeRecordDetails();
 	assert.strictEqual(elements.detailDialog.open, false, 'request details dialog should close');
 	assert.ok(elements.reqBody.innerHTML.includes('&lt;img src=x onerror=1&gt;'), 'session id should be escaped');
@@ -260,6 +264,7 @@ function testToolCallsErrorsSessionsAndTracesContracts() {
 	assert.ok(elements.tcBody.innerHTML.includes('&lt;b&gt;tool&lt;/b&gt;'));
 	assert.ok(!elements.tcBody.innerHTML.includes('<b>tool</b>'));
 	assert.ok(elements.tcBody.innerHTML.includes("showRecordDetails('toolCalls', 0)"), 'tool call rows should open full details');
+	assert.ok(elements.tcBody.innerHTML.includes('table-icon-action'), 'tool call identifiers should append drilldown icons');
 
 	context.state.toolCalls = [];
 	context.renderToolCallsTable();
