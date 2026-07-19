@@ -102,7 +102,7 @@ VALUES
 const dryRun = JSON.parse(execFileSync('node', [scriptPath, `--db=${dbPath}`, `--provider-catalog=${providerCatalogPath}`, `--catalog=${catalogPath}`, '--source-app=ai-chat', '--models=openai/gpt-5.4,~anthropic/claude-haiku-latest', '--from-ms=1721260800000', '--until-ms=1721260801999'], { encoding: 'utf8' }));
 assert.equal(dryRun.dry_run, true);
 assert.equal(dryRun.candidate_rows, 2);
-assert.equal(dryRun.provider_catalog_id, 'watchdog-provider-catalog:2026-07-18');
+assert.equal(dryRun.provider_catalog_id, 'watchdog-provider-catalog:2026-07-19');
 assert.equal(sqlite('SELECT COUNT(*) AS n FROM pricing_reprice_runs', true)[0].n, 0, 'dry-run should not write audit rows');
 assert.equal(sqlite('SELECT pricing_kind FROM requests WHERE request_id = "req-1"', true)[0].pricing_kind, 'fallback', 'dry-run should not mutate requests');
 
@@ -112,7 +112,7 @@ assert.equal(applied.candidate_rows, 2);
 
 const req1 = sqlite('SELECT pricing_kind, pricing_source, priced_model, cost_usd, cached_input_rate_per_million FROM requests WHERE request_id = "req-1"', true)[0];
 assert.equal(req1.pricing_kind, 'catalog');
-assert.match(String(req1.pricing_source), /^openrouter-public-catalog:2026-07-18/);
+assert.match(String(req1.pricing_source), /^openrouter-public-catalog:2026-07-19/);
 assert.equal(req1.priced_model, 'openai/gpt-5.4');
 assert.equal(Number(req1.cached_input_rate_per_million), 0.25);
 

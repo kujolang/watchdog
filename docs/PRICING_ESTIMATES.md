@@ -43,12 +43,12 @@ curl -s 'http://127.0.0.1:7700/api/requests?source_app=ai-chat&pricing_kind=cata
 
 Common `pricing_source` patterns:
 
-- `openai-api-pricing:2026-07-18`
-- `anthropic-pricing:2026-07-18:intro-through-2026-08-31-assume-5m-cache-write`
-- `google-gemini-pricing:2026-07-18`
-- `moonshot-kimi-pricing:2026-07-18`
+- `openai-api-pricing:2026-07-19`
+- `anthropic-pricing:2026-07-19:intro-through-2026-08-31-assume-5m-cache-write`
+- `google-gemini-pricing:2026-07-19`
+- `moonshot-kimi-pricing:2026-07-19`
 - `ollama-cloud-equivalent:*`
-- `openrouter-public-catalog:2026-07-18`
+- `openrouter-public-catalog:2026-07-19`
 - `watchdog-fallback-estimate:v1`
 
 ## Reprice historical records
@@ -105,7 +105,7 @@ Apply the same command with `--apply` once the dry-run output looks correct.
 
 ## Provider catalog coverage
 
-The local provider catalog is intentionally versioned and explicit. As of July 18, 2026 it includes:
+The local provider catalog is intentionally versioned and explicit. As of July 19, 2026 it includes:
 
 - direct OpenAI text-token models used by AI Chat such as `gpt-4.1`, `gpt-4.1-mini`, and `o4-mini`
 - direct Anthropic models such as `claude-sonnet-5`, `claude-opus-4.8`, and `claude-haiku-4.5`
@@ -114,16 +114,19 @@ The local provider catalog is intentionally versioned and explicit. As of July 1
 - direct Z.AI, MiniMax, and DeepSeek model IDs already surfaced by AI Chat
 - Ollama Cloud aliases only when there is a defensible public per-token equivalent from the underlying model provider
 
+Current direct-provider gaps are also explicit. `deepseek-v3.1-pro` and `deepseek-v3.1-flash` are recognized in the provider catalog but intentionally remain `unknown` because DeepSeek's current public pricing page no longer lists public rates for those model IDs.
+
 Ollama itself does not publish a public per-model token price table. When Watchdog uses an `ollama-cloud-equivalent:*` source, the estimate is based on the underlying provider's public pricing, not on an Ollama invoice or GPU-time statement.
 
 ## Limitations
 
 - Catalog pricing is still an estimate, not an invoice.
-- Some direct-provider features still cannot be priced exactly from token counts alone. Examples include OpenAI audio-minute billing and Anthropic cache-write TTL selection.
+- Some direct-provider features still cannot be priced exactly from token counts alone. Examples include OpenAI audio-minute billing, Anthropic cache-write TTL selection, and provider pages that publish prompt-length breakpoints Watchdog's static snapshot cannot yet encode.
 - OpenRouter routing, workspace discounts, negotiated rates, and future price changes may differ from the snapshot Watchdog used at ingest time.
 - Ollama Cloud usage is measured by Ollama infrastructure utilization, not a public per-token invoice schedule, so `ollama-cloud-equivalent:*` rows are best-effort comparability estimates.
 - Historical prices are not reconstructed automatically; a reprice run uses the current local catalog snapshot and records that provenance.
 - Some OpenRouter models are intentionally left `unknown` when the public catalog marks pricing as unavailable.
+- Google Gemini and MiniMax catalog rows use the currently published lower prompt-length tier when providers publish multiple token-price tiers for longer prompts.
 
 ## Benchmark reporting guidance
 

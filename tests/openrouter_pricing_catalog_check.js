@@ -27,7 +27,7 @@ assert.equal(alias.output_rate_per_million, 5);
 
 const openaiDirect = resolvePricing('gpt-4.1', { providerCatalog, openrouterCatalog });
 assert.equal(openaiDirect.pricing_kind, 'catalog');
-assert.equal(openaiDirect.pricing_source, 'openai-api-pricing:2026-07-18');
+assert.equal(openaiDirect.pricing_source, 'openai-api-pricing:2026-07-19');
 assert.equal(openaiDirect.cached_input_rate_per_million, 0.5);
 
 const ollamaEquivalent = resolvePricing('kimi-k2.6', { providerCatalog, openrouterCatalog });
@@ -48,7 +48,11 @@ assert.equal(sonnetBreakdown.cache_write_input_cost_usd, 0.000625);
 
 const unpricedAudio = resolvePricing('whisper-1', { providerCatalog, openrouterCatalog });
 assert.equal(unpricedAudio.pricing_kind, 'unknown');
-assert.equal(unpricedAudio.pricing_source, 'openai-api-pricing:2026-07-18#audio-minute-pricing');
+assert.equal(unpricedAudio.pricing_source, 'openai-api-pricing:2026-07-19#audio-minute-pricing');
+
+const unpricedDeepSeek = resolvePricing('deepseek-v3.1-pro', { providerCatalog, openrouterCatalog });
+assert.equal(unpricedDeepSeek.pricing_kind, 'unknown');
+assert.equal(unpricedDeepSeek.pricing_source, 'deepseek-pricing:2026-07-19:not-listed-on-current-public-pricing-page');
 
 const fallback = resolvePricing('unknown/provider-model', { providerCatalog, openrouterCatalog });
 assert.equal(fallback.pricing_kind, 'fallback');

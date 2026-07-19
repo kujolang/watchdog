@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "catalog_id": "watchdog-provider-catalog:2026-07-18",
+  "catalog_id": "watchdog-provider-catalog:2026-07-19",
   "models": {
     "gpt-4.1": {
       "model_id": "gpt-4.1",
       "priced_model": "gpt-4.1",
       "has_pricing": true,
-      "pricing_source": "openai-api-pricing:2026-07-18",
+      "pricing_source": "openai-api-pricing:2026-07-19",
       "input_rate_per_million": 2.0,
       "output_rate_per_million": 8.0,
       "cached_input_rate_per_million": 0.5,
@@ -16,7 +16,7 @@
       "model_id": "gpt-4.1-mini",
       "priced_model": "gpt-4.1-mini",
       "has_pricing": true,
-      "pricing_source": "openai-api-pricing:2026-07-18",
+      "pricing_source": "openai-api-pricing:2026-07-19",
       "input_rate_per_million": 0.4,
       "output_rate_per_million": 1.6,
       "cached_input_rate_per_million": 0.1,
@@ -26,7 +26,7 @@
       "model_id": "gpt-4.1-nano",
       "priced_model": "gpt-4.1-nano",
       "has_pricing": true,
-      "pricing_source": "openai-api-pricing:2026-07-18",
+      "pricing_source": "openai-api-pricing:2026-07-19",
       "input_rate_per_million": 0.1,
       "output_rate_per_million": 0.4,
       "cached_input_rate_per_million": 0.025,
@@ -36,7 +36,7 @@
       "model_id": "gpt-4o",
       "priced_model": "gpt-4o",
       "has_pricing": true,
-      "pricing_source": "openai-api-pricing:2026-07-18",
+      "pricing_source": "openai-api-pricing:2026-07-19",
       "input_rate_per_million": 2.5,
       "output_rate_per_million": 10.0,
       "cached_input_rate_per_million": 1.25,
@@ -46,7 +46,7 @@
       "model_id": "gpt-4o-mini",
       "priced_model": "gpt-4o-mini",
       "has_pricing": true,
-      "pricing_source": "openai-api-pricing:2026-07-18",
+      "pricing_source": "openai-api-pricing:2026-07-19",
       "input_rate_per_million": 0.15,
       "output_rate_per_million": 0.6,
       "cached_input_rate_per_million": 0.075,
@@ -56,7 +56,7 @@
       "model_id": "o4-mini",
       "priced_model": "o4-mini",
       "has_pricing": true,
-      "pricing_source": "openai-api-pricing:2026-07-18",
+      "pricing_source": "openai-api-pricing:2026-07-19",
       "input_rate_per_million": 1.1,
       "output_rate_per_million": 4.4,
       "cached_input_rate_per_million": 0.275,
@@ -66,7 +66,7 @@
       "model_id": "gpt-4o-mini-transcribe",
       "priced_model": "gpt-4o-mini-transcribe",
       "has_pricing": false,
-      "pricing_source": "openai-api-pricing:2026-07-18#audio-minute-pricing",
+      "pricing_source": "openai-api-pricing:2026-07-19#audio-minute-pricing",
       "input_rate_per_million": 0.0,
       "output_rate_per_million": 0.0,
       "cached_input_rate_per_million": 0.0,
@@ -76,7 +76,7 @@
       "model_id": "whisper-1",
       "priced_model": "whisper-1",
       "has_pricing": false,
-      "pricing_source": "openai-api-pricing:2026-07-18#audio-minute-pricing",
+      "pricing_source": "openai-api-pricing:2026-07-19#audio-minute-pricing",
       "input_rate_per_million": 0.0,
       "output_rate_per_million": 0.0,
       "cached_input_rate_per_million": 0.0,
@@ -86,7 +86,7 @@
       "model_id": "claude-sonnet-5",
       "priced_model": "claude-sonnet-5",
       "has_pricing": true,
-      "pricing_source": "anthropic-pricing:2026-07-18:intro-through-2026-08-31-assume-5m-cache-write",
+      "pricing_source": "anthropic-pricing:2026-07-19:intro-through-2026-08-31-assume-5m-cache-write",
       "input_rate_per_million": 2.0,
       "output_rate_per_million": 10.0,
       "cached_input_rate_per_million": 0.2,
@@ -96,7 +96,7 @@
       "model_id": "claude-opus-4.8",
       "priced_model": "claude-opus-4.8",
       "has_pricing": true,
-      "pricing_source": "anthropic-pricing:2026-07-18:assume-5m-cache-write",
+      "pricing_source": "anthropic-pricing:2026-07-19:assume-5m-cache-write",
       "input_rate_per_million": 5.0,
       "output_rate_per_million": 25.0,
       "cached_input_rate_per_million": 0.5,
@@ -106,7 +106,7 @@
       "model_id": "claude-haiku-4.5",
       "priced_model": "claude-haiku-4.5",
       "has_pricing": true,
-      "pricing_source": "anthropic-pricing:2026-07-18:assume-5m-cache-write",
+      "pricing_source": "anthropic-pricing:2026-07-19:assume-5m-cache-write",
       "input_rate_per_million": 1.0,
       "output_rate_per_million": 5.0,
       "cached_input_rate_per_million": 0.1,
@@ -116,7 +116,7 @@
       "model_id": "gemini-2.5-pro",
       "priced_model": "gemini-2.5-pro",
       "has_pricing": true,
-      "pricing_source": "google-gemini-pricing:2026-07-18:le-200k-prompts",
+      "pricing_source": "google-gemini-pricing:2026-07-19:le-200k-prompts",
       "input_rate_per_million": 1.25,
       "output_rate_per_million": 10.0,
       "cached_input_rate_per_million": 0.125,
@@ -126,7 +126,7 @@
       "model_id": "gemini-2.5-flash",
       "priced_model": "gemini-2.5-flash",
       "has_pricing": true,
-      "pricing_source": "google-gemini-pricing:2026-07-18",
+      "pricing_source": "google-gemini-pricing:2026-07-19",
       "input_rate_per_million": 0.3,
       "output_rate_per_million": 2.5,
       "cached_input_rate_per_million": 0.03,
@@ -136,7 +136,7 @@
       "model_id": "gemini-2.5-flash-lite",
       "priced_model": "gemini-2.5-flash-lite",
       "has_pricing": true,
-      "pricing_source": "google-gemini-pricing:2026-07-18",
+      "pricing_source": "google-gemini-pricing:2026-07-19",
       "input_rate_per_million": 0.1,
       "output_rate_per_million": 0.4,
       "cached_input_rate_per_million": 0.01,
@@ -146,7 +146,7 @@
       "model_id": "gemini-3.1-flash-lite",
       "priced_model": "gemini-3.1-flash-lite",
       "has_pricing": true,
-      "pricing_source": "google-gemini-pricing:2026-07-18",
+      "pricing_source": "google-gemini-pricing:2026-07-19",
       "input_rate_per_million": 0.25,
       "output_rate_per_million": 1.5,
       "cached_input_rate_per_million": 0.025,
@@ -156,7 +156,7 @@
       "model_id": "gemini-3-flash-preview",
       "priced_model": "gemini-3-flash-preview",
       "has_pricing": true,
-      "pricing_source": "google-gemini-pricing:2026-07-18",
+      "pricing_source": "google-gemini-pricing:2026-07-19",
       "input_rate_per_million": 0.5,
       "output_rate_per_million": 3.0,
       "cached_input_rate_per_million": 0.05,
@@ -166,7 +166,7 @@
       "model_id": "kimi-k2.7-code",
       "priced_model": "kimi-k2.7-code",
       "has_pricing": true,
-      "pricing_source": "moonshot-kimi-pricing:2026-07-18",
+      "pricing_source": "moonshot-kimi-pricing:2026-07-19",
       "input_rate_per_million": 0.95,
       "output_rate_per_million": 4.0,
       "cached_input_rate_per_million": 0.19,
@@ -176,7 +176,7 @@
       "model_id": "kimi-k2.6",
       "priced_model": "kimi-k2.6",
       "has_pricing": true,
-      "pricing_source": "moonshot-kimi-pricing:2026-07-18",
+      "pricing_source": "moonshot-kimi-pricing:2026-07-19",
       "input_rate_per_million": 0.95,
       "output_rate_per_million": 4.0,
       "cached_input_rate_per_million": 0.16,
@@ -186,7 +186,7 @@
       "model_id": "kimi-k2.5",
       "priced_model": "kimi-k2.5",
       "has_pricing": true,
-      "pricing_source": "moonshot-kimi-pricing:2026-07-18",
+      "pricing_source": "moonshot-kimi-pricing:2026-07-19",
       "input_rate_per_million": 0.6,
       "output_rate_per_million": 3.0,
       "cached_input_rate_per_million": 0.1,
@@ -196,7 +196,7 @@
       "model_id": "glm-5.2",
       "priced_model": "glm-5.2",
       "has_pricing": true,
-      "pricing_source": "z-ai-pricing:2026-07-18",
+      "pricing_source": "z-ai-pricing:2026-07-19",
       "input_rate_per_million": 1.4,
       "output_rate_per_million": 4.4,
       "cached_input_rate_per_million": 0.26,
@@ -206,7 +206,7 @@
       "model_id": "glm-5.1",
       "priced_model": "glm-5.1",
       "has_pricing": true,
-      "pricing_source": "z-ai-pricing:2026-07-18",
+      "pricing_source": "z-ai-pricing:2026-07-19",
       "input_rate_per_million": 1.4,
       "output_rate_per_million": 4.4,
       "cached_input_rate_per_million": 0.26,
@@ -216,7 +216,7 @@
       "model_id": "minimax-m3",
       "priced_model": "minimax-m3",
       "has_pricing": true,
-      "pricing_source": "minimax-pricing:2026-07-18:standard-le-512k",
+      "pricing_source": "minimax-pricing:2026-07-19:standard-le-512k",
       "input_rate_per_million": 0.3,
       "output_rate_per_million": 1.2,
       "cached_input_rate_per_million": 0.06,
@@ -226,7 +226,7 @@
       "model_id": "minimax-m2.7",
       "priced_model": "minimax-m2.7",
       "has_pricing": true,
-      "pricing_source": "minimax-pricing:2026-07-18",
+      "pricing_source": "minimax-pricing:2026-07-19",
       "input_rate_per_million": 0.3,
       "output_rate_per_million": 1.2,
       "cached_input_rate_per_million": 0.06,
@@ -236,17 +236,37 @@
       "model_id": "minimax-m2.5",
       "priced_model": "minimax-m2.5",
       "has_pricing": true,
-      "pricing_source": "minimax-pricing:2026-07-18",
+      "pricing_source": "minimax-pricing:2026-07-19",
       "input_rate_per_million": 0.3,
       "output_rate_per_million": 1.2,
       "cached_input_rate_per_million": 0.03,
       "cache_write_input_rate_per_million": 0.375
     },
+    "deepseek-v3.1-pro": {
+      "model_id": "deepseek-v3.1-pro",
+      "priced_model": "deepseek-v3.1-pro",
+      "has_pricing": false,
+      "pricing_source": "deepseek-pricing:2026-07-19:not-listed-on-current-public-pricing-page",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "deepseek-v3.1-flash": {
+      "model_id": "deepseek-v3.1-flash",
+      "priced_model": "deepseek-v3.1-flash",
+      "has_pricing": false,
+      "pricing_source": "deepseek-pricing:2026-07-19:not-listed-on-current-public-pricing-page",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
+    },
     "deepseek-v4-flash": {
       "model_id": "deepseek-v4-flash",
       "priced_model": "deepseek-v4-flash",
       "has_pricing": true,
-      "pricing_source": "deepseek-pricing:2026-07-18",
+      "pricing_source": "deepseek-pricing:2026-07-19",
       "input_rate_per_million": 0.14,
       "output_rate_per_million": 0.28,
       "cached_input_rate_per_million": 0.0028,
@@ -256,8 +276,8 @@
       "model_id": "deepseek-v4-pro",
       "priced_model": "deepseek-v4-pro",
       "has_pricing": true,
-      "pricing_source": "deepseek-pricing:2026-07-18",
-      "input_rate_per_million": 0.435,
+      "pricing_source": "deepseek-pricing:2026-07-19",
+      "input_rate_per_million": 0.3,
       "output_rate_per_million": 0.87,
       "cached_input_rate_per_million": 0.003625,
       "cache_write_input_rate_per_million": 0.0
@@ -266,55 +286,55 @@
   "aliases": {
     "deepseek-chat": {
       "target_model_id": "deepseek-v4-flash",
-      "pricing_source": "deepseek-pricing:2026-07-18#compat-alias"
+      "pricing_source": "deepseek-pricing:2026-07-19#compat-alias"
     },
     "deepseek-reasoner": {
       "target_model_id": "deepseek-v4-flash",
-      "pricing_source": "deepseek-pricing:2026-07-18#compat-alias"
+      "pricing_source": "deepseek-pricing:2026-07-19#compat-alias"
     },
     "claude-haiku-latest": {
       "target_model_id": "claude-haiku-4.5",
-      "pricing_source": "anthropic-pricing:2026-07-18#alias"
+      "pricing_source": "anthropic-pricing:2026-07-19#alias"
     },
     "ollama-cloud/kimi-k2.7-code": {
       "target_model_id": "kimi-k2.7-code",
-      "pricing_source": "ollama-cloud-equivalent:moonshot-kimi-pricing:2026-07-18"
+      "pricing_source": "ollama-cloud-equivalent:moonshot-kimi-pricing:2026-07-19"
     },
     "ollama-cloud/kimi-k2.6": {
       "target_model_id": "kimi-k2.6",
-      "pricing_source": "ollama-cloud-equivalent:moonshot-kimi-pricing:2026-07-18"
+      "pricing_source": "ollama-cloud-equivalent:moonshot-kimi-pricing:2026-07-19"
     },
     "ollama-cloud/kimi-k2.5": {
       "target_model_id": "kimi-k2.5",
-      "pricing_source": "ollama-cloud-equivalent:moonshot-kimi-pricing:2026-07-18"
+      "pricing_source": "ollama-cloud-equivalent:moonshot-kimi-pricing:2026-07-19"
     },
     "ollama-cloud/deepseek-v4-flash": {
       "target_model_id": "deepseek-v4-flash",
-      "pricing_source": "ollama-cloud-equivalent:deepseek-pricing:2026-07-18"
+      "pricing_source": "ollama-cloud-equivalent:deepseek-pricing:2026-07-19"
     },
     "ollama-cloud/deepseek-v4-pro": {
       "target_model_id": "deepseek-v4-pro",
-      "pricing_source": "ollama-cloud-equivalent:deepseek-pricing:2026-07-18"
+      "pricing_source": "ollama-cloud-equivalent:deepseek-pricing:2026-07-19"
     },
     "ollama-cloud/minimax-m3": {
       "target_model_id": "minimax-m3",
-      "pricing_source": "ollama-cloud-equivalent:minimax-pricing:2026-07-18"
+      "pricing_source": "ollama-cloud-equivalent:minimax-pricing:2026-07-19"
     },
     "ollama-cloud/minimax-m2.7": {
       "target_model_id": "minimax-m2.7",
-      "pricing_source": "ollama-cloud-equivalent:minimax-pricing:2026-07-18"
+      "pricing_source": "ollama-cloud-equivalent:minimax-pricing:2026-07-19"
     },
     "ollama-cloud/minimax-m2.5": {
       "target_model_id": "minimax-m2.5",
-      "pricing_source": "ollama-cloud-equivalent:minimax-pricing:2026-07-18"
+      "pricing_source": "ollama-cloud-equivalent:minimax-pricing:2026-07-19"
     },
     "ollama-cloud/glm-5.2": {
       "target_model_id": "glm-5.2",
-      "pricing_source": "ollama-cloud-equivalent:z-ai-pricing:2026-07-18"
+      "pricing_source": "ollama-cloud-equivalent:z-ai-pricing:2026-07-19"
     },
     "ollama-cloud/glm-5.1": {
       "target_model_id": "glm-5.1",
-      "pricing_source": "ollama-cloud-equivalent:z-ai-pricing:2026-07-18"
+      "pricing_source": "ollama-cloud-equivalent:z-ai-pricing:2026-07-19"
     }
   }
 }
