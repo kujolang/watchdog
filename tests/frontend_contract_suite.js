@@ -68,7 +68,7 @@ function createHarness() {
 
 	const elements = {};
 	const requiredIds = [
-		'globalRangePreset', 'globalRangeCustomFields', 'globalRangeStartField', 'globalRangeEndField', 'globalRangeStart', 'globalRangeEnd', 'globalRangeSummary',
+		'globalRangePreset', 'globalRangeCustomFields', 'globalRangeStartField', 'globalRangeEndField', 'globalRangeStart', 'globalRangeEnd',
 		'reqSearch', 'reqTenantFilter', 'reqProjectFilter', 'reqStatusFilter', 'reqProviderFilter', 'reqBody', 'reqEmpty',
 		'tcSearch', 'tcStatusFilter', 'tcBody', 'tcEmpty',
 		'traceContainer', 'errorGrid', 'sessBody', 'sessEmpty', 'insightsContainer',
@@ -131,7 +131,6 @@ function testRequestsFiltersSortingAndEscaping() {
 
 	context.state.rangePreset = 'all';
 	context.initializeRangeFilter();
-	assert.strictEqual(elements.globalRangeSummary.textContent, 'All time');
 	assert.strictEqual(elements.globalRangeCustomFields.classList.contains('hidden'), true, 'preset mode should keep custom range fields hidden');
 
 	context.state.rangePreset = 'custom';
@@ -151,6 +150,7 @@ function testRequestsFiltersSortingAndEscaping() {
 			total_tokens: 9,
 			cost_usd: 0.01,
 			prompt_summary: '<b>unsafe prompt</b>',
+			metadata_json: '{"prompt":"hello","temperature":0.2}',
 			created_at: '2000',
 		},
 		{
@@ -180,6 +180,12 @@ function testRequestsFiltersSortingAndEscaping() {
 	assert.strictEqual(elements.detailTitle.textContent, 'Request details');
 	assert.ok(elements.detailBody.children.length > 0, 'request details should include all record fields');
 	assert.strictEqual(elements.detailBody.children[0].children.length, 2, 'detail fields should contain a label and value');
+	const jsonField = elements.detailBody.children.find(field => field.children[0].textContent === 'metadata json');
+	assert.ok(jsonField.children[1].children[0].classList.contains('detail-json'), 'structured detail values should use the JSON viewer');
+	assert.ok(jsonField.children[1].children[0].innerHTML.includes('json-string'), 'JSON viewer should apply syntax classes');
+	const actionList = context.buildActionList([{ label: 'Open request #934', run() {} }]);
+	assert.strictEqual(actionList.children[0].textContent, '↗', 'related actions should render as compact icons');
+	assert.strictEqual(actionList.children[0].title, 'Open request #934', 'icon actions should retain a descriptive tooltip');
 	context.closeRecordDetails();
 	assert.strictEqual(elements.detailDialog.open, false, 'request details dialog should close');
 	assert.ok(elements.reqBody.innerHTML.includes('&lt;img src=x onerror=1&gt;'), 'session id should be escaped');
