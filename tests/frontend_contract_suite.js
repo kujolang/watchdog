@@ -68,7 +68,7 @@ function createHarness() {
 
 	const elements = {};
 	const requiredIds = [
-		'globalRangePreset', 'globalRangeStartField', 'globalRangeEndField', 'globalRangeStart', 'globalRangeEnd', 'globalRangeSummary',
+		'globalRangePreset', 'globalRangeCustomFields', 'globalRangeStartField', 'globalRangeEndField', 'globalRangeStart', 'globalRangeEnd', 'globalRangeSummary',
 		'reqSearch', 'reqTenantFilter', 'reqProjectFilter', 'reqStatusFilter', 'reqProviderFilter', 'reqBody', 'reqEmpty',
 		'tcSearch', 'tcStatusFilter', 'tcBody', 'tcEmpty',
 		'traceContainer', 'errorGrid', 'sessBody', 'sessEmpty', 'insightsContainer',
@@ -132,13 +132,11 @@ function testRequestsFiltersSortingAndEscaping() {
 	context.state.rangePreset = 'all';
 	context.initializeRangeFilter();
 	assert.strictEqual(elements.globalRangeSummary.textContent, 'All time');
-	assert.strictEqual(elements.globalRangeStartField.classList.contains('hidden'), true, 'preset mode should keep custom start hidden');
-	assert.strictEqual(elements.globalRangeEndField.classList.contains('hidden'), true, 'preset mode should keep custom end hidden');
+	assert.strictEqual(elements.globalRangeCustomFields.classList.contains('hidden'), true, 'preset mode should keep custom range fields hidden');
 
 	context.state.rangePreset = 'custom';
 	context.initializeRangeFilter();
-	assert.strictEqual(elements.globalRangeStartField.classList.contains('hidden'), false, 'custom start field should be shown');
-	assert.strictEqual(elements.globalRangeEndField.classList.contains('hidden'), false, 'custom end field should be shown');
+	assert.strictEqual(elements.globalRangeCustomFields.classList.contains('hidden'), false, 'custom range fields should be shown');
 
 	context.state.requests = [
 		{
