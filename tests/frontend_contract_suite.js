@@ -34,6 +34,9 @@ function makeElement(id, classes = []) {
 			this.children.push(child);
 			return child;
 		},
+		setAttribute(name, value) {
+			this[name] = value;
+		},
 		showModal() {
 			this.open = true;
 		},
@@ -86,6 +89,17 @@ function createHarness() {
 			return 0;
 		},
 		clearInterval() {},
+		setTimeout(callback) {
+			callback();
+			return 0;
+		},
+		navigator: {
+			clipboard: {
+				async writeText(text) {
+					contextClipboard.value = text;
+				},
+			},
+		},
 		fetch: async () => ({
 			async json() {
 				return { data: [] };
@@ -119,15 +133,16 @@ function createHarness() {
 			},
 		},
 	};
+	const contextClipboard = { value: '' };
 
 	vm.createContext(context);
 	vm.runInContext(script, context, { filename: 'dashboard.inline.js' });
 
-	return { context, elements };
+	return { context, elements, contextClipboard };
 }
 
-function testRequestsFiltersSortingAndEscaping() {
-	const { context, elements } = createHarness();
+async function testRequestsFiltersSortingAndEscaping() {
+	const { context, elements, contextClipboard } = createHarness();
 	assert.strictEqual(context.pricingKindBadge('unknown', '', ''), '', 'unknown pricing provenance should not add a contradictory badge beside a cost');
 
 	context.state.rangePreset = 'all';
@@ -183,8 +198,13 @@ function testRequestsFiltersSortingAndEscaping() {
 	assert.ok(elements.detailBody.children.length > 0, 'request details should include all record fields');
 	assert.strictEqual(elements.detailBody.children[0].children.length, 2, 'detail fields should contain a label and value');
 	const jsonField = elements.detailBody.children.find(field => field.children[0].textContent === 'metadata json');
-	assert.ok(jsonField.children[1].children[0].children[0].classList.contains('detail-json'), 'structured detail values should use the JSON viewer');
-	assert.ok(jsonField.children[1].children[0].children[0].innerHTML.includes('json-string'), 'JSON viewer should apply syntax classes');
+	const jsonCodeBlock = jsonField.children[1].children[0].children[0];
+	assert.strictEqual(jsonCodeBlock.className, 'detail-code-block', 'detail values should use a copyable code block wrapper');
+	assert.ok(jsonCodeBlock.children[0].classList.contains('detail-json'), 'structured detail values should use the JSON viewer');
+	assert.ok(jsonCodeBlock.children[0].innerHTML.includes('json-string'), 'JSON viewer should apply syntax classes');
+	assert.strictEqual(jsonCodeBlock.children[1].className, 'code-copy-button', 'code blocks should include a copy button');
+	await jsonCodeBlock.children[1].onclick();
+	assert.strictEqual(contextClipboard.value, '{\n  "prompt": "hello",\n  "temperature": 0.2\n}', 'copy button should copy the unformatted code contents');
 	const actionList = context.buildActionList([{ label: 'Open request #934', run() {} }]);
 	assert.ok(actionList.children[0].innerHTML.includes('<svg'), 'field actions should render as plain Tabler icons');
 	assert.strictEqual(actionList.children[0].title, 'Open request #934', 'icon actions should retain a descriptive tooltip');
@@ -343,16 +363,14 @@ function testToolCallsErrorsSessionsAndTracesContracts() {
 	assert.ok(elements.insightsContainer.innerHTML.includes('Tool effectiveness'));
 }
 
-function run() {
-	testRequestsFiltersSortingAndEscaping();
+async function run() {
+	await testRequestsFiltersSortingAndEscaping();
 	testToolCallsErrorsSessionsAndTracesContracts();
 	console.log('frontend_contract_suite: PASS');
 }
 
-try {
-	run();
-} catch (err) {
+run().catch(err => {
 	console.error('frontend_contract_suite: FAIL');
 	console.error(err && err.stack ? err.stack : err);
 	process.exit(1);
-}
+});

@@ -802,8 +802,24 @@
   .detail-label { color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
   .detail-value { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
   .detail-inline { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
-  .detail-inline > .detail-pre { min-width: 0; flex: 0 1 auto; }
-  .detail-pre { margin: 0; color: var(--text); font: 12px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .detail-code-block { position: relative; min-width: 0; flex: 1 1 auto; }
+  .detail-pre { margin: 0; padding-right: 34px; color: var(--text); font: 12px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .code-copy-button {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border: 1px solid #c7d0e0;
+    background: #fff;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .code-copy-button:hover, .code-copy-button:focus-visible { border-color: var(--accent); color: var(--accent); background: #eef4ff; outline: none; }
+  .code-copy-button.copied { border-color: #9cdec5; color: var(--green); background: var(--green-dim); }
+  .code-copy-button svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; fill: none; stroke-linecap: round; stroke-linejoin: round; }
   .detail-json { padding: 12px 14px; border: 1px solid #dbe4f2; border-radius: 6px; background: #f7f9fc; }
   .json-key { color: #8b3a8b; }
   .json-string { color: #176b3a; }
@@ -2210,10 +2226,16 @@ function showRecordDetails(table, index) {
     } else {
       pre.textContent = formatDetailValue(value);
     }
+    const codeText = formatDetailValue(value);
+    const codeBlock = document.createElement('div');
+    codeBlock.className = 'detail-code-block';
+    codeBlock.appendChild(pre);
+    codeBlock.appendChild(buildCodeCopyButton(codeText));
+
     const fieldActions = buildReferenceActionsForField(key, value, record);
     const inline = document.createElement('div');
     inline.className = 'detail-inline';
-    inline.appendChild(pre);
+    inline.appendChild(codeBlock);
     if (fieldActions.length) {
       inline.appendChild(buildActionList(fieldActions, { showLabels: table === 'traceSpans' && typeof normalized === 'object' && normalized !== null }));
     }
@@ -2244,6 +2266,50 @@ function highlightJson(json) {
       if (boolean) return `<span class="json-boolean">${boolean}</span>`;
       return `<span class="json-null">${nullValue}</span>`;
     });
+}
+
+function buildCodeCopyButton(text) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'code-copy-button';
+  button.title = 'Copy code';
+  button.setAttribute?.('aria-label', 'Copy code');
+  button.innerHTML = tablerIcon('copy');
+  button.onclick = () => copyCodeBlock(button, text);
+  return button;
+}
+
+async function copyCodeBlock(button, text) {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(String(text));
+    } else {
+      const textarea = document.createElement('textarea');
+      textarea.value = String(text);
+      textarea.setAttribute?.('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      const copied = document.execCommand && document.execCommand('copy');
+      textarea.remove();
+      if (!copied) throw new Error('Clipboard copy unavailable');
+    }
+
+    button.classList.add('copied');
+    button.title = 'Copied';
+    button.setAttribute?.('aria-label', 'Copied');
+    button.innerHTML = tablerIcon('check');
+    setTimeout(() => {
+      button.classList.remove('copied');
+      button.title = 'Copy code';
+      button.setAttribute?.('aria-label', 'Copy code');
+      button.innerHTML = tablerIcon('copy');
+    }, 1500);
+  } catch (err) {
+    button.title = 'Copy failed';
+    button.setAttribute?.('aria-label', 'Copy failed');
+  }
 }
 
 function normalizeStructuredValue(value, depth = 0) {
@@ -2321,6 +2387,8 @@ function tablerIcon(name) {
     'external-link': '<path d="M12 6h-6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/><path d="M11 13l9-9"/><path d="M15 4h5v5"/>',
     search: '<circle cx="10" cy="10" r="7"/><path d="m21 21-6-6"/>',
     list: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
+    copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8v-2a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+    check: '<path d="m5 12 4 4 10-10"/>',
     'chevron-down': '<path d="m6 9 6 6 6-6"/>',
     'chevron-up': '<path d="m6 15 6-6 6 6"/>',
   };
