@@ -128,6 +128,7 @@ function createHarness() {
 
 function testRequestsFiltersSortingAndEscaping() {
 	const { context, elements } = createHarness();
+	assert.strictEqual(context.pricingKindBadge('unknown', '', ''), '', 'unknown pricing provenance should not add a contradictory badge beside a cost');
 
 	context.state.rangePreset = 'all';
 	context.initializeRangeFilter();
@@ -182,8 +183,8 @@ function testRequestsFiltersSortingAndEscaping() {
 	assert.ok(elements.detailBody.children.length > 0, 'request details should include all record fields');
 	assert.strictEqual(elements.detailBody.children[0].children.length, 2, 'detail fields should contain a label and value');
 	const jsonField = elements.detailBody.children.find(field => field.children[0].textContent === 'metadata json');
-	assert.ok(jsonField.children[1].children[0].classList.contains('detail-json'), 'structured detail values should use the JSON viewer');
-	assert.ok(jsonField.children[1].children[0].innerHTML.includes('json-string'), 'JSON viewer should apply syntax classes');
+	assert.ok(jsonField.children[1].children[0].children[0].classList.contains('detail-json'), 'structured detail values should use the JSON viewer');
+	assert.ok(jsonField.children[1].children[0].children[0].innerHTML.includes('json-string'), 'JSON viewer should apply syntax classes');
 	const actionList = context.buildActionList([{ label: 'Open request #934', run() {} }]);
 	assert.ok(actionList.children[0].innerHTML.includes('<svg'), 'field actions should render as plain Tabler icons');
 	assert.strictEqual(actionList.children[0].title, 'Open request #934', 'icon actions should retain a descriptive tooltip');
@@ -265,6 +266,7 @@ function testToolCallsErrorsSessionsAndTracesContracts() {
 	assert.ok(!elements.tcBody.innerHTML.includes('<b>tool</b>'));
 	assert.ok(elements.tcBody.innerHTML.includes("showRecordDetails('toolCalls', 0)"), 'tool call rows should open full details');
 	assert.ok(elements.tcBody.innerHTML.includes('table-icon-action'), 'tool call identifiers should append drilldown icons');
+	assert.ok(!elements.tcBody.innerHTML.includes('Find tool'), 'tool table should not repeat a tool search icon beside the tool name');
 
 	context.state.toolCalls = [];
 	context.renderToolCallsTable();
@@ -312,13 +314,16 @@ function testToolCallsErrorsSessionsAndTracesContracts() {
 	assert.ok(elements.traceContainer.innerHTML.includes('&lt;img src=x onerror=trace&gt;'));
 	assert.ok(!elements.traceContainer.innerHTML.includes('<img src=x onerror=trace>'));
 
-	context.state.traces = [{ trace_id: 'trace-1', session_id: 'session-1', source_app: 'independent-tool', name: 'workflow', status: 'success', started_at_ms: 1000, duration_ms: 200, attributes_json: '{}' }];
+	context.state.traces = [{ trace_id: 'trace-1', session_id: 'session-1', source_app: 'independent-tool', name: 'interactive_chat', status: 'success', started_at_ms: 1000, duration_ms: 200, attributes_json: '{}' }];
 	context.state.traceSpans = [{ trace_id: 'trace-1', span_id: 'span-1', parent_span_id: '', span_kind: 'tool\" onclick=alert(1)', name: '<tool-span>', status: 'success', started_at_ms: 1010, duration_ms: 100, attributes_json: '{}' }];
 	context.state.traceEvents = [{ trace_id: 'trace-1', span_id: '', event_id: 'persist-1', event_name: 'persistence_saved', sequence: 99, occurred_at_ms: 1200, attributes_json: '{}' }];
 	elements.traceKindFilter.value = 'persistence';
 	context.renderAgentTraces();
 	assert.ok(elements.traceContainer.innerHTML.includes('trace-waterfall'), 'granular traces should render as a waterfall');
 	assert.ok(elements.traceContainer.innerHTML.includes('Persisted ✓'), 'persistence events should remain filterable and visible');
+	assert.ok(elements.traceContainer.innerHTML.includes('interactive_chat'), 'trace name should remain visible');
+	assert.ok(!elements.traceContainer.innerHTML.includes('◫ interactive_chat'), 'trace name should not have a decorative prefix');
+	assert.ok(elements.traceContainer.innerHTML.includes('m6 9 6 6 6-6'), 'trace disclosure should use a Tabler chevron');
 	assert.ok(elements.traceContainer.innerHTML.includes('&lt;tool-span&gt;'));
 	assert.ok(!elements.traceContainer.innerHTML.includes('span-bar tool&quot;'), 'span kind must not be injected into a CSS class');
 
