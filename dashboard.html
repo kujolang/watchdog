@@ -649,17 +649,28 @@
 
   main { width: min(1500px, 100%); margin: 0 auto; padding: 34px 32px 48px; gap: 22px; }
   .page-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
-  .heading-controls { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
+  .heading-controls {
+    display: flex;
+    align-items: flex-end;
+    gap: 14px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    width: calc(50% - 6px);
+    min-width: 420px;
+  }
   .range-filter {
     display: flex;
     align-items: flex-end;
     gap: 10px;
     flex-wrap: wrap;
+    width: 100%;
     padding: 12px 14px;
     border: 1px solid var(--border);
     background: #fff;
   }
-  .range-field { display: flex; flex-direction: column; gap: 6px; min-width: 150px; }
+  .range-field { display: flex; flex: 1 1 calc(50% - 5px); flex-direction: column; gap: 6px; min-width: 150px; }
+  .range-field-range { flex-basis: 100%; min-width: 100%; }
+  .range-custom-fields { display: flex; gap: 10px; width: 100%; }
   .range-label {
     color: var(--text-muted);
     font-size: 11px;
@@ -832,9 +843,12 @@
     .last-updated, .header-export { display: none; }
     main { padding: 26px 18px 36px; }
     .page-heading { align-items: flex-start; flex-direction: column; }
-    .heading-controls { width: 100%; justify-content: space-between; }
+    .heading-controls { width: 100%; min-width: 0; justify-content: space-between; }
     .range-filter { width: 100%; }
     .range-field { min-width: calc(50% - 8px); flex: 1 1 200px; }
+    .range-field-range { min-width: 100%; }
+    .range-custom-fields { flex-direction: column; }
+    .range-custom-fields .range-field { min-width: 100%; }
     .stats-grid { grid-template-columns: 1fr 1fr; }
     .auth-form { flex-direction: column; }
     .detail-field { grid-template-columns: 1fr; gap: 4px; }
@@ -898,7 +912,7 @@
     </div>
     <div class="heading-controls">
       <div class="range-filter">
-        <div class="range-field">
+        <div class="range-field range-field-range">
           <label class="range-label" for="globalRangePreset">Range</label>
           <select class="range-select" id="globalRangePreset" onchange="handleRangePresetChange()">
             <option value="24h">Last 24 hours</option>
@@ -910,13 +924,15 @@
             <option value="custom">Custom</option>
           </select>
         </div>
-        <div class="range-field hidden" id="globalRangeStartField">
-          <label class="range-label" for="globalRangeStart">Start</label>
-          <input class="range-input" id="globalRangeStart" type="datetime-local" onchange="handleCustomRangeChange()">
-        </div>
-        <div class="range-field hidden" id="globalRangeEndField">
-          <label class="range-label" for="globalRangeEnd">End</label>
-          <input class="range-input" id="globalRangeEnd" type="datetime-local" onchange="handleCustomRangeChange()">
+        <div class="range-custom-fields hidden" id="globalRangeCustomFields">
+          <div class="range-field" id="globalRangeStartField">
+            <label class="range-label" for="globalRangeStart">Start</label>
+            <input class="range-input" id="globalRangeStart" type="datetime-local" onchange="handleCustomRangeChange()">
+          </div>
+          <div class="range-field" id="globalRangeEndField">
+            <label class="range-label" for="globalRangeEnd">End</label>
+            <input class="range-input" id="globalRangeEnd" type="datetime-local" onchange="handleCustomRangeChange()">
+          </div>
         </div>
         <div class="range-summary" id="globalRangeSummary">Last 30 days</div>
       </div>
@@ -941,7 +957,7 @@
   <!-- Charts row -->
   <div class="charts-grid">
     <div class="chart-card wide">
-      <div class="chart-title">Requests over time (hourly)</div>
+      <div class="chart-title">Requests over time</div>
       <div class="chart-wrap"><canvas id="chartRequests"></canvas></div>
     </div>
     <div class="chart-card">
@@ -1315,8 +1331,7 @@ function handleRangePresetChange() {
   const preset = document.getElementById('globalRangePreset')?.value || '30d';
   state.rangePreset = preset;
   const custom = preset === 'custom';
-  document.getElementById('globalRangeStartField')?.classList[custom ? 'remove' : 'add']('hidden');
-  document.getElementById('globalRangeEndField')?.classList[custom ? 'remove' : 'add']('hidden');
+  document.getElementById('globalRangeCustomFields')?.classList[custom ? 'remove' : 'add']('hidden');
   applyPresetDefaults(preset);
   updateRangeSummary();
   state.rangeVersion += 1;
@@ -1333,8 +1348,7 @@ function initializeRangeFilter() {
   const presetEl = document.getElementById('globalRangePreset');
   if (presetEl) presetEl.value = state.rangePreset;
   const custom = state.rangePreset === 'custom';
-  document.getElementById('globalRangeStartField')?.classList[custom ? 'remove' : 'add']('hidden');
-  document.getElementById('globalRangeEndField')?.classList[custom ? 'remove' : 'add']('hidden');
+  document.getElementById('globalRangeCustomFields')?.classList[custom ? 'remove' : 'add']('hidden');
   applyPresetDefaults(state.rangePreset);
   updateRangeSummary();
 }
@@ -1983,7 +1997,7 @@ function renderInsights() {
   }).join('') : '<tr><td colspan="8">No tool calls available.</td></tr>';
   const waterfallMarkup = waterfallRows.length ? waterfallRows.map(row => `<tr><td>${safeText(row.span_kind || 'internal')}</td><td>${fmtNum(row.span_count)}</td><td>${fmtLatency(row.total_duration_ms)}</td><td>${fmtLatency(row.avg_duration_ms)}</td><td>${fmtLatency(row.max_duration_ms)}</td></tr>`).join('') : '<tr><td colspan="5">No trace spans available.</td></tr>';
   const sequenceMarkup = sequenceRows.length ? sequenceRows.slice(0, 12).map(row => `<tr><td>${safeText(row.from_step)}</td><td>${safeText(row.to_step)}</td><td>${fmtNum(row.transition_count)}</td><td>${fmtNum(row.successful_session_count)}</td><td>${fmtNum(row.failed_session_count)}</td></tr>`).join('') : '<tr><td colspan="5">No sequential agent steps available.</td></tr>';
-  const trendMarkup = trendRows.length ? trendRows.map(row => `<tr><td>h+${safeText(row.hour_bucket)}</td><td>${fmtNum(row.trace_count)}</td><td>${fmtNum(row.avg_input_tokens)}</td><td>${fmtNum(row.max_input_tokens)}</td><td>${fmtNum(row.avg_cached_input_tokens)}</td></tr>`).join('') : '<tr><td colspan="5">No trace context data available.</td></tr>';
+  const trendMarkup = trendRows.length ? trendRows.map(row => `<tr><td>${fmtHourBucketLabel(row.hour_bucket)}</td><td>${fmtNum(row.trace_count)}</td><td>${fmtNum(row.avg_input_tokens)}</td><td>${fmtNum(row.max_input_tokens)}</td><td>${fmtNum(row.avg_cached_input_tokens)}</td></tr>`).join('') : '<tr><td colspan="5">No trace context data available.</td></tr>';
   const growthMarkup = growthRows.length ? growthRows.map(row => `<tr><td>${safeText(truncate(row.session_id, 28))}</td><td>${fmtNum(row.trace_count)}</td><td>${fmtNum(row.first_input_tokens)}</td><td>${fmtNum(row.max_input_tokens)}</td><td>${fmtNum(row.input_growth_tokens)}</td></tr>`).join('') : '<tr><td colspan="5">No per-session context growth data available.</td></tr>';
 
   container.innerHTML = `
@@ -2473,6 +2487,11 @@ function fmtChartBucketLabel(ms, range = getActiveRange(), bucketSizeMs = 0) {
     day: '2-digit',
     year: '2-digit',
   });
+}
+function fmtHourBucketLabel(hourBucket) {
+  const hourMs = Number(hourBucket || 0) * 60 * 60 * 1000;
+  if (!hourMs) return '—';
+  return fmtChartBucketLabel(hourMs, { preset: '24h' }, 60 * 60 * 1000);
 }
 function fmtDateTimeShort(ms) {
   if (!ms) return '—';
