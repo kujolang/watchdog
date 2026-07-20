@@ -29,7 +29,8 @@ DEFAULT_PROXY_AUTHZ_MODE := "off"
 DEFAULT_DEPLOYMENT_PROFILE := "local"
 DEFAULT_ALLOW_INSECURE_STARTUP := "false"
 DEFAULT_PROXY_AUTHZ_ALLOWLIST := "/healthz,/readyz"
-DEFAULT_CHARTJS_LOCAL_PATH := "vendor/chart.umd.min.js"
+DEFAULT_DITHER_CHARTS_JS_PATH := "vendor/dither-charts.js"
+DEFAULT_DITHER_CHARTS_CSS_PATH := "vendor/dither-charts.css"
 DEFAULT_PROXY_TIMEOUT_SECS := 120
 DEFAULT_MAX_PROXY_BODY_BYTES := 1048576
 DEFAULT_MAX_PARSE_BODY_BYTES := 524288
@@ -1290,7 +1291,8 @@ PROXY_AUTHZ_MODE := normalize_proxy_authz_mode(env_or_many(["WDG_PROXY_AUTHZ_MOD
 PROXY_AUTHZ_TOKEN := trim(env_or_many(["WDG_PROXY_AUTHZ_TOKEN"], ""))
 DEPLOYMENT_PROFILE := normalize_deployment_profile(env_or_many(["WDG_DEPLOYMENT_PROFILE"], DEFAULT_DEPLOYMENT_PROFILE))
 ALLOW_INSECURE_STARTUP := parse_bool_value(env_or_many(["WDG_ALLOW_INSECURE_STARTUP"], DEFAULT_ALLOW_INSECURE_STARTUP), false)
-DASHBOARD_CHARTJS_LOCAL_PATH := env_or_many(["WDG_CHARTJS_LOCAL_PATH"], DEFAULT_CHARTJS_LOCAL_PATH)
+DASHBOARD_DITHER_CHARTS_JS_PATH := env_or_many(["WDG_DITHER_CHARTS_JS_PATH"], DEFAULT_DITHER_CHARTS_JS_PATH)
+DASHBOARD_DITHER_CHARTS_CSS_PATH := env_or_many(["WDG_DITHER_CHARTS_CSS_PATH"], DEFAULT_DITHER_CHARTS_CSS_PATH)
 PROXY_AUTHZ_ALLOWLIST := parse_csv_terms(env_or_many(["WDG_PROXY_AUTHZ_ALLOWLIST"], DEFAULT_PROXY_AUTHZ_ALLOWLIST))
 PROXY_TIMEOUT_SECS := parse_int_env_many(["WDG_PROXY_TIMEOUT_SECS"], DEFAULT_PROXY_TIMEOUT_SECS)
 MAX_PROXY_BODY_BYTES := parse_int_env_many(["WDG_MAX_PROXY_BODY_BYTES"], DEFAULT_MAX_PROXY_BODY_BYTES)
@@ -1331,7 +1333,8 @@ kv("Proxy config", PROXY_CONFIG_PATH)
 kv("API auth mode", API_AUTH_MODE)
 kv("Proxy auth mode", PROXY_AUTHZ_MODE)
 kv("Deployment profile", DEPLOYMENT_PROFILE)
-kv("Dashboard local Chart.js path", DASHBOARD_CHARTJS_LOCAL_PATH)
+kv("Dashboard Dither Kit JavaScript", DASHBOARD_DITHER_CHARTS_JS_PATH)
+kv("Dashboard Dither Kit CSS", DASHBOARD_DITHER_CHARTS_CSS_PATH)
 kv("Proxy timeout seconds", PROXY_TIMEOUT_SECS)
 kv("Max proxy body bytes", MAX_PROXY_BODY_BYTES)
 kv("Max parse body bytes", MAX_PARSE_BODY_BYTES)
@@ -2485,16 +2488,29 @@ server := server.route("GET", "/", func(req) {
 	return apply_default_security_headers(html_response(200, html))
 })
 
-server := server.route("GET", "/assets/vendor/chart.umd.min.js", func(req) {
-	if !file_exists(DASHBOARD_CHARTJS_LOCAL_PATH) {
-		response := http_response(404, "Local Chart.js asset not found at configured path.")
+server := server.route("GET", "/assets/vendor/dither-charts.js", func(req) {
+	if !file_exists(DASHBOARD_DITHER_CHARTS_JS_PATH) {
+		response := http_response(404, "Dither Kit chart bundle not found at configured path.")
 		response := set_header(response, "Content-Type", "text/plain; charset=utf-8")
 		return apply_default_security_headers(response)
 	}
 
-	asset := read_file(DASHBOARD_CHARTJS_LOCAL_PATH)
+	asset := read_file(DASHBOARD_DITHER_CHARTS_JS_PATH)
 	response := http_response(200, asset)
 	response := set_header(response, "Content-Type", "application/javascript; charset=utf-8")
+	return apply_default_security_headers(response)
+})
+
+server := server.route("GET", "/assets/vendor/dither-charts.css", func(req) {
+	if !file_exists(DASHBOARD_DITHER_CHARTS_CSS_PATH) {
+		response := http_response(404, "Dither Kit chart stylesheet not found at configured path.")
+		response := set_header(response, "Content-Type", "text/plain; charset=utf-8")
+		return apply_default_security_headers(response)
+	}
+
+	asset := read_file(DASHBOARD_DITHER_CHARTS_CSS_PATH)
+	response := http_response(200, asset)
+	response := set_header(response, "Content-Type", "text/css; charset=utf-8")
 	return apply_default_security_headers(response)
 })
 

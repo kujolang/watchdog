@@ -9,6 +9,7 @@ watchdog_proxy_config.json
 # Temporary workspace outputs
 tmp/*
 !tmp/.gitkeep
+/node_modules/
 
 data/*
 !data/.gitkeep

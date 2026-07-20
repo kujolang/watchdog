@@ -5,15 +5,8 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Watchdog</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script>
-  if (typeof window.Chart === 'undefined') {
-    document.write('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" crossorigin="anonymous" referrerpolicy="no-referrer"><\\/script>');
-  }
-  if (typeof window.Chart === 'undefined') {
-    document.write('<script src="/assets/vendor/chart.umd.min.js"><\\/script>');
-  }
-</script>
+<link rel="stylesheet" href="/assets/vendor/dither-charts.css" />
+<script defer src="/assets/vendor/dither-charts.js"></script>
 <style>
   /* ── Reset & tokens ─────────────────────────────────────────────── */
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -996,19 +989,19 @@
   <div class="charts-grid">
     <div class="chart-card wide">
       <div class="chart-title">Requests over time</div>
-      <div class="chart-wrap"><canvas id="chartRequests"></canvas></div>
+      <div class="chart-wrap"><div id="chartRequests"></div></div>
     </div>
     <div class="chart-card">
       <div class="chart-title">Latency distribution (ms)</div>
-      <div class="chart-wrap"><canvas id="chartLatency"></canvas></div>
+      <div class="chart-wrap"><div id="chartLatency"></div></div>
     </div>
     <div class="chart-card">
       <div class="chart-title">Status breakdown</div>
-      <div class="chart-wrap" style="height:200px"><canvas id="chartStatus"></canvas></div>
+      <div class="chart-wrap" style="height:200px"><div id="chartStatus"></div></div>
     </div>
     <div class="chart-card">
       <div class="chart-title">Tool calls by type</div>
-      <div class="chart-wrap"><canvas id="chartTools"></canvas></div>
+      <div class="chart-wrap"><div id="chartTools"></div></div>
     </div>
   </div>
 
@@ -1236,10 +1229,6 @@ const state = {
   hasLoaded:  false,
 };
 
-let chartRequests = null;
-let chartLatency  = null;
-let chartStatus   = null;
-let chartTools    = null;
 let apiToken = readStoredToken();
 let refreshInFlight = false;
 let refreshQueued = false;
@@ -1523,14 +1512,6 @@ function renderStats(s, range = getActiveRange()) {
 /* ════════════════════════════════════════════════════════════════════
    Charts
    ════════════════════════════════════════════════════════════════════ */
-const CHART_DEFAULTS = {
-  plugins: { legend: { labels: { color: '#6b7796', font: { size: 12 } } } },
-  scales: {
-    x: { ticks: { color: '#6b7796' }, grid: { color: '#e8ecf3' } },
-    y: { ticks: { color: '#6b7796' }, grid: { color: '#e8ecf3' } },
-  },
-};
-
 function chartBucketSizeMsForSpan(spanMs) {
   if (spanMs <= 48 * 60 * 60 * 1000) return 60 * 60 * 1000;
   if (spanMs <= 45 * 24 * 60 * 60 * 1000) return 24 * 60 * 60 * 1000;
@@ -1567,85 +1548,30 @@ function normalizeRequestSeries(reqData, range) {
 }
 
 function renderCharts(reqData, latData, statusData, toolData, range = getActiveRange()) {
-  // ── Requests over time ──
-  if (chartRequests) chartRequests.destroy();
   const requestSeries = normalizeRequestSeries(reqData, range);
-  const rLabels = requestSeries.map(r => fmtChartBucketLabel(r.bucket_start_ms, range, r.bucket_size_ms));
-  const rTotals = requestSeries.map(r => r.total);
-  const rErrors = requestSeries.map(r => r.errors);
-  chartRequests = new Chart(document.getElementById('chartRequests'), {
-    type: 'line',
-    data: {
-      labels: rLabels,
-      datasets: [
-        { label: 'Requests', data: rTotals, borderColor: '#0069ff', backgroundColor: '#0069ff18',
-          fill: true, tension: .35, pointRadius: 3 },
-        { label: 'Errors',   data: rErrors, borderColor: '#c52828', backgroundColor: '#c5282818',
-          fill: true, tension: .35, pointRadius: 3 },
-      ],
-    },
-    options: { ...CHART_DEFAULTS, responsive: true, maintainAspectRatio: false },
-  });
-
-  // ── Latency histogram ──
-  if (chartLatency) chartLatency.destroy();
   const latBuckets = ['<200ms','200-500ms','500ms-1s','1-2s','2-3s','>3s'];
   const latValues = latData ? [
     latData.lt200, latData.lt500, latData.lt1000,
     latData.lt2000, latData.lt3000, latData.gt3000,
   ] : [0,0,0,0,0,0];
-  chartLatency = new Chart(document.getElementById('chartLatency'), {
-    type: 'bar',
-    data: {
-      labels: latBuckets,
-      datasets: [{ label: 'Requests', data: latValues,
-        backgroundColor: ['#00a36c','#0069ff','#3388ff','#f0a32f','#d87b16','#c52828'],
-        borderRadius: 0 }],
-    },
-    options: { ...CHART_DEFAULTS, responsive: true, maintainAspectRatio: false,
-      plugins: { ...CHART_DEFAULTS.plugins, legend: { display: false } } },
-  });
-
-  // ── Status donut ──
-  if (chartStatus) chartStatus.destroy();
   const statuses = (statusData || []);
-  chartStatus = new Chart(document.getElementById('chartStatus'), {
-    type: 'doughnut',
-    data: {
-      labels: statuses.map(s => s.status),
-      datasets: [{ data: statuses.map(s => s.count),
-        backgroundColor: statuses.map(s => s.status === 'success' ? '#00a36c' : '#c52828'),
-        borderColor: '#ffffff', borderWidth: 3 }],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: 'right', labels: { color: '#6b7796', boxWidth: 12 } } },
-      cutout: '65%',
-    },
-  });
+  const toolEntries = (toolData || [])
+    .map(tool => [String(tool.tool_name || 'unknown'), 1])
+    .sort((a, b) => b[1] - a[1]);
 
-  // ── Tool calls by type ──
-  if (chartTools) chartTools.destroy();
-  const toolCounts = {};
-  (toolData || []).forEach(tool => {
-    const name = String(tool.tool_name || 'unknown');
-    toolCounts[name] = (toolCounts[name] || 0) + 1;
-  });
-  const toolEntries = Object.entries(toolCounts).sort((a, b) => b[1] - a[1]);
-  chartTools = new Chart(document.getElementById('chartTools'), {
-    type: 'scatter',
-    data: {
-      datasets: [{ label: 'Calls', data: toolEntries.map(([name, count], index) => ({ x: index, y: count, toolName: name })),
-        borderColor: '#7c3aed', backgroundColor: '#7c3aed', pointRadius: 7, pointHoverRadius: 9 }],
-    },
-    options: { ...CHART_DEFAULTS, responsive: true, maintainAspectRatio: false,
-      scales: {
-        x: { min: -0.5, max: Math.max(toolEntries.length - 0.5, 0.5), ticks: { color: '#6b7796', stepSize: 1,
-          callback: value => toolEntries[value] ? toolEntries[value][0] : '' }, grid: { color: '#e8ecf3' } },
-        y: { beginAtZero: true, ticks: { color: '#6b7796', precision: 0 }, grid: { color: '#e8ecf3' } },
-      },
-      plugins: { ...CHART_DEFAULTS.plugins, legend: { display: false },
-        tooltip: { callbacks: { label: context => `${context.raw.toolName}: ${context.raw.y} calls` } } } },
+  if (!window.WatchdogDitherCharts || typeof window.WatchdogDitherCharts.renderCharts !== 'function') {
+    throw new Error('Dither Kit chart bundle did not load');
+  }
+
+  window.WatchdogDitherCharts.renderCharts({
+    requests: requestSeries.map(row => ({
+      label: fmtChartBucketLabel(row.bucket_start_ms, range, row.bucket_size_ms),
+      requests: Number(row.total || 0),
+      errors: Number(row.errors || 0),
+    })),
+    latency: latBuckets.map((label, index) => ({ label, requests: Number(latValues[index] || 0) })),
+    statuses: statuses.map(row => ({ name: String(row.status || 'unknown'), value: Number(row.count || 0) })),
+    tools: toolEntries.map(([label, calls]) => ({ label, calls })),
   });
 }
 

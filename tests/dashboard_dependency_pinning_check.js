@@ -17,26 +17,8 @@ function assertNotContains(snippet, message) {
 }
 
 assertNotContains('fonts.googleapis.com', 'dashboard should not fetch remote font stylesheets from Google Fonts');
-
-assertContains(
-	'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js',
-	'dashboard should pin the primary Chart.js CDN URL to an explicit version'
-);
-assertContains(
-	'integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD"',
-	'primary Chart.js asset should use strict SRI pinning'
-);
-assertContains('crossorigin="anonymous"', 'Chart.js asset loads should specify crossorigin=anonymous for SRI enforcement');
-
-assertContains(
-	'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js',
-	'dashboard should define a version-pinned fallback Chart.js URL'
-);
-assertContains(
-	'integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"',
-	'fallback Chart.js asset should use strict SRI pinning'
-);
-assertContains("if (typeof window.Chart === 'undefined')", 'dashboard should only load fallback asset when the primary CDN fails');
-assertContains('/assets/vendor/chart.umd.min.js', 'dashboard should include a local vendored Chart.js fallback path for restricted-network deployments');
+assertNotContains('Chart.js', 'dashboard should no longer load Chart.js');
+assertContains('/assets/vendor/dither-charts.js', 'dashboard should load the local Dither Kit JavaScript bundle');
+assertContains('/assets/vendor/dither-charts.css', 'dashboard should load the local Dither Kit stylesheet');
 
 console.log('dashboard_dependency_pinning_check: PASS');

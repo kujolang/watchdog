@@ -152,7 +152,8 @@ Environment variables:
 | `WDG_DEPLOYMENT_PROFILE` | `local` | `local` or `production` startup policy profile |
 | `WDG_ALLOW_INSECURE_STARTUP` | `false` | `true` allows break-glass startup when production policy checks fail |
 | `WDG_PROXY_AUTHZ_ALLOWLIST` | `/healthz,/readyz` | Comma-separated exact-path bypass list for proxy auth checks |
-| `WDG_CHARTJS_LOCAL_PATH` | `vendor/chart.umd.min.js` | Optional local vendored Chart.js path served at `/assets/vendor/chart.umd.min.js` |
+| `WDG_DITHER_CHARTS_JS_PATH` | `vendor/dither-charts.js` | Built Dither Kit dashboard chart bundle |
+| `WDG_DITHER_CHARTS_CSS_PATH` | `vendor/dither-charts.css` | Built Dither Kit dashboard chart styles |
 | `WDG_PROXY_TIMEOUT_SECS` | `120` | Upstream proxy timeout in seconds |
 | `WDG_MAX_PROXY_BODY_BYTES` | `1048576` | Reject proxy request bodies larger than this many bytes |
 | `WDG_MAX_PARSE_BODY_BYTES` | `524288` | Reject JSON request parsing over this many bytes |
@@ -326,17 +327,15 @@ These headers are applied to dashboard, API, and proxy responses.
 ## Dashboard asset policy
 
 - Remote font stylesheets are not used by default; dashboard typography relies on local/system fonts.
-- Chart.js is version-pinned to `4.4.1` with strict Subresource Integrity (SRI).
-- A version-pinned SRI fallback URL is included so dashboards still load charts when the primary CDN is unavailable.
-- A local fallback route (`/assets/vendor/chart.umd.min.js`) is included for restricted-network deployments that vendor Chart.js locally.
+- Dashboard charts use Dither Kit components installed in source mode with `npx @dither-kit/cli`.
+- The generated `dither-kit.json` lockfile records the installed component versions and hashes.
+- Built JavaScript and CSS are served locally from `/assets/vendor/dither-charts.js` and `/assets/vendor/dither-charts.css`; charts do not require a runtime CDN.
 
-Optional local-vendor setup:
+To update or rebuild the chart assets:
 
 ```bash
-mkdir -p vendor
-# Place a vetted chart.umd.min.js artifact at:
-# vendor/chart.umd.min.js
-export WDG_CHARTJS_LOCAL_PATH=vendor/chart.umd.min.js
+npx @dither-kit/cli update
+npm run build:charts
 ```
 
 ## Telemetry redaction policy

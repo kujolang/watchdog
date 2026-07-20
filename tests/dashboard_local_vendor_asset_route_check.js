@@ -10,10 +10,15 @@ function assertContains(snippet, message) {
 	}
 }
 
-assertContains('DEFAULT_CHARTJS_LOCAL_PATH := "vendor/chart.umd.min.js"', 'server should define a default local Chart.js vendor path');
-assertContains('DASHBOARD_CHARTJS_LOCAL_PATH := env_or_many(["WDG_CHARTJS_LOCAL_PATH"], DEFAULT_CHARTJS_LOCAL_PATH)', 'server should allow local Chart.js path override via env');
-assertContains('server := server.route("GET", "/assets/vendor/chart.umd.min.js"', 'server should expose local Chart.js vendor route');
-assertContains('file_exists(DASHBOARD_CHARTJS_LOCAL_PATH)', 'local Chart.js route should check file existence before serving');
-assertContains('"application/javascript; charset=utf-8"', 'local Chart.js route should return JavaScript content-type');
+assertContains('DEFAULT_DITHER_CHARTS_JS_PATH := "vendor/dither-charts.js"', 'server should define the default Dither Kit JavaScript path');
+assertContains('DEFAULT_DITHER_CHARTS_CSS_PATH := "vendor/dither-charts.css"', 'server should define the default Dither Kit stylesheet path');
+assertContains('DASHBOARD_DITHER_CHARTS_JS_PATH := env_or_many(["WDG_DITHER_CHARTS_JS_PATH"]', 'server should allow the Dither Kit JavaScript path to be overridden');
+assertContains('DASHBOARD_DITHER_CHARTS_CSS_PATH := env_or_many(["WDG_DITHER_CHARTS_CSS_PATH"]', 'server should allow the Dither Kit stylesheet path to be overridden');
+assertContains('server := server.route("GET", "/assets/vendor/dither-charts.js"', 'server should expose the Dither Kit JavaScript route');
+assertContains('server := server.route("GET", "/assets/vendor/dither-charts.css"', 'server should expose the Dither Kit stylesheet route');
+assertContains('file_exists(DASHBOARD_DITHER_CHARTS_JS_PATH)', 'Dither Kit JavaScript route should check file existence');
+assertContains('file_exists(DASHBOARD_DITHER_CHARTS_CSS_PATH)', 'Dither Kit stylesheet route should check file existence');
+assertContains('"application/javascript; charset=utf-8"', 'Dither Kit JavaScript route should return JavaScript content-type');
+assertContains('"text/css; charset=utf-8"', 'Dither Kit stylesheet route should return CSS content-type');
 
 console.log('dashboard_local_vendor_asset_route_check: PASS');
