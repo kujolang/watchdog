@@ -2226,7 +2226,8 @@ function showRecordDetails(table, index) {
     const pre = document.createElement('pre');
     pre.className = 'detail-pre';
     const normalized = normalizeStructuredValue(value);
-    if (typeof normalized === 'object' && normalized !== null) {
+    const isStructuredJson = typeof normalized === 'object' && normalized !== null;
+    if (isStructuredJson) {
       pre.classList.add('detail-json');
       pre.innerHTML = highlightJson(JSON.stringify(normalized, null, 2));
     } else {
@@ -2236,7 +2237,9 @@ function showRecordDetails(table, index) {
     const codeBlock = document.createElement('div');
     codeBlock.className = 'detail-code-block';
     codeBlock.appendChild(pre);
-    codeBlock.appendChild(buildCodeCopyButton(codeText));
+    if (isStructuredJson) {
+      codeBlock.appendChild(buildCodeCopyButton(codeText));
+    }
 
     const fieldActions = buildReferenceActionsForField(key, value, record);
     const inline = document.createElement('div');

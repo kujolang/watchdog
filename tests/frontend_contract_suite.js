@@ -208,6 +208,9 @@ async function testRequestsFiltersSortingAndEscaping() {
 	assert.strictEqual(jsonCodeBlock.children[1].className, 'code-copy-button', 'code blocks should include a copy button');
 	await jsonCodeBlock.children[1].onclick();
 	assert.strictEqual(contextClipboard.value, '{\n  "prompt": "hello",\n  "temperature": 0.2\n}', 'copy button should copy the unformatted code contents');
+	const scalarField = elements.detailBody.children.find(field => field.children[0].textContent === 'provider');
+	const scalarCodeBlock = scalarField.children[1].children[0].children[0];
+	assert.strictEqual(scalarCodeBlock.children.length, 1, 'scalar detail values should not render copy buttons');
 	const actionList = context.buildActionList([{ label: 'Open request #934', run() {} }]);
 	assert.ok(actionList.children[0].innerHTML.includes('<svg'), 'field actions should render as plain Tabler icons');
 	assert.strictEqual(actionList.children[0].title, 'Open request #934', 'icon actions should retain a descriptive tooltip');
