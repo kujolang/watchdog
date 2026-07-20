@@ -731,8 +731,19 @@
     border-radius: var(--radius-lg);
     box-shadow: 0 1px 2px rgba(20, 45, 90, .03);
   }
-  .stat-card { min-height: 118px; padding: 18px; border-top: 3px solid #d9e1ef; }
-  .stat-card:hover { border-color: #91baff; border-top-color: var(--accent); box-shadow: var(--shadow); }
+  .stat-card {
+    --stat-accent: var(--accent);
+    min-height: 118px;
+    padding: 18px;
+    border-top: 3px solid #d9e1ef;
+  }
+  .stat-card.accent { --stat-accent: var(--accent); }
+  .stat-card.green { --stat-accent: var(--green); }
+  .stat-card.red { --stat-accent: var(--red); }
+  .stat-card.yellow { --stat-accent: var(--yellow); }
+  .stat-card.purple { --stat-accent: var(--purple); }
+  .stat-card.orange { --stat-accent: var(--orange); }
+  .stat-card:hover { border-color: #91baff; border-top-color: var(--stat-accent); box-shadow: var(--shadow); }
   .stat-label { color: var(--text-muted); letter-spacing: .08em; }
   .stat-value { color: #031b4e !important; font-family: var(--font-display); font-size: 27px; font-weight: 400; letter-spacing: 0; }
 
@@ -987,9 +998,9 @@
         <div class="range-field range-field-range">
           <label class="range-label" for="globalRangePreset">Range</label>
           <select class="range-select" id="globalRangePreset" onchange="handleRangePresetChange()">
-            <option value="24h">Last 24 hours</option>
+            <option value="24h" selected>Last 24 hours</option>
             <option value="7d">Last 7 days</option>
-            <option value="30d" selected>Last 30 days</option>
+            <option value="30d">Last 30 days</option>
             <option value="6m">Last 6 months</option>
             <option value="1y">Last year</option>
             <option value="all">All time</option>
@@ -1016,12 +1027,12 @@
   <div class="stats-grid" id="statsGrid">
     <div class="stat-card accent"><div class="stat-copy"><div class="stat-label">Total Requests</div><div class="stat-value" id="statRequests">—</div><div class="stat-sub" id="statRequestsSub">all time</div></div><div class="stat-dither" id="statDitherRequests" aria-hidden="true"></div></div>
     <div class="stat-card green"><div class="stat-copy"><div class="stat-label">Est. API Value</div><div class="stat-value" id="statCost">—</div><div class="stat-sub">direct API equivalent</div></div><div class="stat-dither" id="statDitherCost" aria-hidden="true"></div></div>
-    <div class="stat-card yellow"><div class="stat-copy"><div class="stat-label">Avg Latency</div><div class="stat-value" id="statLatency">—</div><div class="stat-sub">successful calls</div></div><div class="stat-dither" id="statDitherLatency" aria-hidden="true"></div></div>
+    <div class="stat-card orange"><div class="stat-copy"><div class="stat-label">Avg Latency</div><div class="stat-value" id="statLatency">—</div><div class="stat-sub">successful calls</div></div><div class="stat-dither" id="statDitherLatency" aria-hidden="true"></div></div>
     <div class="stat-card red"><div class="stat-copy"><div class="stat-label">Error Rate</div><div class="stat-value" id="statErrorRate">—</div><div class="stat-sub" id="statErrorSub">—</div></div><div class="stat-dither" id="statDitherErrors" aria-hidden="true"></div></div>
     <div class="stat-card purple"><div class="stat-copy"><div class="stat-label">Total Tokens</div><div class="stat-value" id="statTokens">—</div><div class="stat-sub">input + output</div></div><div class="stat-dither" id="statDitherTokens" aria-hidden="true"></div></div>
     <div class="stat-card orange"><div class="stat-copy"><div class="stat-label">Sessions</div><div class="stat-value" id="statSessions">—</div><div class="stat-sub">unique</div></div><div class="stat-dither" id="statDitherSessions" aria-hidden="true"></div></div>
-    <div class="stat-card"><div class="stat-copy"><div class="stat-label">Tool Calls</div><div class="stat-value" id="statToolCalls">—</div><div class="stat-sub">logged</div></div><div class="stat-dither" id="statDitherTools" aria-hidden="true"></div></div>
-    <div class="stat-card"><div class="stat-copy"><div class="stat-label">Trace Spans</div><div class="stat-value" id="statAgentSteps">—</div><div class="stat-sub">granular operations</div></div><div class="stat-dither" id="statDitherTraces" aria-hidden="true"></div></div>
+    <div class="stat-card purple"><div class="stat-copy"><div class="stat-label">Tool Calls</div><div class="stat-value" id="statToolCalls">—</div><div class="stat-sub">logged</div></div><div class="stat-dither" id="statDitherTools" aria-hidden="true"></div></div>
+    <div class="stat-card accent"><div class="stat-copy"><div class="stat-label">Trace Spans</div><div class="stat-value" id="statAgentSteps">—</div><div class="stat-sub">granular operations</div></div><div class="stat-dither" id="statDitherTraces" aria-hidden="true"></div></div>
   </div>
 
   <!-- Charts row -->
@@ -1263,7 +1274,7 @@ const state = {
   visibleRows: { requests: [], toolCalls: [], sessions: [] },
   sortKey:    { requests: 'created_at', sessions: 'last_seen' },
   sortAsc:    { requests: false, sessions: false },
-  rangePreset: '30d',
+  rangePreset: '24h',
   rangeVersion: 0,
   hasLoaded:  false,
 };
@@ -1356,7 +1367,7 @@ function applyPresetDefaults(preset) {
 }
 
 function getActiveRange() {
-  const preset = document.getElementById('globalRangePreset')?.value || state.rangePreset || '30d';
+  const preset = document.getElementById('globalRangePreset')?.value || state.rangePreset || '24h';
   const now = Date.now();
   if (preset === 'all') return { preset, sinceMs: 0, untilMs: 0, label: 'All time' };
   if (preset === '24h') return { preset, sinceMs: now - (24 * 60 * 60 * 1000), untilMs: now, label: 'Last 24 hours' };
@@ -1391,7 +1402,7 @@ function updateRangeSummary() {
 }
 
 function handleRangePresetChange() {
-  const preset = document.getElementById('globalRangePreset')?.value || '30d';
+  const preset = document.getElementById('globalRangePreset')?.value || '24h';
   state.rangePreset = preset;
   const custom = preset === 'custom';
   document.getElementById('globalRangeCustomFields')?.classList[custom ? 'remove' : 'add']('hidden');

@@ -156,6 +156,10 @@ async function testRequestsFiltersSortingAndEscaping() {
 	context.initializeRangeFilter();
 	assert.strictEqual(elements.globalRangeCustomFields.classList.contains('hidden'), false, 'custom range fields should be shown');
 
+	context.state.rangePreset = '24h';
+	context.initializeRangeFilter();
+	assert.strictEqual(elements.globalRangePreset.value, '24h', 'default range should be Last 24 hours');
+
 	context.state.requests = [
 		{
 			session_id: '<img src=x onerror=1>',

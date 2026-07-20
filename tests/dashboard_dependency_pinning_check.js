@@ -27,6 +27,11 @@ assertContains('font-family: "Departure Mono"', 'dashboard should define the bun
 assertContains('__WATCHDOG_DEPARTURE_MONO_WOFF2__', 'dashboard should expose the server-injected Departure Mono placeholder');
 assertContains('.page-title { color: #031b4e; font-family: var(--font-display)', 'page title should use the Departure-compatible display stack');
 assertContains('.stat-value { color: #031b4e !important; font-family: var(--font-display)', 'metric numbers should use the Departure-compatible display stack');
+assertContains('border-top-color: var(--stat-accent)', 'stat-card hover top borders should use the card chart color');
+assertContains('<option value="24h" selected>Last 24 hours</option>', 'dashboard should default to the 24-hour range');
+assertContains("rangePreset: '24h'", 'dashboard state should default to the 24-hour range');
+assertContains('stat-card orange"><div class="stat-copy"><div class="stat-label">Avg Latency', 'latency stat card should match the orange sparkline');
+assertContains('stat-card purple"><div class="stat-copy"><div class="stat-label">Tool Calls', 'tool stat card should match the purple sparkline');
 assertContains('.logo-copy,', 'Watchdog wordmark should use the Departure-compatible mono stack');
 assertContains('.header-right .btn {', 'header buttons should use the Departure-compatible mono stack');
 assertContains('font-family: var(--font-mono);', 'header typography should resolve to the mono stack');
