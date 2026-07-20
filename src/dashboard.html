@@ -1556,7 +1556,7 @@ function renderCharts(reqData, latData, statusData, toolData, range = getActiveR
   ] : [0,0,0,0,0,0];
   const statuses = (statusData || []);
   const toolEntries = (toolData || [])
-    .map(tool => [String(tool.tool_name || 'unknown'), 1])
+    .map(tool => [String(tool.tool_name || 'unknown'), Number(tool.call_count || 0)])
     .sort((a, b) => b[1] - a[1]);
 
   if (!window.WatchdogDitherCharts || typeof window.WatchdogDitherCharts.renderCharts !== 'function') {

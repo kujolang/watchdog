@@ -70,6 +70,7 @@ function createHarness() {
 	const script = extractDashboardScript(source);
 
 	const elements = {};
+	const renderedCharts = { value: null };
 	const requiredIds = [
 		'globalRangePreset', 'globalRangeCustomFields', 'globalRangeStartField', 'globalRangeEndField', 'globalRangeStart', 'globalRangeEnd',
 		'reqSearch', 'reqTenantFilter', 'reqProjectFilter', 'reqStatusFilter', 'reqProviderFilter', 'reqBody', 'reqEmpty',
@@ -105,9 +106,10 @@ function createHarness() {
 				return { data: [] };
 			},
 		}),
-		Chart: class FakeChart {
-			constructor() {}
-			destroy() {}
+		WatchdogDitherCharts: {
+			renderCharts(data) {
+				renderedCharts.value = data;
+			},
 		},
 		Blob: class FakeBlob {
 			constructor() {}
@@ -133,12 +135,13 @@ function createHarness() {
 			},
 		},
 	};
+	context.window = context;
 	const contextClipboard = { value: '' };
 
 	vm.createContext(context);
 	vm.runInContext(script, context, { filename: 'dashboard.inline.js' });
 
-	return { context, elements, contextClipboard };
+	return { context, elements, contextClipboard, renderedCharts };
 }
 
 async function testRequestsFiltersSortingAndEscaping() {
@@ -363,9 +366,27 @@ function testToolCallsErrorsSessionsAndTracesContracts() {
 	assert.ok(elements.insightsContainer.innerHTML.includes('Tool effectiveness'));
 }
 
+function testToolChartUsesAggregatedCallCounts() {
+	const { context, renderedCharts } = createHarness();
+	context.renderCharts([], null, [], [
+		{ tool_name: 'browser_use', call_count: 27 },
+		{ tool_name: 'web_search', call_count: 9 },
+	], { preset: 'all', sinceMs: 0, untilMs: 0, label: 'All time' });
+
+	assert.deepStrictEqual(
+		JSON.parse(JSON.stringify(renderedCharts.value.tools)),
+		[
+			{ label: 'browser_use', calls: 27 },
+			{ label: 'web_search', calls: 9 },
+		],
+		'tool chart should render each aggregated call_count instead of counting aggregate rows'
+	);
+}
+
 async function run() {
 	await testRequestsFiltersSortingAndEscaping();
 	testToolCallsErrorsSessionsAndTracesContracts();
+	testToolChartUsesAggregatedCallCounts();
 	console.log('frontend_contract_suite: PASS');
 }
 
