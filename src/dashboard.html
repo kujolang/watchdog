@@ -1470,6 +1470,7 @@ async function loadAll() {
     const sess = await fetchJSON(buildApiUrl('/api/sessions', loadRange));
     const insights = await fetchJSON(buildApiUrl('/api/insights', loadRange));
     const chartReqData = await fetchJSON(buildApiUrl('/api/charts/requests-over-time', loadRange));
+    const chartStatData = await fetchJSON(buildApiUrl('/api/charts/stat-trends', loadRange));
     const chartLatData = await fetchJSON(buildApiUrl('/api/charts/latency-hist', loadRange));
     const chartStatusData = await fetchJSON(buildApiUrl('/api/charts/status-breakdown', loadRange));
 
@@ -1490,7 +1491,7 @@ async function loadAll() {
     state.backups    = backups || null;
 
     renderStats(stats, loadRange);
-    renderCharts(chartReqData, chartLatData, chartStatusData, (insights && insights.tool_effectiveness) || [], loadRange);
+    renderCharts(chartReqData, chartLatData, chartStatusData, (insights && insights.tool_effectiveness) || [], loadRange, chartStatData);
     populateProviderFilter();
     renderRequestsTable();
     renderToolCallsTable();
@@ -1586,7 +1587,32 @@ function normalizeRequestSeries(reqData, range) {
   return normalized;
 }
 
-function renderCharts(reqData, latData, statusData, toolData, range = getActiveRange()) {
+function normalizeMetricSeries(metricData, range, fields) {
+  const rows = Array.isArray(metricData) ? metricData : [];
+  const rowBucketSize = Number(rows[0]?.bucket_size_ms || 0);
+  const boundedSpan = range.sinceMs > 0 && range.untilMs > range.sinceMs ? range.untilMs - range.sinceMs : 0;
+  const observedSpan = rows.length > 1
+    ? Number(rows[rows.length - 1].bucket_start_ms) - Number(rows[0].bucket_start_ms)
+    : 0;
+  const bucketSize = rowBucketSize || chartBucketSizeMsForSpan(boundedSpan || observedSpan);
+  if (!rows.length && !boundedSpan) return [];
+
+  const byBucket = new Map(rows.map(row => [Number(row.bucket_start_ms), row]));
+  const firstBucket = boundedSpan ? range.sinceMs : Number(rows[0].bucket_start_ms);
+  const endExclusive = boundedSpan
+    ? range.untilMs
+    : Number(rows[rows.length - 1].bucket_start_ms) + bucketSize;
+  const normalized = [];
+  for (let bucketStart = firstBucket; bucketStart < endExclusive; bucketStart += bucketSize) {
+    const source = byBucket.get(bucketStart) || {};
+    const row = { bucket_start_ms: bucketStart, bucket_size_ms: bucketSize };
+    fields.forEach(field => { row[field] = Number(source[field] || 0); });
+    normalized.push(row);
+  }
+  return normalized;
+}
+
+function renderCharts(reqData, latData, statusData, toolData, range = getActiveRange(), statTrendData = null) {
   const requestSeries = normalizeRequestSeries(reqData, range);
   const latBuckets = ['<200ms','200-500ms','500ms-1s','1-2s','2-3s','>3s'];
   const latValues = latData ? [
@@ -1597,6 +1623,11 @@ function renderCharts(reqData, latData, statusData, toolData, range = getActiveR
   const toolEntries = (toolData || [])
     .map(tool => [String(tool.tool_name || 'unknown'), Number(tool.call_count || 0)])
     .sort((a, b) => b[1] - a[1]);
+  const requestMetrics = normalizeMetricSeries((statTrendData && statTrendData.request_metrics) || [], range, [
+    'total_requests', 'total_cost_usd', 'avg_latency_ms', 'total_errors', 'total_tokens', 'total_sessions',
+  ]);
+  const toolMetrics = normalizeMetricSeries((statTrendData && statTrendData.tool_metrics) || [], range, ['total_tool_calls']);
+  const traceMetrics = normalizeMetricSeries((statTrendData && statTrendData.trace_span_metrics) || [], range, ['total_trace_spans']);
 
   if (!window.WatchdogDitherCharts || typeof window.WatchdogDitherCharts.renderCharts !== 'function') {
     throw new Error('Dither Kit chart bundle did not load');
@@ -1611,6 +1642,16 @@ function renderCharts(reqData, latData, statusData, toolData, range = getActiveR
     latency: latBuckets.map((label, index) => ({ label, requests: Number(latValues[index] || 0) })),
     statuses: statuses.map(row => ({ name: String(row.status || 'unknown'), value: Number(row.count || 0) })),
     tools: toolEntries.map(([label, calls]) => ({ label, calls })),
+    statSparklines: {
+      requests: requestMetrics.map(row => row.total_requests),
+      cost: requestMetrics.map(row => row.total_cost_usd),
+      latency: requestMetrics.map(row => row.avg_latency_ms),
+      errors: requestMetrics.map(row => row.total_requests > 0 ? (row.total_errors * 100) / row.total_requests : 0),
+      tokens: requestMetrics.map(row => row.total_tokens),
+      sessions: requestMetrics.map(row => row.total_sessions),
+      tools: toolMetrics.map(row => row.total_tool_calls),
+      traces: traceMetrics.map(row => row.total_trace_spans),
+    },
   });
 }
 

@@ -383,10 +383,35 @@ function testToolChartUsesAggregatedCallCounts() {
 	);
 }
 
+function testStatCardSparklinesUseMetricTrends() {
+	const { context, renderedCharts } = createHarness();
+	const day = 24 * 60 * 60 * 1000;
+	const range = { preset: '7d', sinceMs: 10 * day, untilMs: 17 * day, label: 'Last 7 days' };
+	context.renderCharts([], null, [], [], range, {
+		request_metrics: [
+			{ bucket_start_ms: 10 * day, bucket_size_ms: day, total_requests: 4, total_cost_usd: 0.04, avg_latency_ms: 120, total_errors: 1, total_tokens: 800, total_sessions: 2 },
+			{ bucket_start_ms: 16 * day, bucket_size_ms: day, total_requests: 2, total_cost_usd: 0.03, avg_latency_ms: 240, total_errors: 0, total_tokens: 500, total_sessions: 1 },
+		],
+		tool_metrics: [{ bucket_start_ms: 10 * day, bucket_size_ms: day, total_tool_calls: 7 }],
+		trace_span_metrics: [{ bucket_start_ms: 16 * day, bucket_size_ms: day, total_trace_spans: 9 }],
+	});
+
+	const sparklines = JSON.parse(JSON.stringify(renderedCharts.value.statSparklines));
+	assert.deepStrictEqual(sparklines.requests, [4, 0, 0, 0, 0, 0, 2]);
+	assert.deepStrictEqual(sparklines.cost, [0.04, 0, 0, 0, 0, 0, 0.03]);
+	assert.deepStrictEqual(sparklines.latency, [120, 0, 0, 0, 0, 0, 240]);
+	assert.deepStrictEqual(sparklines.errors, [25, 0, 0, 0, 0, 0, 0]);
+	assert.deepStrictEqual(sparklines.tokens, [800, 0, 0, 0, 0, 0, 500]);
+	assert.deepStrictEqual(sparklines.sessions, [2, 0, 0, 0, 0, 0, 1]);
+	assert.deepStrictEqual(sparklines.tools, [7, 0, 0, 0, 0, 0, 0]);
+	assert.deepStrictEqual(sparklines.traces, [0, 0, 0, 0, 0, 0, 9]);
+}
+
 async function run() {
 	await testRequestsFiltersSortingAndEscaping();
 	testToolCallsErrorsSessionsAndTracesContracts();
 	testToolChartUsesAggregatedCallCounts();
+	testStatCardSparklinesUseMetricTrends();
 	console.log('frontend_contract_suite: PASS');
 }
 

@@ -500,6 +500,7 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `GET` | `/api/sessions` | Per-session aggregates |
 | `GET` | `/api/insights` | Agent run outcomes, tool effectiveness, latency by span kind, workflow transitions, and context-pressure summaries |
 | `GET` | `/api/charts/requests-over-time` | Hourly request/error counts |
+| `GET` | `/api/charts/stat-trends` | Time-bucketed request, cost, latency, error, token, session, tool, and trace-span metrics |
 | `GET` | `/api/charts/cost-over-time` | Hourly cost totals |
 | `GET` | `/api/charts/latency-hist` | Latency buckets |
 | `GET` | `/api/charts/status-breakdown` | Success vs error counts |

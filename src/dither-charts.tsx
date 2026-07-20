@@ -18,21 +18,24 @@ type CartesianRow = { label: string; [key: string]: string | number }
 type StatusRow = { name: string; value: number }
 
 const statDithers = [
-  { id: "statDitherRequests", data: [18, 36, 28, 58, 46, 75, 62, 91], color: "blue", variant: "gradient" },
-  { id: "statDitherCost", data: [12, 22, 19, 43, 35, 61, 56, 82], color: "green", variant: "dotted" },
-  { id: "statDitherLatency", data: [70, 46, 62, 35, 55, 27, 42, 18], color: "orange", variant: "gradient" },
-  { id: "statDitherErrors", data: [16, 44, 22, 65, 30, 52, 25, 38], color: "red", variant: "dotted" },
-  { id: "statDitherTokens", data: [14, 27, 45, 38, 64, 57, 78, 88], color: "purple", variant: "gradient" },
-  { id: "statDitherSessions", data: [24, 48, 31, 55, 42, 68, 53, 76], color: "orange", variant: "dotted" },
-  { id: "statDitherTools", data: [20, 35, 30, 71, 48, 85, 59, 79], color: "purple", variant: "dotted" },
-  { id: "statDitherTraces", data: [10, 29, 24, 47, 40, 66, 60, 84], color: "blue", variant: "gradient" },
+  { id: "statDitherRequests", metric: "requests", color: "blue", variant: "gradient" },
+  { id: "statDitherCost", metric: "cost", color: "green", variant: "dotted" },
+  { id: "statDitherLatency", metric: "latency", color: "orange", variant: "gradient" },
+  { id: "statDitherErrors", metric: "errors", color: "red", variant: "dotted" },
+  { id: "statDitherTokens", metric: "tokens", color: "purple", variant: "gradient" },
+  { id: "statDitherSessions", metric: "sessions", color: "orange", variant: "dotted" },
+  { id: "statDitherTools", metric: "tools", color: "purple", variant: "dotted" },
+  { id: "statDitherTraces", metric: "traces", color: "blue", variant: "gradient" },
 ] as const
+
+type StatMetric = typeof statDithers[number]["metric"]
 
 export type WatchdogChartData = {
   requests: CartesianRow[]
   latency: CartesianRow[]
   statuses: StatusRow[]
   tools: CartesianRow[]
+  statSparklines?: Partial<Record<StatMetric, number[]>>
 }
 
 const roots = new Map<string, Root>()
@@ -50,11 +53,12 @@ function mount(id: string, node: React.ReactNode) {
 
 const axisValue = (value: number) => Math.round(value).toLocaleString()
 
-function renderStatDithers() {
+function renderStatDithers(series: Partial<Record<StatMetric, number[]>> = {}) {
   for (const dither of statDithers) {
+    const data = series[dither.metric] || []
     mount(dither.id, (
       <Sparkline
-        data={[...dither.data]}
+        data={data.length ? data : [0]}
         color={dither.color}
         variant={dither.variant}
         bloom="low"
@@ -133,7 +137,7 @@ function ToolsChart({ data }: { data: CartesianRow[] }) {
 }
 
 export function renderCharts(data: WatchdogChartData) {
-  renderStatDithers()
+  renderStatDithers(data.statSparklines)
   mount("chartRequests", <RequestsChart data={data.requests} />)
   mount("chartLatency", <LatencyChart data={data.latency} />)
   mount("chartStatus", <StatusChart data={data.statuses} />)

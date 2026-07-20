@@ -3207,6 +3207,77 @@ server := server.route("GET", "/api/charts/requests-over-time", func(req) {
 	return api_ok(rows)
 })
 
+server := server.route("GET", "/api/charts/stat-trends", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+
+	bounds := time_range_bounds(req)
+	span_ms := to_int_or_zero(bounds["span_ms"])
+	bucket_size_ms := chart_bucket_size_ms_for_span(span_ms)
+	bucket_origin_ms := to_int_or_zero(bounds["since_ms"])
+
+	request_filter := append_time_range_conditions(req, [], [], "r.created_at")
+	request_conditions := request_filter["conditions"]
+	request_params := request_filter["params"]
+	tenant_id := request_query_text(req, "tenant_id", "")
+	if tenant_id != "" {
+		request_conditions := push(request_conditions, "r.tenant_id = ?")
+		request_params := push(request_params, tenant_id)
+	}
+	project_id := request_query_text(req, "project_id", "")
+	if project_id != "" {
+		request_conditions := push(request_conditions, "r.project_id = ?")
+		request_params := push(request_params, project_id)
+	}
+	request_bucket := "CAST(((CAST(r.created_at AS INTEGER) - " + to_string(bucket_origin_ms) + ") / " + to_string(bucket_size_ms) + ") AS INTEGER) * " + to_string(bucket_size_ms) + " + " + to_string(bucket_origin_ms)
+	request_sql := "SELECT " + request_bucket + " AS bucket_start_ms, " + to_string(bucket_size_ms) + " AS bucket_size_ms, COUNT(*) AS total_requests, COALESCE(SUM(r.cost_usd),0) AS total_cost_usd, COALESCE(AVG(CASE WHEN r.status='success' THEN r.latency_ms ELSE NULL END),0) AS avg_latency_ms, SUM(CASE WHEN r.status='error' THEN 1 ELSE 0 END) AS total_errors, COALESCE(SUM(r.total_tokens),0) AS total_tokens, COUNT(DISTINCT r.session_id) AS total_sessions FROM requests r"
+	request_sql := request_sql + where_clause_from_conditions(request_conditions)
+	request_sql := request_sql + " GROUP BY bucket_start_ms ORDER BY bucket_start_ms ASC"
+	request_rows := db_query(db, request_sql, request_params)
+
+	tool_filter := append_time_range_conditions(req, [], [], "tc.created_at")
+	tool_conditions := tool_filter["conditions"]
+	tool_params := tool_filter["params"]
+	if tenant_id != "" {
+		tool_conditions := push(tool_conditions, "EXISTS (SELECT 1 FROM requests r WHERE r.id = tc.request_dbid AND r.tenant_id = ?)")
+		tool_params := push(tool_params, tenant_id)
+	}
+	if project_id != "" {
+		tool_conditions := push(tool_conditions, "EXISTS (SELECT 1 FROM requests r WHERE r.id = tc.request_dbid AND r.project_id = ?)")
+		tool_params := push(tool_params, project_id)
+	}
+	tool_bucket := "CAST(((CAST(tc.created_at AS INTEGER) - " + to_string(bucket_origin_ms) + ") / " + to_string(bucket_size_ms) + ") AS INTEGER) * " + to_string(bucket_size_ms) + " + " + to_string(bucket_origin_ms)
+	tool_sql := "SELECT " + tool_bucket + " AS bucket_start_ms, " + to_string(bucket_size_ms) + " AS bucket_size_ms, COUNT(*) AS total_tool_calls FROM tool_calls tc"
+	tool_sql := tool_sql + where_clause_from_conditions(tool_conditions)
+	tool_sql := tool_sql + " GROUP BY bucket_start_ms ORDER BY bucket_start_ms ASC"
+	tool_rows := db_query(db, tool_sql, tool_params)
+
+	span_filter := append_time_range_conditions(req, [], [], "ts.started_at_ms")
+	span_conditions := span_filter["conditions"]
+	span_params := span_filter["params"]
+	if tenant_id != "" {
+		span_conditions := push(span_conditions, "EXISTS (SELECT 1 FROM requests r WHERE r.id = ts.request_dbid AND r.tenant_id = ?)")
+		span_params := push(span_params, tenant_id)
+	}
+	if project_id != "" {
+		span_conditions := push(span_conditions, "EXISTS (SELECT 1 FROM requests r WHERE r.id = ts.request_dbid AND r.project_id = ?)")
+		span_params := push(span_params, project_id)
+	}
+	span_bucket := "CAST(((ts.started_at_ms - " + to_string(bucket_origin_ms) + ") / " + to_string(bucket_size_ms) + ") AS INTEGER) * " + to_string(bucket_size_ms) + " + " + to_string(bucket_origin_ms)
+	span_sql := "SELECT " + span_bucket + " AS bucket_start_ms, " + to_string(bucket_size_ms) + " AS bucket_size_ms, COUNT(*) AS total_trace_spans FROM trace_spans ts"
+	span_sql := span_sql + where_clause_from_conditions(span_conditions)
+	span_sql := span_sql + " GROUP BY bucket_start_ms ORDER BY bucket_start_ms ASC"
+	span_rows := db_query(db, span_sql, span_params)
+
+	return api_ok({
+		"request_metrics": request_rows,
+		"tool_metrics": tool_rows,
+		"trace_span_metrics": span_rows
+	})
+})
+
 server := server.route("GET", "/api/charts/cost-over-time", func(req) {
 	auth := require_api_auth(req)
 	if !auth["allowed"] {

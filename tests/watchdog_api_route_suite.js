@@ -243,6 +243,15 @@ async function run() {
 			assert.ok(Array.isArray(data), 'requests-over-time data should be array');
 		});
 
+		await assertEndpoint('/api/charts/stat-trends', data => {
+			assert.ok(Array.isArray(data.request_metrics), 'stat-trends request_metrics should be an array');
+			assert.ok(Array.isArray(data.tool_metrics), 'stat-trends tool_metrics should be an array');
+			assert.ok(Array.isArray(data.trace_span_metrics), 'stat-trends trace_span_metrics should be an array');
+			assert.ok(data.request_metrics.some(row => Number(row.total_requests || 0) >= 1), 'stat-trends should include request totals');
+			assert.ok(data.tool_metrics.some(row => Number(row.total_tool_calls || 0) >= 1), 'stat-trends should include tool totals');
+			assert.ok(data.trace_span_metrics.some(row => Number(row.total_trace_spans || 0) >= 2), 'stat-trends should include trace-span totals');
+		});
+
 		await assertEndpoint('/api/charts/cost-over-time', data => {
 			assert.ok(Array.isArray(data), 'cost-over-time data should be array');
 		});
