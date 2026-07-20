@@ -80,6 +80,12 @@
     letter-spacing: -.2px;
   }
 
+  .logo-copy,
+  .header-right .btn {
+    font-family: var(--font-mono);
+    letter-spacing: 0;
+  }
+
   .logo-icon {
     width: 32px;
     height: 32px;
@@ -147,13 +153,35 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 18px 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 92px;
+    align-items: center;
+    gap: 12px;
+    overflow: hidden;
     transition: border-color var(--transition), box-shadow var(--transition);
   }
 
   .stat-card:hover { border-color: var(--accent); box-shadow: var(--shadow); }
+
+  .stat-copy {
+    position: relative;
+    z-index: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .stat-dither {
+    width: 92px;
+    height: 72px;
+    opacity: .7;
+    transition: opacity var(--transition), transform var(--transition);
+    mask-image: linear-gradient(to right, transparent 0%, #000 22%);
+  }
+
+  .stat-card:hover .stat-dither { opacity: 1; transform: translateY(-2px); }
+  .stat-dither > div, .watchdog-stat-sparkline { width: 100%; height: 100%; }
 
   .stat-label {
     font-size: 11px;
@@ -628,7 +656,7 @@
     font-weight: 800;
     box-shadow: none;
   }
-  .logo-copy { display: flex; flex-direction: column; line-height: 1.05; }
+  .logo-copy { display: flex; flex-direction: column; line-height: 1.05; font-weight: 400; }
   .logo-copy small {
     margin-top: 4px;
     color: var(--text-muted);
@@ -643,7 +671,7 @@
     border-color: #b9c2d6;
     background: #fff;
     color: #24335a;
-    font-weight: 600;
+    font-weight: 400;
     box-shadow: 0 1px 2px rgba(20, 45, 90, .05);
   }
   .btn:hover { background: #f5f8ff; border-color: #0069ff; color: #0069ff; }
@@ -986,14 +1014,14 @@
 
   <!-- Stats row -->
   <div class="stats-grid" id="statsGrid">
-    <div class="stat-card accent"><div class="stat-label">Total Requests</div><div class="stat-value" id="statRequests">—</div><div class="stat-sub" id="statRequestsSub">all time</div></div>
-    <div class="stat-card green"><div class="stat-label">Est. API Value</div><div class="stat-value" id="statCost">—</div><div class="stat-sub">direct API equivalent</div></div>
-    <div class="stat-card yellow"><div class="stat-label">Avg Latency</div><div class="stat-value" id="statLatency">—</div><div class="stat-sub">successful calls</div></div>
-    <div class="stat-card red"><div class="stat-label">Error Rate</div><div class="stat-value" id="statErrorRate">—</div><div class="stat-sub" id="statErrorSub">—</div></div>
-    <div class="stat-card purple"><div class="stat-label">Total Tokens</div><div class="stat-value" id="statTokens">—</div><div class="stat-sub">input + output</div></div>
-    <div class="stat-card orange"><div class="stat-label">Sessions</div><div class="stat-value" id="statSessions">—</div><div class="stat-sub">unique</div></div>
-    <div class="stat-card"><div class="stat-label">Tool Calls</div><div class="stat-value" id="statToolCalls">—</div><div class="stat-sub">logged</div></div>
-    <div class="stat-card"><div class="stat-label">Trace Spans</div><div class="stat-value" id="statAgentSteps">—</div><div class="stat-sub">granular operations</div></div>
+    <div class="stat-card accent"><div class="stat-copy"><div class="stat-label">Total Requests</div><div class="stat-value" id="statRequests">—</div><div class="stat-sub" id="statRequestsSub">all time</div></div><div class="stat-dither" id="statDitherRequests" aria-hidden="true"></div></div>
+    <div class="stat-card green"><div class="stat-copy"><div class="stat-label">Est. API Value</div><div class="stat-value" id="statCost">—</div><div class="stat-sub">direct API equivalent</div></div><div class="stat-dither" id="statDitherCost" aria-hidden="true"></div></div>
+    <div class="stat-card yellow"><div class="stat-copy"><div class="stat-label">Avg Latency</div><div class="stat-value" id="statLatency">—</div><div class="stat-sub">successful calls</div></div><div class="stat-dither" id="statDitherLatency" aria-hidden="true"></div></div>
+    <div class="stat-card red"><div class="stat-copy"><div class="stat-label">Error Rate</div><div class="stat-value" id="statErrorRate">—</div><div class="stat-sub" id="statErrorSub">—</div></div><div class="stat-dither" id="statDitherErrors" aria-hidden="true"></div></div>
+    <div class="stat-card purple"><div class="stat-copy"><div class="stat-label">Total Tokens</div><div class="stat-value" id="statTokens">—</div><div class="stat-sub">input + output</div></div><div class="stat-dither" id="statDitherTokens" aria-hidden="true"></div></div>
+    <div class="stat-card orange"><div class="stat-copy"><div class="stat-label">Sessions</div><div class="stat-value" id="statSessions">—</div><div class="stat-sub">unique</div></div><div class="stat-dither" id="statDitherSessions" aria-hidden="true"></div></div>
+    <div class="stat-card"><div class="stat-copy"><div class="stat-label">Tool Calls</div><div class="stat-value" id="statToolCalls">—</div><div class="stat-sub">logged</div></div><div class="stat-dither" id="statDitherTools" aria-hidden="true"></div></div>
+    <div class="stat-card"><div class="stat-copy"><div class="stat-label">Trace Spans</div><div class="stat-value" id="statAgentSteps">—</div><div class="stat-sub">granular operations</div></div><div class="stat-dither" id="statDitherTraces" aria-hidden="true"></div></div>
   </div>
 
   <!-- Charts row -->

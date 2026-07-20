@@ -3,6 +3,7 @@ const path = require('path');
 
 const htmlPath = path.join(__dirname, '..', 'dashboard.html');
 const source = fs.readFileSync(htmlPath, 'utf8');
+const chartSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'dither-charts.tsx'), 'utf8');
 
 function assertContains(snippet, message) {
 	if (!source.includes(snippet)) {
@@ -26,5 +27,17 @@ assertContains('font-family: "Departure Mono"', 'dashboard should define the bun
 assertContains('__WATCHDOG_DEPARTURE_MONO_WOFF2__', 'dashboard should expose the server-injected Departure Mono placeholder');
 assertContains('.page-title { color: #031b4e; font-family: var(--font-display)', 'page title should use the Departure-compatible display stack');
 assertContains('.stat-value { color: #031b4e !important; font-family: var(--font-display)', 'metric numbers should use the Departure-compatible display stack');
+assertContains('.logo-copy,', 'Watchdog wordmark should use the Departure-compatible mono stack');
+assertContains('.header-right .btn {', 'header buttons should use the Departure-compatible mono stack');
+assertContains('font-family: var(--font-mono);', 'header typography should resolve to the mono stack');
+for (const id of ['Requests', 'Cost', 'Latency', 'Errors', 'Tokens', 'Sessions', 'Tools', 'Traces']) {
+	assertContains(`id="statDither${id}"`, `stat card ${id} should include a decorative Dither Kit mount`);
+	if (!chartSource.includes(`id: "statDither${id}"`)) {
+		throw new Error(`Dither Kit chart entry should render the ${id} stat-card sparkline`);
+	}
+}
+if (!chartSource.includes('import { Sparkline } from "../components/dither-kit/sparkline"')) {
+	throw new Error('stat-card decorations should use the installed Dither Kit Sparkline component');
+}
 
 console.log('dashboard_dependency_pinning_check: PASS');
