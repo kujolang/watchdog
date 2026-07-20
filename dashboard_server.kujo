@@ -31,6 +31,7 @@ DEFAULT_ALLOW_INSECURE_STARTUP := "false"
 DEFAULT_PROXY_AUTHZ_ALLOWLIST := "/healthz,/readyz"
 DEFAULT_DITHER_CHARTS_JS_PATH := "vendor/dither-charts.js"
 DEFAULT_DITHER_CHARTS_CSS_PATH := "vendor/dither-charts.css"
+DEFAULT_DEPARTURE_MONO_PATH := "vendor/fonts/DepartureMono-Regular.woff2"
 DEFAULT_PROXY_TIMEOUT_SECS := 120
 DEFAULT_MAX_PROXY_BODY_BYTES := 1048576
 DEFAULT_MAX_PARSE_BODY_BYTES := 524288
@@ -1293,6 +1294,7 @@ DEPLOYMENT_PROFILE := normalize_deployment_profile(env_or_many(["WDG_DEPLOYMENT_
 ALLOW_INSECURE_STARTUP := parse_bool_value(env_or_many(["WDG_ALLOW_INSECURE_STARTUP"], DEFAULT_ALLOW_INSECURE_STARTUP), false)
 DASHBOARD_DITHER_CHARTS_JS_PATH := env_or_many(["WDG_DITHER_CHARTS_JS_PATH"], DEFAULT_DITHER_CHARTS_JS_PATH)
 DASHBOARD_DITHER_CHARTS_CSS_PATH := env_or_many(["WDG_DITHER_CHARTS_CSS_PATH"], DEFAULT_DITHER_CHARTS_CSS_PATH)
+DASHBOARD_DEPARTURE_MONO_PATH := env_or_many(["WDG_DEPARTURE_MONO_PATH"], DEFAULT_DEPARTURE_MONO_PATH)
 PROXY_AUTHZ_ALLOWLIST := parse_csv_terms(env_or_many(["WDG_PROXY_AUTHZ_ALLOWLIST"], DEFAULT_PROXY_AUTHZ_ALLOWLIST))
 PROXY_TIMEOUT_SECS := parse_int_env_many(["WDG_PROXY_TIMEOUT_SECS"], DEFAULT_PROXY_TIMEOUT_SECS)
 MAX_PROXY_BODY_BYTES := parse_int_env_many(["WDG_MAX_PROXY_BODY_BYTES"], DEFAULT_MAX_PROXY_BODY_BYTES)
@@ -1335,6 +1337,7 @@ kv("Proxy auth mode", PROXY_AUTHZ_MODE)
 kv("Deployment profile", DEPLOYMENT_PROFILE)
 kv("Dashboard Dither Kit JavaScript", DASHBOARD_DITHER_CHARTS_JS_PATH)
 kv("Dashboard Dither Kit CSS", DASHBOARD_DITHER_CHARTS_CSS_PATH)
+kv("Dashboard Departure Mono font", DASHBOARD_DEPARTURE_MONO_PATH)
 kv("Proxy timeout seconds", PROXY_TIMEOUT_SECS)
 kv("Max proxy body bytes", MAX_PROXY_BODY_BYTES)
 kv("Max parse body bytes", MAX_PARSE_BODY_BYTES)
@@ -2485,6 +2488,11 @@ server := server.route("GET", "/readyz", func(req) {
 # Watchdog UI
 server := server.route("GET", "/", func(req) {
 	html := read_file("dashboard.html")
+	font_base64 := ""
+	if file_exists(DASHBOARD_DEPARTURE_MONO_PATH) {
+		font_base64 = encode_base64(read_binary_file(DASHBOARD_DEPARTURE_MONO_PATH))
+	}
+	html = replace(html, "__WATCHDOG_DEPARTURE_MONO_WOFF2__", font_base64)
 	return apply_default_security_headers(html_response(200, html))
 })
 

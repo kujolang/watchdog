@@ -154,6 +154,7 @@ Environment variables:
 | `WDG_PROXY_AUTHZ_ALLOWLIST` | `/healthz,/readyz` | Comma-separated exact-path bypass list for proxy auth checks |
 | `WDG_DITHER_CHARTS_JS_PATH` | `vendor/dither-charts.js` | Built Dither Kit dashboard chart bundle |
 | `WDG_DITHER_CHARTS_CSS_PATH` | `vendor/dither-charts.css` | Built Dither Kit dashboard chart styles |
+| `WDG_DEPARTURE_MONO_PATH` | `vendor/fonts/DepartureMono-Regular.woff2` | Local Departure Mono font used for dashboard titles and numeric displays |
 | `WDG_PROXY_TIMEOUT_SECS` | `120` | Upstream proxy timeout in seconds |
 | `WDG_MAX_PROXY_BODY_BYTES` | `1048576` | Reject proxy request bodies larger than this many bytes |
 | `WDG_MAX_PARSE_BODY_BYTES` | `524288` | Reject JSON request parsing over this many bytes |
@@ -330,6 +331,7 @@ These headers are applied to dashboard, API, and proxy responses.
 - Dashboard charts use Dither Kit components installed in source mode with `npx @dither-kit/cli`.
 - The generated `dither-kit.json` lockfile records the installed component versions and hashes.
 - Built JavaScript and CSS are served locally from `/assets/vendor/dither-charts.js` and `/assets/vendor/dither-charts.css`; charts do not require a runtime CDN.
+- Departure Mono is bundled locally under `vendor/fonts/` with its SIL Open Font License and embedded into the dashboard response; titles, metrics, and chart labels use the SiteKit-compatible mono stack.
 
 To update or rebuild the chart assets:
 
