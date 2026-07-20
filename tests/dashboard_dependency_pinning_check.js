@@ -20,5 +20,7 @@ assertNotContains('fonts.googleapis.com', 'dashboard should not fetch remote fon
 assertNotContains('Chart.js', 'dashboard should no longer load Chart.js');
 assertContains('/assets/vendor/dither-charts.js', 'dashboard should load the local Dither Kit JavaScript bundle');
 assertContains('/assets/vendor/dither-charts.css', 'dashboard should load the local Dither Kit stylesheet');
+assertContains('<script src="/assets/vendor/dither-charts.js"></script>', 'Dither Kit must load before the inline dashboard boot calls loadAll');
+assertNotContains('<script defer src="/assets/vendor/dither-charts.js"></script>', 'deferred loading races the inline dashboard boot');
 
 console.log('dashboard_dependency_pinning_check: PASS');
