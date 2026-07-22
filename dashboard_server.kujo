@@ -1539,6 +1539,93 @@ func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class)
 	return {"trace_id": trace_id, "spans": span_count, "events": event_count, "tool_calls": tool_count}
 }
 
+func insert_external_agent_steps(request_dbid, body, source_app, session_id) {
+	step_count := 0
+	agent_id := external_text(body, "agent_id", source_app, 120)
+	steps := safe_dict_get(body, "agent_steps", [])
+	if type(steps) != "array" {
+		steps = []
+	}
+
+	for step in steps {
+		if step_count >= 256 || type(step) != "dict" {
+			continue
+		}
+		step_type := external_text(step, "step_type", external_text(step, "type", "", 80), 80)
+		if step_type == "" {
+			continue
+		}
+		content := external_text(step, "title", external_text(step, "content", external_text(step, "message", "", 500), 500), 500)
+		metadata := {
+			"request_dbid": request_dbid,
+			"task_id": external_text(body, "task_id", "", 160),
+			"correlation_id": external_text(body, "correlation_id", "", 160),
+			"status": external_text(step, "status", "", 40),
+			"tool_name": external_text(step, "tool_name", "", 120),
+			"tool_call_id": external_text(step, "tool_call_id", "", 160),
+			"arguments": safe_dict_get(step, "arguments", {}),
+			"result": safe_dict_get(step, "result", {}),
+			"usage": safe_dict_get(step, "usage", {})
+		}
+		step_number := next_step_number(session_id)
+		ts := to_string(current_timestamp())
+		db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?)", [session_id, agent_id, step_number, step_type, content, to_json(redact_dict_shallow(metadata)), source_app, "external", ts])
+		step_count = step_count + 1
+	}
+
+	return step_count
+}
+
+func insert_external_derived_agent_steps(request_dbid, body, source_app, session_id) {
+	step_count := 0
+	agent_id := external_text(body, "agent_id", source_app, 120)
+	task_id := external_text(body, "task_id", "", 160)
+	correlation_id := external_text(body, "correlation_id", "", 160)
+
+	events := safe_dict_get(body, "events", [])
+	if type(events) == "array" {
+		for event in events {
+			if step_count >= 256 || type(event) != "dict" {
+				continue
+			}
+			event_name := external_text(event, "event_name", "", 120)
+			if event_name != "thread_started" {
+				continue
+			}
+			step_number := next_step_number(session_id)
+			ts := to_string(current_timestamp())
+			db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?)", [session_id, agent_id, step_number, "thread_started", "Thread started", to_json({"request_dbid": request_dbid, "task_id": task_id, "correlation_id": correlation_id, "event_name": event_name}), source_app, "external", ts])
+			step_count = step_count + 1
+		}
+	}
+
+	tool_rows := db_query(db, "SELECT id, tool_name, tool_args, tool_result, status, latency_ms FROM tool_calls WHERE request_dbid = ? ORDER BY id ASC LIMIT 1", [request_dbid])
+	if step_count < 256 && len(tool_rows) > 0 {
+		tool_row := tool_rows[0]
+		step_type := truncate_str(to_string(tool_row["tool_name"]), 80)
+		if step_type != "" {
+			content := truncate_str(redact_sensitive_text(step_type + " completed"), 500)
+			metadata := {
+				"request_dbid": request_dbid,
+				"task_id": task_id,
+				"correlation_id": correlation_id,
+				"status": truncate_str(to_string(tool_row["status"]), 40),
+				"tool_name": truncate_str(to_string(tool_row["tool_name"]), 120),
+				"tool_call_id": truncate_str(to_string(tool_row["id"]), 160),
+				"arguments": truncate_str(to_string(tool_row["tool_args"]), 4000),
+				"result": truncate_str(to_string(tool_row["tool_result"]), 8000),
+				"latency_ms": to_int_or_zero(tool_row["latency_ms"])
+			}
+			step_number := next_step_number(session_id)
+			ts := to_string(current_timestamp())
+			db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?)", [session_id, agent_id, step_number, step_type, content, to_json(redact_dict_shallow(metadata)), source_app, "external", ts])
+			step_count = step_count + 1
+		}
+	}
+
+	return step_count
+}
+
 func insert_external_request(body) {
 	source_app := external_text(body, "source_app", "external", 80)
 	request_id := external_text(body, "request_id", "", 160)
@@ -1574,9 +1661,27 @@ func insert_external_request(body) {
 	}
 
 	session_id := external_text(body, "session_id", request_id, 160)
-	step_number := next_step_number(session_id)
-	db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?)", [session_id, external_text(body, "agent_id", source_app, 120), step_number, external_text(body, "step_type", "request_completed", 80), external_text(body, "response_summary", "External telemetry recorded", 500), to_json({"request_dbid": request_dbid, "task_id": external_text(body, "task_id", "", 160), "correlation_id": external_text(body, "correlation_id", "", 160)}), source_app, "external", ts])
+	explicit_step_count := insert_external_agent_steps(request_dbid, body, source_app, session_id)
 	trace_result := insert_trace_bundle(request_dbid, body, source_app, session_id, "external")
+	derived_step_count := 0
+	if explicit_step_count == 0 {
+		derived_step_count = insert_external_derived_agent_steps(request_dbid, body, source_app, session_id)
+	}
+	if explicit_step_count == 0 && derived_step_count == 0 {
+		fallback_step_type := external_text(body, "step_type", "request_completed", 80)
+		fallback_content := external_text(body, "response_summary", "External telemetry recorded", 500)
+		tool_calls := safe_dict_get(body, "tool_calls", [])
+		if type(tool_calls) == "array" && len(tool_calls) > 0 && type(tool_calls[0]) == "dict" {
+			first_tool := tool_calls[0]
+			first_tool_name := external_text(first_tool, "tool_name", "", 80)
+			if first_tool_name != "" {
+				fallback_step_type = first_tool_name
+				fallback_content = truncate_str(redact_sensitive_text(first_tool_name + " completed"), 500)
+			}
+		}
+		step_number := next_step_number(session_id)
+		db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?)", [session_id, external_text(body, "agent_id", source_app, 120), step_number, fallback_step_type, fallback_content, to_json({"request_dbid": request_dbid, "task_id": external_text(body, "task_id", "", 160), "correlation_id": external_text(body, "correlation_id", "", 160)}), source_app, "external", ts])
+	}
 	return {"ok": true, "id": request_dbid, "deduplicated": false, "trace": trace_result}
 }
 

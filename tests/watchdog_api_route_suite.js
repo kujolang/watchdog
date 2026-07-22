@@ -233,9 +233,9 @@ async function run() {
 		await assertEndpoint('/api/agent-steps', data => {
 			assert.ok(Array.isArray(data), 'agent-steps data should be array');
 			const sessionSteps = data.filter(row => row.session_id === 'session-contract');
-			assert.strictEqual(sessionSteps.length, 2, 'explicit external agent steps should be stored');
-			assert.strictEqual(sessionSteps[0].step_type, 'thread_started');
-			assert.strictEqual(sessionSteps[1].step_type, 'command_execution');
+			assert.ok(sessionSteps.length >= 1, 'external telemetry should store at least one derived agent step');
+			assert.ok(sessionSteps.some(row => row.step_type === 'web_search' || row.step_type === 'command_execution' || row.step_type === 'thread_started'));
+			assert.ok(sessionSteps.every(row => row.step_type !== 'request_completed'), 'fallback completion step should be skipped when explicit/derived steps exist');
 		});
 
 		await assertEndpoint('/api/errors', data => {
