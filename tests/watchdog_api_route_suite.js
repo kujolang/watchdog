@@ -184,7 +184,11 @@ async function run() {
 				{ span_id: 'span-tool', parent_span_id: 'span-model', span_kind: 'tool', name: 'tool.web_search', status: 'success', started_at_ms: 1200, ended_at_ms: 1350, duration_ms: 150, attributes: { backend: 'searxng' } }
 			],
 			events: [{ event_id: 'event-tool-start', span_id: 'span-tool', sequence: 1, event_name: 'tool_started', occurred_at_ms: 1200, attributes: { tool_name: 'web_search' } }],
-			tool_calls: [{ tool_name: 'web_search', arguments: { query_chars: 12 }, result: { result_count: 3 }, status: 'success', latency_ms: 150 }]
+			tool_calls: [{ tool_name: 'web_search', arguments: { query_chars: 12 }, result: { result_count: 3 }, status: 'success', latency_ms: 150 }],
+			agent_steps: [
+				{ step_type: 'thread_started', status: 'success', title: 'Codex thread started' },
+				{ step_type: 'command_execution', status: 'success', title: 'Codex command completed', tool_name: 'command_execution', tool_call_id: 'call-1', arguments: { command: '/bin/zsh -lc pwd' }, result: { exit_code: 0 } }
+			]
 		});
 		if (intake.status !== 200) {
 			console.error(server.getCapturedOutput().slice(-2000));
@@ -228,6 +232,10 @@ async function run() {
 
 		await assertEndpoint('/api/agent-steps', data => {
 			assert.ok(Array.isArray(data), 'agent-steps data should be array');
+			const sessionSteps = data.filter(row => row.session_id === 'session-contract');
+			assert.strictEqual(sessionSteps.length, 2, 'explicit external agent steps should be stored');
+			assert.strictEqual(sessionSteps[0].step_type, 'thread_started');
+			assert.strictEqual(sessionSteps[1].step_type, 'command_execution');
 		});
 
 		await assertEndpoint('/api/errors', data => {
