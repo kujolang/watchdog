@@ -3467,7 +3467,7 @@ server := server.route("GET", "/api/charts/latency-hist", func(req) {
 		conditions := push(conditions, "project_id = ?")
 		params := push(params, project_id)
 	}
-	sql := "SELECT SUM(CASE WHEN latency_ms < 200 THEN 1 ELSE 0 END) AS lt200, SUM(CASE WHEN latency_ms >= 200 AND latency_ms < 500 THEN 1 ELSE 0 END) AS lt500, SUM(CASE WHEN latency_ms >= 500 AND latency_ms < 1000 THEN 1 ELSE 0 END) AS lt1000, SUM(CASE WHEN latency_ms >= 1000 AND latency_ms < 2000 THEN 1 ELSE 0 END) AS lt2000, SUM(CASE WHEN latency_ms >= 2000 AND latency_ms < 3000 THEN 1 ELSE 0 END) AS lt3000, SUM(CASE WHEN latency_ms >= 3000 THEN 1 ELSE 0 END) AS gt3000 FROM requests"
+	sql := "SELECT SUM(CASE WHEN latency_ms < 200 THEN 1 ELSE 0 END) AS lt200, SUM(CASE WHEN latency_ms >= 200 AND latency_ms < 500 THEN 1 ELSE 0 END) AS lt500, SUM(CASE WHEN latency_ms >= 500 AND latency_ms < 1000 THEN 1 ELSE 0 END) AS lt1000, SUM(CASE WHEN latency_ms >= 1000 AND latency_ms < 2000 THEN 1 ELSE 0 END) AS lt2000, SUM(CASE WHEN latency_ms >= 2000 AND latency_ms < 3000 THEN 1 ELSE 0 END) AS lt3000, SUM(CASE WHEN latency_ms >= 3000 AND latency_ms < 5000 THEN 1 ELSE 0 END) AS lt5000, SUM(CASE WHEN latency_ms >= 5000 AND latency_ms < 10000 THEN 1 ELSE 0 END) AS lt10000, SUM(CASE WHEN latency_ms >= 10000 AND latency_ms < 30000 THEN 1 ELSE 0 END) AS lt30000, SUM(CASE WHEN latency_ms >= 30000 AND latency_ms < 60000 THEN 1 ELSE 0 END) AS lt60000, SUM(CASE WHEN latency_ms >= 60000 THEN 1 ELSE 0 END) AS gte60000 FROM requests"
 	sql := sql + where_clause_from_conditions(conditions)
 	rows := db_query(db, sql, params)
 	return api_ok(rows[0])

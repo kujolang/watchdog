@@ -270,7 +270,8 @@ async function run() {
 
 		await assertEndpoint('/api/charts/latency-hist', data => {
 			assert.ok(Object.prototype.hasOwnProperty.call(data, 'lt200'));
-			assert.ok(Object.prototype.hasOwnProperty.call(data, 'gt3000'));
+			assert.ok(Object.prototype.hasOwnProperty.call(data, 'lt30000'));
+			assert.ok(Object.prototype.hasOwnProperty.call(data, 'gte60000'));
 		});
 
 		await assertEndpoint('/api/charts/status-breakdown', data => {

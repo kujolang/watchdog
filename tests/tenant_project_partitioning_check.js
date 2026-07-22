@@ -279,7 +279,11 @@ async function run() {
 			+ Number(latencyHist.lt1000 || 0)
 			+ Number(latencyHist.lt2000 || 0)
 			+ Number(latencyHist.lt3000 || 0)
-			+ Number(latencyHist.gt3000 || 0);
+			+ Number(latencyHist.lt5000 || 0)
+			+ Number(latencyHist.lt10000 || 0)
+			+ Number(latencyHist.lt30000 || 0)
+			+ Number(latencyHist.lt60000 || 0)
+			+ Number(latencyHist.gte60000 || 0);
 		assert.strictEqual(latencyTotal, 1, 'tenant-scoped latency histogram should include only tenant rows');
 
 		const longSessionRows = parseApiData(

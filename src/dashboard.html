@@ -1679,11 +1679,12 @@ function normalizeMetricSeries(metricData, range, fields) {
 
 function renderCharts(reqData, latData, statusData, toolData, range = getActiveRange(), statTrendData = null) {
   const requestSeries = normalizeRequestSeries(reqData, range);
-  const latBuckets = ['<200ms','200-500ms','500ms-1s','1-2s','2-3s','>3s'];
+  const latBuckets = ['<200ms','200-500ms','500ms-1s','1-2s','2-3s','3-5s','5-10s','10-30s','30-60s','1m+'];
   const latValues = latData ? [
     latData.lt200, latData.lt500, latData.lt1000,
-    latData.lt2000, latData.lt3000, latData.gt3000,
-  ] : [0,0,0,0,0,0];
+    latData.lt2000, latData.lt3000, latData.lt5000,
+    latData.lt10000, latData.lt30000, latData.lt60000, latData.gte60000,
+  ] : [0,0,0,0,0,0,0,0,0,0];
   const statuses = (statusData || []);
   const toolEntries = (toolData || [])
     .map(tool => [String(tool.tool_name || 'unknown'), Number(tool.call_count || 0)])
