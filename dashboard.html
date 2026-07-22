@@ -677,6 +677,7 @@
   .btn:hover { background: #f5f8ff; border-color: #0069ff; color: #0069ff; }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn-primary:hover { background: #0059d6; border-color: #0059d6; color: #fff; }
+  .detail-header .btn { font-family: var(--font-mono); }
 
   main { width: min(1500px, 100%); margin: 0 auto; padding: 34px 32px 48px; gap: 22px; }
   .page-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
@@ -719,6 +720,17 @@
     font: 13px var(--font);
     outline: none;
   }
+  .range-select,
+  .filter-select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding-right: 36px;
+    background-image: linear-gradient(45deg, transparent 50%, #5f7093 50%), linear-gradient(135deg, #5f7093 50%, transparent 50%);
+    background-position: calc(100% - 18px) calc(50% - 2px), calc(100% - 12px) calc(50% - 2px);
+    background-size: 6px 6px, 6px 6px;
+    background-repeat: no-repeat;
+  }
   .range-input:focus, .range-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 105, 255, .12); }
   .page-kicker { color: var(--accent); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
   .page-title { color: #031b4e; font-family: var(--font-display); font-size: 28px; font-weight: 400; line-height: 1.2; letter-spacing: 0; }
@@ -757,6 +769,7 @@
   .table-toolbar { background: #fff; }
   .search-input, select.filter-select { background: #fff; border-color: #b9c2d6; color: var(--text); }
   .search-input:focus, select.filter-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 105, 255, .12); }
+  select.filter-select { min-height: 38px; padding: 8px 10px; font: 13px var(--font); }
   thead th { color: #526184; }
   tbody tr:hover { background: #f7faff; }
 
@@ -902,6 +915,32 @@
   .detail-related .detail-actions { flex-wrap: nowrap; overflow-x: auto; }
   .detail-actions-vertical { flex-direction: column; align-items: stretch; width: 100%; }
   .detail-actions-vertical .detail-action { width: 100%; justify-content: flex-start; }
+  .detail-label-toggle {
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+    cursor: pointer;
+  }
+  .detail-label-toggle:hover,
+  .detail-label-toggle:focus-visible { color: var(--accent); outline: none; }
+  .detail-label-toggle .trace-toggle { margin-left: 0; }
+  .detail-label-toggle[aria-expanded="true"] .trace-toggle { color: var(--accent); }
+  .detail-action-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+  .detail-action-group[hidden] { display: none; }
   .trace-toggle { display: inline-flex; margin-left: auto; color: var(--text-muted); }
   .trace-toggle svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; fill: none; stroke-linecap: round; stroke-linejoin: round; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
@@ -942,6 +981,11 @@
     .auth-form { flex-direction: column; }
     .detail-field { grid-template-columns: 1fr; gap: 4px; }
     .backup-layout { grid-template-columns: 1fr; padding: 14px; }
+    .tabs-header {
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    .tabs-header::-webkit-scrollbar { display: none; }
   }
   @media (max-width: 430px) {
     .stats-grid { grid-template-columns: 1fr; }
@@ -2268,7 +2312,8 @@ function showRecordDetails(table, index) {
     const stackFieldActionsLeft = table === 'traceSpans' && fieldActions.length > 0;
     if (stackFieldActionsLeft) {
       label.classList.add('detail-label-stack');
-      label.appendChild(buildActionList(fieldActions, { showLabels: true, vertical: true }));
+      label.textContent = '';
+      label.appendChild(buildCollapsibleActionGroup(key.replace(/_/g, ' '), fieldActions));
     }
     inline.appendChild(codeBlock);
     if (fieldActions.length && !stackFieldActionsLeft) {
@@ -2389,6 +2434,39 @@ function buildActionList(actions, options = {}) {
     button.onclick = action.run;
     wrap.appendChild(button);
   });
+  return wrap;
+}
+
+function buildCollapsibleActionGroup(title, actions) {
+  const wrap = document.createElement('div');
+  wrap.className = 'detail-action-group';
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'detail-label-toggle';
+  toggle.setAttribute('aria-expanded', 'false');
+
+  const text = document.createElement('span');
+  text.textContent = title;
+  toggle.appendChild(text);
+
+  const icon = document.createElement('span');
+  icon.className = 'trace-toggle';
+  icon.innerHTML = tablerIcon('chevron-down');
+  toggle.appendChild(icon);
+
+  const actionList = buildActionList(actions, { showLabels: true, vertical: true });
+  actionList.hidden = true;
+
+  toggle.onclick = () => {
+    const expanded = toggle.getAttribute('aria-expanded') === 'true';
+    toggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+    icon.innerHTML = tablerIcon(expanded ? 'chevron-down' : 'chevron-up');
+    actionList.hidden = expanded;
+  };
+
+  wrap.appendChild(toggle);
+  wrap.appendChild(actionList);
   return wrap;
 }
 
