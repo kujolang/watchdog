@@ -208,8 +208,12 @@ async function run() {
 			assert.strictEqual(trace.pricing_kind, 'catalog');
 			assert.match(String(trace.pricing_source || ''), /^openrouter-public-catalog:2026-07-19/);
 			assert.strictEqual(trace.priced_model, 'anthropic/claude-sonnet-5');
+			assert.match(String(trace.attributes_json || ''), /"transport":"direct"/);
 		});
-		await assertEndpoint(`/api/trace-spans?trace_id=${traceId}`, data => assert.strictEqual(data.length, 2));
+		await assertEndpoint(`/api/trace-spans?trace_id=${traceId}`, data => {
+			assert.strictEqual(data.length, 2);
+			assert.ok(data.some(row => String(row.attributes_json || '').includes('\"time_to_first_token_ms\":25')));
+		});
 		await assertEndpoint(`/api/trace-events?trace_id=${traceId}`, data => {
 			assert.strictEqual(data.length, 2);
 			assert.ok(data.some(row => row.event_name === 'persistence_saved'));

@@ -910,13 +910,24 @@ func redact_sensitive_text(value) {
 	return text
 }
 
+func telemetry_metric_key(key_text) {
+	key := to_lower(trim(to_string(key_text)))
+	if key == "input_tokens" || key == "output_tokens" || key == "total_tokens" || key == "cached_input_tokens" || key == "cache_write_input_tokens" || key == "reasoning_output_tokens" {
+		return true
+	}
+	if key == "time_to_first_token_ms" || key == "round_time_to_first_token_ms" || key == "output_tokens_per_second" {
+		return true
+	}
+	return false
+}
+
 func redact_sensitive_value_for_key(key, value) {
 	if !redaction_enabled() {
 		return value
 	}
 
 	key_text := to_lower(to_string(key))
-	if string_has_sensitive_term(key_text) {
+	if string_has_sensitive_term(key_text) && !telemetry_metric_key(key_text) {
 		return "[REDACTED]"
 	}
 
@@ -925,7 +936,37 @@ func redact_sensitive_value_for_key(key, value) {
 	}
 
 	if type(value) == "dict" {
-		return redact_dict_shallow(value)
+		return redact_json_value(value)
+	}
+
+	if type(value) == "array" {
+		return redact_json_value(value)
+	}
+
+	return value
+}
+
+func redact_json_value(value) {
+	if type(value) == "dict" {
+		clean := {}
+		for key in keys(value) {
+			clean[key] := redact_sensitive_value_for_key(key, value[key])
+		}
+		return clean
+	}
+
+	if type(value) == "array" {
+		clean_items := []
+		i := 0
+		while i < len(value) {
+			clean_items := push(clean_items, redact_json_value(value[i]))
+			i := i + 1
+		}
+		return clean_items
+	}
+
+	if type(value) == "string" {
+		return redact_sensitive_text(value)
 	}
 
 	return value
@@ -935,12 +976,7 @@ func redact_dict_shallow(input_map) {
 	if type(input_map) != "dict" {
 		return input_map
 	}
-
-	clean := {}
-	for key in keys(input_map) {
-		clean[key] := redact_sensitive_value_for_key(key, input_map[key])
-	}
-	return clean
+	return redact_json_value(input_map)
 }
 
 func parse_stream_events(sse_text) {
@@ -1464,11 +1500,10 @@ func external_text(body, key, fallback_value, max_len) {
 }
 
 func external_json_summary(value, max_len) {
-	serialized := value
 	if type(value) == "dict" || type(value) == "array" {
-		serialized = to_json(value)
+		return truncate_str(to_json(redact_json_value(value)), max_len)
 	}
-	return truncate_str(redact_sensitive_text(to_string(serialized)), max_len)
+	return truncate_str(redact_sensitive_text(to_string(value)), max_len)
 }
 
 func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class) {
