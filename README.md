@@ -364,6 +364,7 @@ retention count, encryption setting, or to create a backup immediately.
 - A Dropbox or Google Drive folder can be selected by entering its local synced path.
 - Scheduling is activity-aware: startup, dashboard refreshes, proxy traffic, and direct telemetry trigger a due check. If Watchdog is idle, the next activity creates the overdue backup before continuing.
 - Generated files use `watchdog-backup-<UTC timestamp>-<suffix>.db` or `.db.enc`; retention only removes files matching that pattern.
+- The main backup list now shows only files still present in the configured folder. Deleted or missing files stay available under the archived history view, and active backups can be deleted directly from the dashboard.
 
 For encrypted backups, create a dedicated passphrase file outside the repository:
 
@@ -509,6 +510,7 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `GET` | `/api/admin/backups` | Backup settings, schedule status, and recent run history |
 | `PUT` | `/api/admin/backups/settings` | Persist backup frequency, folder, retention, enablement, and encryption mode |
 | `POST` | `/api/admin/backups/run` | Create and verify a backup immediately |
+| `POST` | `/api/admin/backups/delete` | Delete a backup file (and checksum sidecar) while keeping its archived record |
 | `POST` | `/api/admin/prune` | Prune old telemetry rows (supports dry-run) |
 | `POST` | `/api/admin/prune-fixtures` | Remove only rows explicitly classified as fixture data (supports dry-run) |
 | `GET` | `/api/export` | Full export (`json` default or `jsonl`/`ndjson`) |
