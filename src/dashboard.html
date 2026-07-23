@@ -924,6 +924,7 @@
   .detail-related .detail-actions { flex-wrap: nowrap; overflow-x: auto; }
   .detail-actions-vertical { flex-direction: column; align-items: stretch; width: 100%; }
   .detail-actions-vertical .detail-action { width: 100%; justify-content: flex-start; }
+  .detail-actions-collapsed { display: none; }
   .detail-label-toggle {
     display: inline-flex;
     align-items: center;
@@ -2465,13 +2466,15 @@ function buildCollapsibleActionGroup(title, actions) {
   toggle.appendChild(icon);
 
   const actionList = buildActionList(actions, { showLabels: true, vertical: true });
-  actionList.hidden = true;
+  actionList.classList.add('detail-actions-collapsed');
+  actionList.setAttribute('aria-hidden', 'true');
 
   toggle.onclick = () => {
     const expanded = toggle.getAttribute('aria-expanded') === 'true';
     toggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
     icon.innerHTML = tablerIcon(expanded ? 'chevron-down' : 'chevron-up');
-    actionList.hidden = expanded;
+    actionList.classList.toggle('detail-actions-collapsed', expanded);
+    actionList.setAttribute('aria-hidden', expanded ? 'true' : 'false');
   };
 
   wrap.appendChild(toggle);
