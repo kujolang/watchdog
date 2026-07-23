@@ -436,12 +436,21 @@
   .trace-session-header {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 12px;
     padding: 12px 16px;
     background: var(--surface2);
     cursor: pointer;
     font-weight: 600;
   }
+  .trace-session-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .trace-session-header .trace-toggle { margin-left: 0; }
+  .trace-actions { display: flex; justify-content: flex-end; }
 
   .trace-session-header:hover { background: #2d333b; }
 
@@ -916,11 +925,10 @@
   .detail-actions-vertical { flex-direction: column; align-items: stretch; width: 100%; }
   .detail-actions-vertical .detail-action { width: 100%; justify-content: flex-start; }
   .detail-label-toggle {
-    width: 100%;
     display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    justify-content: flex-start;
+    gap: 6px;
     padding: 0;
     border: 0;
     background: transparent;
@@ -1896,14 +1904,12 @@ function renderAgentTraces() {
     return `
       <div class="trace-session">
         <div class="trace-session-header" onclick="toggleTrace('trace-${traceIndex}', 'trace-toggle-${traceIndex}')">
-          <span>${safeText(trace.name || 'trace')}</span>
+          <span class="trace-session-title"><span id="trace-toggle-${traceIndex}" class="trace-toggle">${tablerIcon('chevron-down')}</span><span>${safeText(trace.name || 'trace')}</span></span>
           <span class="cell-mono" style="font-size:12px;color:var(--text-muted)">${safeText(trace.trace_id)}</span>
           <span class="badge ${trace.status === 'error' ? 'badge-error' : 'badge-success'}">${safeText(trace.status)}</span>
           <span class="badge badge-info">${spans.length} spans · ${events.length} events</span>
-          <button class="btn btn-sm" type="button" onclick="event.stopPropagation();showTraceRecordDetails(${traceIndex})">Details</button>
-          <span id="trace-toggle-${traceIndex}" class="trace-toggle">${tablerIcon('chevron-down')}</span>
         </div>
-        <div class="trace-waterfall" id="trace-${traceIndex}">
+        <div class="trace-waterfall" id="trace-${traceIndex}" style="display:none">
           <div class="trace-summary">
             <span>${safeText(trace.source_app)} · ${safeText(trace.session_id)}</span>
             <span>${fmtLatency(trace.duration_ms)} total</span>
@@ -1913,6 +1919,9 @@ function renderAgentTraces() {
             <span>${persistenceEvent ? 'Persisted ✓' : 'Persistence pending/not reported'}</span>
             <span>TTFT ${fmtLatency(attrs.time_to_first_token_ms)}</span>
             <span>${fmtNum(attrs.output_tokens_per_second || 0)} tok/s</span>
+          </div>
+          <div class="trace-actions">
+            <button class="btn btn-sm" type="button" onclick="event.stopPropagation();showTraceRecordDetails(${traceIndex})">Details</button>
           </div>
           ${spans.map(span => renderTraceSpanRow(trace, span, events, traceStart, traceDuration)).join('') || '<div class="empty">No spans match this filter.</div>'}
         </div>
@@ -1935,12 +1944,11 @@ function renderLegacyAgentTraces(container, steps) {
     const sessionSteps = bySession[sessionId].sort((a, b) => a.step_number - b.step_number);
     return `<div class="trace-session">
       <div class="trace-session-header" onclick="toggleTrace('legacy-trace-${index}', 'legacy-trace-toggle-${index}')">
-        <span>${safeText(sessionSteps[0]?.agent_id || '—')}</span>
+        <span class="trace-session-title"><span id="legacy-trace-toggle-${index}" class="trace-toggle">${tablerIcon('chevron-down')}</span><span>${safeText(sessionSteps[0]?.agent_id || '—')}</span></span>
         <span class="cell-mono">${safeText(sessionId)}</span>
         <span class="badge badge-info" style="margin-left:auto">${sessionSteps.length} steps</span>
-        <span id="legacy-trace-toggle-${index}" class="trace-toggle">${tablerIcon('chevron-down')}</span>
       </div>
-      <div class="trace-steps" id="legacy-trace-${index}">${sessionSteps.map(step => {
+      <div class="trace-steps" id="legacy-trace-${index}" style="display:none">${sessionSteps.map(step => {
         const stepType = safeStepType(step.step_type);
         return `<div class="trace-step"><div class="step-icon step-icon-${stepType}">${STEP_ICONS[stepType] || '•'}</div><div class="step-body"><div class="step-meta"><span class="badge badge-step-${stepType}">${safeText(step.step_type || 'unknown')}</span><span>Step ${Number(step.step_number || 0)}</span><span style="margin-left:auto">${fmtTs(step.created_at)}</span></div><div class="step-content">${safeText(step.content)}</div></div></div>`;
       }).join('')}</div>
@@ -2007,7 +2015,7 @@ function toggleTrace(id, toggleId) {
   el.style.display = visible ? 'none' : 'flex';
   el.style.flexDirection = 'column';
   const toggle = document.getElementById(toggleId || '');
-  if (toggle) toggle.innerHTML = tablerIcon(visible ? 'chevron-up' : 'chevron-down');
+  if (toggle) toggle.innerHTML = tablerIcon(visible ? 'chevron-down' : 'chevron-up');
 }
 
 /* ════════════════════════════════════════════════════════════════════
