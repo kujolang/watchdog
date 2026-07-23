@@ -964,6 +964,14 @@
   .backup-layout { display: grid; grid-template-columns: minmax(300px, 420px) 1fr; gap: 20px; padding: 20px; }
   .backup-card { border: 1px solid var(--border); background: #fff; padding: 18px; }
   .backup-card h3 { color: #031b4e; font-size: 15px; margin-bottom: 14px; }
+  .backup-subtabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .backup-subtab { border: 1px solid var(--border); background: #f7f9fd; color: #274472; padding: 8px 12px; font-size: 12px; cursor: pointer; }
+  .backup-subtab.active { background: #031b4e; border-color: #031b4e; color: #fff; }
+  .backup-subtab-count { opacity: 0.72; font-variant-numeric: tabular-nums; }
+  .backup-subpanel { margin-top: 14px; }
+  .backup-delete-btn { padding: 5px 10px; font-size: 11px; border: 1px solid #d8a4a4; background: #fff3f2; color: #9f1d20; cursor: pointer; }
+  .backup-delete-btn:disabled { opacity: 0.6; cursor: wait; }
+  .backup-file-state { display: inline-flex; align-items: center; gap: 6px; }
   .backup-field { display: grid; gap: 6px; margin-bottom: 14px; }
   .backup-field label { color: #526184; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
   .backup-input { width: 100%; border: 1px solid #b9c2d6; background: #fff; color: var(--text); padding: 9px 10px; font: 13px var(--font-mono); outline: none; }
@@ -1299,13 +1307,28 @@
         <section class="backup-card">
           <h3>Backup history</h3>
           <div class="backup-help" id="backupScheduleSummary">Loading backup status…</div>
-          <div class="table-wrap" style="margin-top:14px;max-height:420px">
-            <table>
-              <thead><tr><th>Started</th><th>Trigger</th><th>Status</th><th>Encrypted</th><th>Size</th><th>File</th></tr></thead>
-              <tbody id="backupRunsBody"></tbody>
-            </table>
+          <div class="backup-subtabs" role="tablist" aria-label="Backup history views">
+            <button class="backup-subtab active" type="button" id="backupActiveTabButton" onclick="switchBackupHistoryTab('active', this)">Active in folder <span class="backup-subtab-count" id="backupActiveTabCount">0</span></button>
+            <button class="backup-subtab" type="button" id="backupArchivedTabButton" onclick="switchBackupHistoryTab('archived', this)">Archived history <span class="backup-subtab-count" id="backupArchivedTabCount">0</span></button>
           </div>
-          <div id="backupRunsEmpty" class="empty hidden"><div class="empty-icon">▣</div>No backups have run yet.</div>
+          <div class="backup-subpanel" id="backupActivePanel">
+            <div class="table-wrap" style="max-height:420px">
+              <table>
+                <thead><tr><th>Started</th><th>Trigger</th><th>Encrypted</th><th>Size</th><th>File</th><th>Action</th></tr></thead>
+                <tbody id="backupActiveBody"></tbody>
+              </table>
+            </div>
+            <div id="backupActiveEmpty" class="empty hidden"><div class="empty-icon">▣</div>No active backups were found in the folder.</div>
+          </div>
+          <div class="backup-subpanel hidden" id="backupArchivedPanel">
+            <div class="table-wrap" style="max-height:420px">
+              <table>
+                <thead><tr><th>Started</th><th>Trigger</th><th>Status</th><th>Encrypted</th><th>Size</th><th>Record</th></tr></thead>
+                <tbody id="backupArchivedBody"></tbody>
+              </table>
+            </div>
+            <div id="backupArchivedEmpty" class="empty hidden"><div class="empty-icon">▣</div>No archived backup records yet.</div>
+          </div>
         </section>
       </div>
     </div>
@@ -1334,6 +1357,7 @@ const state = {
   sessions:   [],
   insights:   null,
   backups:    null,
+  backupHistoryTab: 'active',
   visibleRows: { requests: [], toolCalls: [], sessions: [] },
   sortKey:    { requests: 'created_at', sessions: 'last_seen' },
   sortAsc:    { requests: false, sessions: false },
@@ -2166,6 +2190,12 @@ function renderBackups(forceFormUpdate = false) {
   const data = state.backups || {};
   const settings = data.settings || {};
   const runs = Array.isArray(data.runs) ? data.runs : [];
+  const activeRuns = Array.isArray(data.active_runs)
+    ? data.active_runs
+    : runs.filter(run => run && run.status === 'success' && run.backup_exists);
+  const archivedRuns = Array.isArray(data.archived_runs)
+    ? data.archived_runs
+    : runs.filter(run => !run || run.status !== 'success' || !run.backup_exists);
   const firstRender = !state.hasLoaded;
   if (forceFormUpdate || firstRender) {
     document.getElementById('backupDir').value = settings.backup_dir || '';
@@ -2184,27 +2214,60 @@ function renderBackups(forceFormUpdate = false) {
   const nextDue = Number(data.next_due_at_ms || 0);
   const lastSuccess = Number(data.last_success_at_ms || 0);
   setText('backupScheduleSummary', settings.enabled
-    ? `Last successful backup: ${lastSuccess ? fmtTs(lastSuccess) : 'none yet'} · Next due: ${nextDue ? fmtTs(nextDue) : 'on next activity'}`
+    ? `Last successful backup: ${lastSuccess ? fmtTs(lastSuccess) : 'none yet'} · Next due: ${nextDue ? fmtTs(nextDue) : 'on next activity'} · Active files: ${activeRuns.length}`
     : 'Automatic backups are disabled. Manual backups remain available.');
-  setText('badgeBackups', runs.filter(run => run.status === 'success').length);
+  setText('badgeBackups', activeRuns.length);
+  setText('backupActiveTabCount', activeRuns.length);
+  setText('backupArchivedTabCount', archivedRuns.length);
 
-  const tbody = document.getElementById('backupRunsBody');
-  const empty = document.getElementById('backupRunsEmpty');
-  if (!runs.length) {
-    tbody.innerHTML = '';
-    empty.classList.remove('hidden');
-    return;
+  const activeBody = document.getElementById('backupActiveBody');
+  const activeEmpty = document.getElementById('backupActiveEmpty');
+  if (!activeRuns.length) {
+    activeBody.innerHTML = '';
+    activeEmpty.classList.remove('hidden');
+  } else {
+    activeEmpty.classList.add('hidden');
+    activeBody.innerHTML = activeRuns.map(run => `
+    <tr>
+      <td class="cell-mono" style="white-space:nowrap;font-size:11px">${fmtTs(run.started_at_ms)}</td>
+      <td>${safeText(run.trigger_type || '—')}</td>
+      <td>${Number(run.encrypted || 0) === 1 ? 'Yes' : 'No'}</td>
+      <td style="white-space:nowrap">${fmtBytes(run.size_bytes)}</td>
+      <td class="cell-mono cell-truncate" title="${safeText(run.backup_path || '')}">${safeText(run.backup_path || '—')}</td>
+      <td><button class="backup-delete-btn" type="button" data-backup-delete="${Number(run.id || 0)}" onclick="deleteBackupRun(${Number(run.id || 0)}, this)">Delete</button></td>
+    </tr>`).join('');
   }
-  empty.classList.add('hidden');
-  tbody.innerHTML = runs.map(run => `
+
+  const archivedBody = document.getElementById('backupArchivedBody');
+  const archivedEmpty = document.getElementById('backupArchivedEmpty');
+  if (!archivedRuns.length) {
+    archivedBody.innerHTML = '';
+    archivedEmpty.classList.remove('hidden');
+  } else {
+    archivedEmpty.classList.add('hidden');
+    archivedBody.innerHTML = archivedRuns.map(run => `
     <tr>
       <td class="cell-mono" style="white-space:nowrap;font-size:11px">${fmtTs(run.started_at_ms)}</td>
       <td>${safeText(run.trigger_type || '—')}</td>
       <td><span class="badge badge-${run.status === 'success' ? 'success' : 'error'}">${safeText(run.status || 'unknown')}</span></td>
       <td>${Number(run.encrypted || 0) === 1 ? 'Yes' : 'No'}</td>
       <td style="white-space:nowrap">${fmtBytes(run.size_bytes)}</td>
-      <td class="cell-mono cell-truncate" title="${safeText(run.backup_path || run.error_message || '')}">${safeText(run.backup_path || run.error_message || '—')}</td>
+      <td class="cell-mono cell-truncate" title="${safeText(run.backup_path || run.error_message || '')}">
+        <span class="backup-file-state">${safeText(run.backup_path || run.error_message || '—')}${run.status === 'success' && !run.backup_exists ? ' · Missing from folder' : ''}</span>
+      </td>
     </tr>`).join('');
+  }
+
+  switchBackupHistoryTab(state.backupHistoryTab);
+}
+
+function switchBackupHistoryTab(name) {
+  state.backupHistoryTab = name === 'archived' ? 'archived' : 'active';
+  const activeSelected = state.backupHistoryTab === 'active';
+  document.getElementById('backupActivePanel').classList[activeSelected ? 'remove' : 'add']('hidden');
+  document.getElementById('backupArchivedPanel').classList[activeSelected ? 'add' : 'remove']('hidden');
+  document.getElementById('backupActiveTabButton').classList[activeSelected ? 'add' : 'remove']('active');
+  document.getElementById('backupArchivedTabButton').classList[activeSelected ? 'remove' : 'add']('active');
 }
 
 function setBackupStatus(message, isError = false) {
@@ -2252,6 +2315,33 @@ async function runBackupNow() {
     setBackupStatus(err.message || 'Backup failed.', true);
   } finally {
     button.disabled = false;
+  }
+}
+
+async function deleteBackupRun(runId, button) {
+  const numericRunId = Number(runId || 0);
+  if (!numericRunId) return;
+  const approved = typeof window.confirm !== 'function'
+    ? true
+    : window.confirm('Delete this backup from the backup folder? The record will stay in archived history.');
+  if (!approved) return;
+
+  if (button) button.disabled = true;
+  setBackupStatus('Deleting backup from the folder…');
+  try {
+    const data = await fetchJSON('/api/admin/backups/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_id: numericRunId }),
+    });
+    state.backups = data.status;
+    state.backupHistoryTab = 'active';
+    renderBackups(true);
+    setBackupStatus('Backup deleted from the folder. The record remains in archived history.');
+  } catch (err) {
+    setBackupStatus(err.message || 'Could not delete backup.', true);
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 

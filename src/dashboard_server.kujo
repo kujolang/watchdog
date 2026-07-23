@@ -1849,10 +1849,46 @@ func backup_runs(limit_value) {
 	return db_query(db, "SELECT id, trigger_type, status, backup_path, checksum_path, size_bytes, encrypted, error_message, started_at_ms, finished_at_ms FROM backup_runs ORDER BY started_at_ms DESC LIMIT ?", [limit_value])
 }
 
+func backup_run_with_presence(row) {
+	backup_path := to_string(safe_dict_get(row, "backup_path", ""))
+	checksum_path := to_string(safe_dict_get(row, "checksum_path", ""))
+	status := to_string(safe_dict_get(row, "status", ""))
+	backup_exists := backup_path != "" && file_exists(backup_path) && !path_is_dir(backup_path)
+	checksum_exists := checksum_path != "" && file_exists(checksum_path) && !path_is_dir(checksum_path)
+	enriched := {}
+	for key in keys(row) {
+		enriched[key] = row[key]
+	}
+	enriched["backup_exists"] = backup_exists
+	enriched["checksum_exists"] = checksum_exists
+	enriched["is_active"] = status == "success" && backup_exists
+	enriched["missing_from_folder"] = status == "success" && backup_path != "" && !backup_exists
+	return enriched
+}
+
+func backup_runs_with_presence(limit_value) {
+	rows := backup_runs(limit_value)
+	enriched := []
+	for row in rows {
+		enriched := push(enriched, backup_run_with_presence(row))
+	}
+	return enriched
+}
+
 func backup_status_payload() {
 	settings := read_backup_settings()
 	last_success_ms := backup_last_success_ms()
 	next_due_at_ms := 0
+	runs := backup_runs_with_presence(100)
+	active_runs := []
+	archived_runs := []
+	for run in runs {
+		if parse_bool_value(safe_dict_get(run, "is_active", false), false) {
+			active_runs := push(active_runs, run)
+		} else {
+			archived_runs := push(archived_runs, run)
+		}
+	}
 	if settings["enabled"] {
 		next_due_at_ms = last_success_ms + (settings["interval_minutes"] * 60 * 1000)
 		if last_success_ms == 0 {
@@ -1865,7 +1901,9 @@ func backup_status_payload() {
 		"backup_in_progress": BACKUP_IN_PROGRESS,
 		"last_success_at_ms": last_success_ms,
 		"next_due_at_ms": next_due_at_ms,
-		"runs": backup_runs(25),
+		"runs": runs,
+		"active_runs": active_runs,
+		"archived_runs": archived_runs,
 		"limits": {
 			"min_interval_minutes": MIN_BACKUP_INTERVAL_MINUTES,
 			"max_interval_minutes": MAX_BACKUP_INTERVAL_MINUTES,
@@ -3637,6 +3675,54 @@ server := server.route("POST", "/api/admin/backups/run", func(req) {
 		return api_error(500, result["error"])
 	}
 	return api_ok({"run": result, "status": backup_status_payload()})
+})
+
+server := server.route("POST", "/api/admin/backups/delete", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+	body_parse := parse_json_with_limit(to_string(safe_dict_get(req, "body", "{}")), MAX_PARSE_BODY_BYTES)
+	if !body_parse["ok"] || type(body_parse["data"]) != "dict" {
+		return api_error(400, "Request body must be a JSON object")
+	}
+	body := body_parse["data"]
+	run_id := to_int_or_zero(safe_dict_get(body, "run_id", 0))
+	if run_id <= 0 {
+		return api_error(400, "Backup run id is required")
+	}
+	rows := db_query(db, "SELECT id, backup_path, checksum_path, status FROM backup_runs WHERE id = ? LIMIT 1", [run_id])
+	if len(rows) == 0 {
+		return api_error(404, "Backup run was not found")
+	}
+	row := rows[0]
+	backup_path := to_string(safe_dict_get(row, "backup_path", ""))
+	checksum_path := to_string(safe_dict_get(row, "checksum_path", ""))
+	status := to_string(safe_dict_get(row, "status", ""))
+	if status != "success" || backup_path == "" {
+		return api_error(400, "Only completed backup files can be deleted")
+	}
+	if !file_exists(backup_path) || path_is_dir(backup_path) {
+		return api_error(404, "Backup file is no longer present on disk")
+	}
+	try {
+		delete_file(backup_path)
+	} except err {
+		message := truncate_str(redact_sensitive_text(to_string(err)), 500)
+		insert_audit_event("backup_delete", resolve_audit_actor_key(req, "api"), "failed", {"run_id": run_id, "reason": message})
+		return api_error(500, "Could not delete backup file")
+	}
+	if checksum_path != "" && file_exists(checksum_path) && !path_is_dir(checksum_path) {
+		try {
+			delete_file(checksum_path)
+		} except err {
+			message := truncate_str(redact_sensitive_text(to_string(err)), 500)
+			insert_audit_event("backup_delete", resolve_audit_actor_key(req, "api"), "failed", {"run_id": run_id, "reason": message, "checksum_path": checksum_path})
+			return api_error(500, "Backup file was deleted but the checksum file could not be removed")
+		}
+	}
+	insert_audit_event("backup_delete", resolve_audit_actor_key(req, "api"), "success", {"run_id": run_id})
+	return api_ok({"deleted_run_id": run_id, "status": backup_status_payload()})
 })
 
 server := server.route("POST", "/api/admin/prune", func(req) {

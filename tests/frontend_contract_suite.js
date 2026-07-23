@@ -77,10 +77,14 @@ function createHarness() {
 		'tcSearch', 'tcStatusFilter', 'tcBody', 'tcEmpty',
 		'traceContainer', 'errorGrid', 'sessBody', 'sessEmpty', 'insightsContainer',
 		'badgeTraces', 'detailDialog', 'detailTitle', 'detailBody', 'statRequestsSub',
+		'backupDir', 'backupInterval', 'backupRetention', 'backupEnabled', 'backupEncryption', 'backupEncryptionHelp',
+		'backupScheduleSummary', 'badgeBackups', 'backupActiveTabCount', 'backupArchivedTabCount',
+		'backupActiveBody', 'backupActiveEmpty', 'backupArchivedBody', 'backupArchivedEmpty',
+		'backupActivePanel', 'backupArchivedPanel', 'backupActiveTabButton', 'backupArchivedTabButton', 'backupStatus',
 	];
 
 	requiredIds.forEach(id => {
-		const defaults = (id === 'reqEmpty' || id === 'tcEmpty' || id === 'sessEmpty') ? ['hidden'] : [];
+		const defaults = (id === 'reqEmpty' || id === 'tcEmpty' || id === 'sessEmpty' || id === 'backupActiveEmpty' || id === 'backupArchivedEmpty' || id === 'backupArchivedPanel') ? ['hidden'] : [];
 		elements[id] = makeElement(id, defaults);
 	});
 
@@ -93,6 +97,9 @@ function createHarness() {
 		setTimeout(callback) {
 			callback();
 			return 0;
+		},
+		confirm() {
+			return true;
 		},
 		navigator: {
 			clipboard: {
@@ -414,11 +421,43 @@ function testStatCardSparklinesUseMetricTrends() {
 	assert.deepStrictEqual(sparklines.traces, [0, 0, 0, 0, 0, 0, 9]);
 }
 
+function testBackupPanelsReflectActiveAndArchivedFiles() {
+	const { context, elements } = createHarness();
+	context.state.backups = {
+		settings: { backup_dir: '/tmp/backups', interval_minutes: 1440, retention_count: 30, enabled: true, encryption_enabled: false },
+		encryption_key_configured: true,
+		last_success_at_ms: 1700000000000,
+		next_due_at_ms: 1700003600000,
+		active_runs: [
+			{ id: 7, trigger_type: 'manual', encrypted: 1, size_bytes: 2048, backup_path: '/tmp/backups/watchdog-7.db.enc', started_at_ms: 1700000000000, backup_exists: true, status: 'success' },
+		],
+		archived_runs: [
+			{ id: 6, trigger_type: 'scheduled', encrypted: 0, size_bytes: 1024, backup_path: '/tmp/backups/watchdog-6.db', started_at_ms: 1699990000000, backup_exists: false, status: 'success', error_message: '' },
+			{ id: 5, trigger_type: 'manual', encrypted: 0, size_bytes: 0, backup_path: '', started_at_ms: 1699980000000, backup_exists: false, status: 'failed', error_message: 'OpenSSL failed' },
+		],
+	};
+
+	context.renderBackups(true);
+	assert.ok(elements.backupActiveBody.innerHTML.includes('deleteBackupRun(7, this)'), 'active backups should expose a delete action');
+	assert.ok(elements.backupActiveBody.innerHTML.includes('/tmp/backups/watchdog-7.db.enc'));
+	assert.ok(elements.backupArchivedBody.innerHTML.includes('Missing from folder'), 'archived backups should call out files removed from the folder');
+	assert.ok(elements.backupArchivedBody.innerHTML.includes('OpenSSL failed'), 'archived failures should keep their recorded error');
+	assert.strictEqual(elements.badgeBackups.textContent, 1, 'backup badge should reflect active files only');
+	assert.strictEqual(elements.backupActiveTabCount.textContent, 1);
+	assert.strictEqual(elements.backupArchivedTabCount.textContent, 2);
+
+	context.switchBackupHistoryTab('archived');
+	assert.strictEqual(elements.backupArchivedPanel.classList.contains('hidden'), false, 'archived panel should become visible');
+	assert.strictEqual(elements.backupActivePanel.classList.contains('hidden'), true, 'active panel should be hidden when archived is selected');
+	assert.strictEqual(elements.backupArchivedTabButton.classList.contains('active'), true, 'archived tab should become active');
+}
+
 async function run() {
 	await testRequestsFiltersSortingAndEscaping();
 	testToolCallsErrorsSessionsAndTracesContracts();
 	testToolChartUsesAggregatedCallCounts();
 	testStatCardSparklinesUseMetricTrends();
+	testBackupPanelsReflectActiveAndArchivedFiles();
 	console.log('frontend_contract_suite: PASS');
 }
 

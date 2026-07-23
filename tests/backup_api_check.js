@@ -75,6 +75,7 @@ async function run() {
 		const initial = await request(port, 'GET', '/api/admin/backups', token, null);
 		assert.strictEqual(initial.status, 200);
 		assert.strictEqual(initial.json.data.encryption_key_configured, true);
+		assert.deepStrictEqual(initial.json.data.active_runs, []);
 
 		const saved = await request(port, 'PUT', '/api/admin/backups/settings', token, {
 			enabled: true,
@@ -93,6 +94,9 @@ async function run() {
 		const backupPath = manual.json.data.run.backup_path;
 		assert.ok(fs.existsSync(backupPath));
 		assert.ok(fs.existsSync(manual.json.data.run.checksum_path));
+		assert.strictEqual(manual.json.data.status.active_runs.length, 1);
+		assert.strictEqual(manual.json.data.status.active_runs[0].backup_exists, true);
+		assert.strictEqual(manual.json.data.status.archived_runs.length, 0);
 
 		const restored = path.join(temp, 'restored.db');
 		const decrypt = spawnSync('openssl', [
@@ -102,6 +106,17 @@ async function run() {
 		assert.strictEqual(decrypt.status, 0, decrypt.stderr);
 		const quickCheck = spawnSync('sqlite3', [restored, 'PRAGMA quick_check;'], { encoding: 'utf8' });
 		assert.strictEqual(quickCheck.stdout.trim(), 'ok');
+
+		const deleted = await request(port, 'POST', '/api/admin/backups/delete', token, {
+			run_id: manual.json.data.run.run_id,
+		});
+		assert.strictEqual(deleted.status, 200, JSON.stringify(deleted.json));
+		assert.strictEqual(fs.existsSync(backupPath), false);
+		assert.strictEqual(fs.existsSync(manual.json.data.run.checksum_path), false);
+		assert.strictEqual(deleted.json.data.deleted_run_id, manual.json.data.run.run_id);
+		assert.strictEqual(deleted.json.data.status.active_runs.length, 0);
+		assert.strictEqual(deleted.json.data.status.archived_runs.length, 1);
+		assert.strictEqual(deleted.json.data.status.archived_runs[0].missing_from_folder, true);
 		console.log('backup_api_check: PASS');
 	} finally {
 		child.kill('SIGTERM');
