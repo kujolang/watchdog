@@ -52,6 +52,7 @@ async function run() {
 			WDG_API_AUTH_TOKEN: token,
 			WDG_PROXY_AUTHZ_MODE: 'off',
 			WDG_BACKUP_ENABLED: 'false',
+			WDG_BACKUP_DIR: backupDir,
 			WDG_BACKUP_ENCRYPTION_KEY_FILE: keyPath,
 		},
 		stdio: ['ignore', 'pipe', 'pipe'],
@@ -98,6 +99,15 @@ async function run() {
 		assert.strictEqual(manual.json.data.status.active_runs[0].backup_exists, true);
 		assert.strictEqual(manual.json.data.status.archived_runs.length, 0);
 
+		const folderOnlyPath = path.join(backupDir, 'watchdog-backup-20260722T174540179Z-a71e15.db.enc');
+		fs.writeFileSync(folderOnlyPath, 'folder-only-backup');
+		fs.writeFileSync(folderOnlyPath + '.sha256', 'folder-only-checksum');
+		const refreshed = await request(port, 'GET', '/api/admin/backups', token, null);
+		assert.strictEqual(refreshed.status, 200, JSON.stringify(refreshed.json));
+		assert.strictEqual(refreshed.json.data.active_runs.length, 2);
+		assert.ok(refreshed.json.data.active_runs.some(run => run.backup_path === folderOnlyPath && run.discovered_from_folder === true));
+		assert.strictEqual(refreshed.json.data.archived_runs.length, 0);
+
 		const restored = path.join(temp, 'restored.db');
 		const decrypt = spawnSync('openssl', [
 			'enc', '-d', '-aes-256-cbc', '-pbkdf2', '-iter', '200000', '-md', 'sha256',
@@ -114,9 +124,18 @@ async function run() {
 		assert.strictEqual(fs.existsSync(backupPath), false);
 		assert.strictEqual(fs.existsSync(manual.json.data.run.checksum_path), false);
 		assert.strictEqual(deleted.json.data.deleted_run_id, manual.json.data.run.run_id);
-		assert.strictEqual(deleted.json.data.status.active_runs.length, 0);
+		assert.strictEqual(deleted.json.data.status.active_runs.length, 1);
 		assert.strictEqual(deleted.json.data.status.archived_runs.length, 1);
 		assert.strictEqual(deleted.json.data.status.archived_runs[0].missing_from_folder, true);
+
+		const deletedFolderOnly = await request(port, 'POST', '/api/admin/backups/delete', token, {
+			backup_path: folderOnlyPath,
+		});
+		assert.strictEqual(deletedFolderOnly.status, 200, JSON.stringify(deletedFolderOnly.json));
+		assert.strictEqual(fs.existsSync(folderOnlyPath), false);
+		assert.strictEqual(fs.existsSync(folderOnlyPath + '.sha256'), false);
+		assert.strictEqual(deletedFolderOnly.json.data.status.active_runs.length, 0);
+		assert.strictEqual(deletedFolderOnly.json.data.status.archived_runs.length, 1);
 		console.log('backup_api_check: PASS');
 	} finally {
 		child.kill('SIGTERM');

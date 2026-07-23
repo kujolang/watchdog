@@ -964,10 +964,23 @@
   .backup-layout { display: grid; grid-template-columns: minmax(300px, 420px) 1fr; gap: 20px; padding: 20px; }
   .backup-card { border: 1px solid var(--border); background: #fff; padding: 18px; }
   .backup-card h3 { color: #031b4e; font-size: 15px; margin-bottom: 14px; }
-  .backup-subtabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-  .backup-subtab { border: 1px solid var(--border); background: #f7f9fd; color: #274472; padding: 8px 12px; font-size: 12px; cursor: pointer; }
-  .backup-subtab.active { background: #031b4e; border-color: #031b4e; color: #fff; }
-  .backup-subtab-count { opacity: 0.72; font-variant-numeric: tabular-nums; }
+  .backup-history-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+  .backup-history-header h3 { margin-bottom: 0; }
+  .backup-subtabs { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+  .backup-subtab {
+    border: 1px solid #b9c2d6;
+    background: #fff;
+    color: #274472;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--transition), border-color var(--transition), color var(--transition), box-shadow var(--transition);
+  }
+  .backup-subtab:hover { border-color: var(--accent); color: var(--accent); background: #f5f8ff; }
+  .backup-subtab.active { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: 0 10px 24px rgba(0, 105, 255, .18); }
+  .backup-subtab.active .backup-subtab-count { color: rgba(255,255,255,.82); }
+  .backup-subtab-count { color: #526184; font-variant-numeric: tabular-nums; }
   .backup-subpanel { margin-top: 14px; }
   .backup-delete-btn { padding: 5px 10px; font-size: 11px; border: 1px solid #d8a4a4; background: #fff3f2; color: #9f1d20; cursor: pointer; }
   .backup-delete-btn:disabled { opacity: 0.6; cursor: wait; }
@@ -1305,12 +1318,14 @@
           <div class="backup-status" id="backupStatus" role="status"></div>
         </section>
         <section class="backup-card">
-          <h3>Backup history</h3>
-          <div class="backup-help" id="backupScheduleSummary">Loading backup status…</div>
-          <div class="backup-subtabs" role="tablist" aria-label="Backup history views">
-            <button class="backup-subtab active" type="button" id="backupActiveTabButton" onclick="switchBackupHistoryTab('active', this)">Active in folder <span class="backup-subtab-count" id="backupActiveTabCount">0</span></button>
-            <button class="backup-subtab" type="button" id="backupArchivedTabButton" onclick="switchBackupHistoryTab('archived', this)">Archived history <span class="backup-subtab-count" id="backupArchivedTabCount">0</span></button>
+          <div class="backup-history-header">
+            <h3>Backup history</h3>
+            <div class="backup-subtabs" role="tablist" aria-label="Backup history views">
+              <button class="backup-subtab active" type="button" id="backupActiveTabButton" onclick="switchBackupHistoryTab('active', this)">Active in folder <span class="backup-subtab-count" id="backupActiveTabCount">0</span></button>
+              <button class="backup-subtab" type="button" id="backupArchivedTabButton" onclick="switchBackupHistoryTab('archived', this)">Missing or failed <span class="backup-subtab-count" id="backupArchivedTabCount">0</span></button>
+            </div>
           </div>
+          <div class="backup-help" id="backupScheduleSummary">Loading backup status…</div>
           <div class="backup-subpanel" id="backupActivePanel">
             <div class="table-wrap" style="max-height:420px">
               <table>
@@ -1327,7 +1342,7 @@
                 <tbody id="backupArchivedBody"></tbody>
               </table>
             </div>
-            <div id="backupArchivedEmpty" class="empty hidden"><div class="empty-icon">▣</div>No archived backup records yet.</div>
+            <div id="backupArchivedEmpty" class="empty hidden"><div class="empty-icon">▣</div>No missing or failed backup records.</div>
           </div>
         </section>
       </div>
@@ -2229,12 +2244,12 @@ function renderBackups(forceFormUpdate = false) {
     activeEmpty.classList.add('hidden');
     activeBody.innerHTML = activeRuns.map(run => `
     <tr>
-      <td class="cell-mono" style="white-space:nowrap;font-size:11px">${fmtTs(run.started_at_ms)}</td>
-      <td>${safeText(run.trigger_type || '—')}</td>
+      <td class="cell-mono" style="white-space:nowrap;font-size:11px">${fmtBackupStarted(run)}</td>
+      <td>${safeText(run.trigger_type === 'folder' ? 'folder scan' : (run.trigger_type || '—'))}</td>
       <td>${Number(run.encrypted || 0) === 1 ? 'Yes' : 'No'}</td>
       <td style="white-space:nowrap">${fmtBytes(run.size_bytes)}</td>
       <td class="cell-mono cell-truncate" title="${safeText(run.backup_path || '')}">${safeText(run.backup_path || '—')}</td>
-      <td><button class="backup-delete-btn" type="button" data-backup-delete="${Number(run.id || 0)}" onclick="deleteBackupRun(${Number(run.id || 0)}, this)">Delete</button></td>
+      <td><button class="backup-delete-btn" type="button" data-backup-run-id="${Number(run.id || 0)}" data-backup-path="${safeText(run.backup_path || '')}" onclick="deleteBackupRun(this)">Delete</button></td>
     </tr>`).join('');
   }
 
@@ -2247,7 +2262,7 @@ function renderBackups(forceFormUpdate = false) {
     archivedEmpty.classList.add('hidden');
     archivedBody.innerHTML = archivedRuns.map(run => `
     <tr>
-      <td class="cell-mono" style="white-space:nowrap;font-size:11px">${fmtTs(run.started_at_ms)}</td>
+      <td class="cell-mono" style="white-space:nowrap;font-size:11px">${fmtBackupStarted(run)}</td>
       <td>${safeText(run.trigger_type || '—')}</td>
       <td><span class="badge badge-${run.status === 'success' ? 'success' : 'error'}">${safeText(run.status || 'unknown')}</span></td>
       <td>${Number(run.encrypted || 0) === 1 ? 'Yes' : 'No'}</td>
@@ -2268,6 +2283,12 @@ function switchBackupHistoryTab(name) {
   document.getElementById('backupArchivedPanel').classList[activeSelected ? 'add' : 'remove']('hidden');
   document.getElementById('backupActiveTabButton').classList[activeSelected ? 'add' : 'remove']('active');
   document.getElementById('backupArchivedTabButton').classList[activeSelected ? 'remove' : 'add']('active');
+}
+
+function fmtBackupStarted(run) {
+  if (run && run.started_label) return safeText(run.started_label);
+  const ms = Number(run && run.started_at_ms || 0);
+  return ms > 0 ? fmtTs(ms) : 'Unknown';
 }
 
 function setBackupStatus(message, isError = false) {
@@ -2318,9 +2339,10 @@ async function runBackupNow() {
   }
 }
 
-async function deleteBackupRun(runId, button) {
-  const numericRunId = Number(runId || 0);
-  if (!numericRunId) return;
+async function deleteBackupRun(button) {
+  const numericRunId = Number(button?.dataset?.backupRunId || 0);
+  const backupPath = String(button?.dataset?.backupPath || '').trim();
+  if (!numericRunId && !backupPath) return;
   const approved = typeof window.confirm !== 'function'
     ? true
     : window.confirm('Delete this backup from the backup folder? The record will stay in archived history.');
@@ -2332,7 +2354,7 @@ async function deleteBackupRun(runId, button) {
     const data = await fetchJSON('/api/admin/backups/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ run_id: numericRunId }),
+      body: JSON.stringify(numericRunId ? { run_id: numericRunId } : { backup_path: backupPath }),
     });
     state.backups = data.status;
     state.backupHistoryTab = 'active';

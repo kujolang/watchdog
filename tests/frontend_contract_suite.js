@@ -430,6 +430,7 @@ function testBackupPanelsReflectActiveAndArchivedFiles() {
 		next_due_at_ms: 1700003600000,
 		active_runs: [
 			{ id: 7, trigger_type: 'manual', encrypted: 1, size_bytes: 2048, backup_path: '/tmp/backups/watchdog-7.db.enc', started_at_ms: 1700000000000, backup_exists: true, status: 'success' },
+			{ id: 0, trigger_type: 'folder', encrypted: 1, size_bytes: 1024, backup_path: '/tmp/backups/watchdog-backup-20260722T174540179Z-a71e15.db.enc', started_at_ms: 0, started_label: '2026-07-22 17:45:40 UTC', backup_exists: true, status: 'success', discovered_from_folder: true },
 		],
 		archived_runs: [
 			{ id: 6, trigger_type: 'scheduled', encrypted: 0, size_bytes: 1024, backup_path: '/tmp/backups/watchdog-6.db', started_at_ms: 1699990000000, backup_exists: false, status: 'success', error_message: '' },
@@ -438,12 +439,15 @@ function testBackupPanelsReflectActiveAndArchivedFiles() {
 	};
 
 	context.renderBackups(true);
-	assert.ok(elements.backupActiveBody.innerHTML.includes('deleteBackupRun(7, this)'), 'active backups should expose a delete action');
+	assert.ok(elements.backupActiveBody.innerHTML.includes('data-backup-run-id="7"'), 'tracked active backups should expose a delete action');
+	assert.ok(elements.backupActiveBody.innerHTML.includes('data-backup-path="/tmp/backups/watchdog-backup-20260722T174540179Z-a71e15.db.enc"'), 'folder-only backups should expose a delete path');
+	assert.ok(elements.backupActiveBody.innerHTML.includes('folder scan'), 'folder-only backups should be labeled as discovered from the folder');
+	assert.ok(elements.backupActiveBody.innerHTML.includes('2026-07-22 17:45:40 UTC'), 'folder-only backups should expose a readable derived timestamp');
 	assert.ok(elements.backupActiveBody.innerHTML.includes('/tmp/backups/watchdog-7.db.enc'));
 	assert.ok(elements.backupArchivedBody.innerHTML.includes('Missing from folder'), 'archived backups should call out files removed from the folder');
 	assert.ok(elements.backupArchivedBody.innerHTML.includes('OpenSSL failed'), 'archived failures should keep their recorded error');
-	assert.strictEqual(elements.badgeBackups.textContent, 1, 'backup badge should reflect active files only');
-	assert.strictEqual(elements.backupActiveTabCount.textContent, 1);
+	assert.strictEqual(elements.badgeBackups.textContent, 2, 'backup badge should reflect active files only');
+	assert.strictEqual(elements.backupActiveTabCount.textContent, 2);
 	assert.strictEqual(elements.backupArchivedTabCount.textContent, 2);
 
 	context.switchBackupHistoryTab('archived');

@@ -1849,6 +1849,62 @@ func backup_runs(limit_value) {
 	return db_query(db, "SELECT id, trigger_type, status, backup_path, checksum_path, size_bytes, encrypted, error_message, started_at_ms, finished_at_ms FROM backup_runs ORDER BY started_at_ms DESC LIMIT ?", [limit_value])
 }
 
+func normalize_backup_dir_path(raw_path) {
+	next := trim(to_string(raw_path))
+	while ends_with(next, "/") {
+		next := substring(next, 0, len(next) - 1)
+	}
+	return next
+}
+
+func backup_join_path(dir_path, entry_name) {
+	base := normalize_backup_dir_path(dir_path)
+	if base == "" {
+		return trim(to_string(entry_name))
+	}
+	return base + "/" + trim(to_string(entry_name))
+}
+
+func backup_file_name(path_value) {
+	parts := split(replace(trim(to_string(path_value)), "\\", "/"), "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	return to_string(parts[len(parts) - 1])
+}
+
+func backup_generated_file_name(name) {
+	text := trim(to_string(name))
+	if !starts_with(text, "watchdog-backup-") {
+		return false
+	}
+	if ends_with(text, ".sha256") {
+		return false
+	}
+	return ends_with(text, ".db") || ends_with(text, ".db.enc")
+}
+
+func backup_started_label_from_name(name) {
+	text := trim(to_string(name))
+	prefix := "watchdog-backup-"
+	if !starts_with(text, prefix) {
+		return ""
+	}
+	if len(text) < len(prefix) + 16 {
+		return ""
+	}
+	ts := substring(text, len(prefix), len(text))
+	marker := split(ts, "-")
+	if len(marker) == 0 {
+		return ""
+	}
+	stamp := to_string(marker[0])
+	if len(stamp) < 16 {
+		return ""
+	}
+	return substring(stamp, 0, 4) + "-" + substring(stamp, 4, 6) + "-" + substring(stamp, 6, 8) + " " + substring(stamp, 9, 11) + ":" + substring(stamp, 11, 13) + ":" + substring(stamp, 13, 15) + " UTC"
+}
+
 func backup_run_with_presence(row) {
 	backup_path := to_string(safe_dict_get(row, "backup_path", ""))
 	checksum_path := to_string(safe_dict_get(row, "checksum_path", ""))
@@ -1863,6 +1919,8 @@ func backup_run_with_presence(row) {
 	enriched["checksum_exists"] = checksum_exists
 	enriched["is_active"] = status == "success" && backup_exists
 	enriched["missing_from_folder"] = status == "success" && backup_path != "" && !backup_exists
+	enriched["started_label"] = ""
+	enriched["discovered_from_folder"] = false
 	return enriched
 }
 
@@ -1875,17 +1933,78 @@ func backup_runs_with_presence(limit_value) {
 	return enriched
 }
 
+func backup_folder_active_runs(backup_dir, runs) {
+	dir_path := normalize_backup_dir_path(backup_dir)
+	if dir_path == "" || !file_exists(dir_path) || !path_is_dir(dir_path) {
+		return []
+	}
+	names := sort(list_dir(dir_path))
+	active := []
+	i := len(names) - 1
+	while i >= 0 {
+		name := to_string(names[i])
+		full_path := backup_join_path(dir_path, name)
+		if backup_generated_file_name(name) && file_exists(full_path) && !path_is_dir(full_path) {
+			matched_run := null
+			for run in runs {
+				run_path := to_string(safe_dict_get(run, "backup_path", ""))
+				if run_path == full_path {
+					matched_run = run
+					break
+				}
+			}
+			if type(matched_run) == "dict" {
+				active := push(active, matched_run)
+			} else {
+				checksum_exists := file_exists(full_path + ".sha256")
+				if checksum_exists {
+					checksum_exists = !path_is_dir(full_path + ".sha256")
+				}
+				active := push(active, {
+					"id": 0,
+					"trigger_type": "folder",
+					"status": "success",
+					"backup_path": full_path,
+					"checksum_path": full_path + ".sha256",
+					"size_bytes": file_size(full_path),
+					"encrypted": ends_with(name, ".enc"),
+					"error_message": "",
+					"started_at_ms": 0,
+					"finished_at_ms": 0,
+					"backup_exists": true,
+					"checksum_exists": checksum_exists,
+					"is_active": true,
+					"missing_from_folder": false,
+					"started_label": backup_started_label_from_name(name),
+					"discovered_from_folder": true
+				})
+			}
+		}
+		i := i - 1
+	}
+	return active
+}
+
 func backup_status_payload() {
 	settings := read_backup_settings()
 	last_success_ms := backup_last_success_ms()
 	next_due_at_ms := 0
 	runs := backup_runs_with_presence(100)
-	active_runs := []
+	active_runs := backup_folder_active_runs(settings["backup_dir"], runs)
 	archived_runs := []
 	for run in runs {
-		if parse_bool_value(safe_dict_get(run, "is_active", false), false) {
-			active_runs := push(active_runs, run)
-		} else {
+		run_path := to_string(safe_dict_get(run, "backup_path", ""))
+		found_active := false
+		if run_path != "" {
+			for active_run in active_runs {
+				active_path := to_string(safe_dict_get(active_run, "backup_path", ""))
+				if active_path == run_path {
+					found_active = true
+					break
+				}
+			}
+		}
+		if run_path == "" || !found_active {
 			archived_runs := push(archived_runs, run)
 		}
 	}
@@ -3688,19 +3807,36 @@ server := server.route("POST", "/api/admin/backups/delete", func(req) {
 	}
 	body := body_parse["data"]
 	run_id := to_int_or_zero(safe_dict_get(body, "run_id", 0))
-	if run_id <= 0 {
-		return api_error(400, "Backup run id is required")
-	}
-	rows := db_query(db, "SELECT id, backup_path, checksum_path, status FROM backup_runs WHERE id = ? LIMIT 1", [run_id])
-	if len(rows) == 0 {
-		return api_error(404, "Backup run was not found")
-	}
-	row := rows[0]
-	backup_path := to_string(safe_dict_get(row, "backup_path", ""))
-	checksum_path := to_string(safe_dict_get(row, "checksum_path", ""))
-	status := to_string(safe_dict_get(row, "status", ""))
-	if status != "success" || backup_path == "" {
-		return api_error(400, "Only completed backup files can be deleted")
+	settings := read_backup_settings()
+	backup_path := ""
+	checksum_path := ""
+	status := "success"
+	if run_id > 0 {
+		rows := db_query(db, "SELECT id, backup_path, checksum_path, status FROM backup_runs WHERE id = ? LIMIT 1", [run_id])
+		if len(rows) == 0 {
+			return api_error(404, "Backup run was not found")
+		}
+		row := rows[0]
+		backup_path = to_string(safe_dict_get(row, "backup_path", ""))
+		checksum_path = to_string(safe_dict_get(row, "checksum_path", ""))
+		status = to_string(safe_dict_get(row, "status", ""))
+		if status != "success" || backup_path == "" {
+			return api_error(400, "Only completed backup files can be deleted")
+		}
+	} else {
+		backup_path = trim(to_string(safe_dict_get(body, "backup_path", "")))
+		if backup_path == "" {
+			return api_error(400, "Backup run id or backup path is required")
+		}
+		backup_name := backup_file_name(backup_path)
+		expected_dir := normalize_backup_dir_path(settings["backup_dir"])
+		if !backup_generated_file_name(backup_name) {
+			return api_error(400, "Only generated backup files can be deleted")
+		}
+		if !(backup_path == backup_join_path(expected_dir, backup_name)) {
+			return api_error(400, "Backup path must belong to the configured backup folder")
+		}
+		checksum_path = backup_path + ".sha256"
 	}
 	if !file_exists(backup_path) || path_is_dir(backup_path) {
 		return api_error(404, "Backup file is no longer present on disk")
@@ -3721,8 +3857,8 @@ server := server.route("POST", "/api/admin/backups/delete", func(req) {
 			return api_error(500, "Backup file was deleted but the checksum file could not be removed")
 		}
 	}
-	insert_audit_event("backup_delete", resolve_audit_actor_key(req, "api"), "success", {"run_id": run_id})
-	return api_ok({"deleted_run_id": run_id, "status": backup_status_payload()})
+	insert_audit_event("backup_delete", resolve_audit_actor_key(req, "api"), "success", {"run_id": run_id, "backup_path": backup_path})
+	return api_ok({"deleted_run_id": run_id, "deleted_backup_path": backup_path, "status": backup_status_payload()})
 })
 
 server := server.route("POST", "/api/admin/prune", func(req) {
