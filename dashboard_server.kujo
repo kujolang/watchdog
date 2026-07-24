@@ -3417,7 +3417,7 @@ server := server.route("GET", "/api/sessions", func(req) {
 	conditions := time_filter["conditions"]
 	params := time_filter["params"]
 
-	sql := "SELECT session_id, user_id, COUNT(*) AS request_count, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS error_count, COALESCE(SUM(total_tokens),0) AS total_tokens, COALESCE(SUM(cost_usd),0) AS total_cost_usd, COALESCE(AVG(latency_ms),0) AS avg_latency_ms, MIN(created_at) AS started_at, MAX(created_at) AS last_seen FROM requests"
+	sql := "SELECT session_id, user_id, COUNT(*) AS request_count, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS error_count, COALESCE(SUM(input_tokens),0) AS input_tokens, COALESCE(SUM(output_tokens),0) AS output_tokens, COALESCE(SUM(total_tokens),0) AS total_tokens, COALESCE(SUM(cost_usd),0) AS total_cost_usd, COALESCE(AVG(latency_ms),0) AS avg_latency_ms, MIN(created_at) AS started_at, MAX(created_at) AS last_seen FROM requests"
 	sql := sql + where_clause_from_conditions(conditions)
 	sql := sql + " GROUP BY session_id, user_id ORDER BY last_seen DESC LIMIT ? OFFSET ?"
 	params := push(params, page_size)

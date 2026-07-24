@@ -249,6 +249,11 @@ async function run() {
 		await assertEndpoint('/api/sessions', data => {
 			assert.ok(Array.isArray(data), 'sessions data should be array');
 			assert.ok(data.length >= 1, 'sessions should have records after seed');
+			const seededSession = data.find(row => row.session_id === 'session-contract');
+			assert.ok(seededSession, 'sessions should include the seeded session');
+			assert.strictEqual(Number(seededSession.input_tokens || 0), 100);
+			assert.strictEqual(Number(seededSession.output_tokens || 0), 50);
+			assert.strictEqual(Number(seededSession.total_tokens || 0), 150);
 		});
 
 		await assertEndpoint('/api/charts/requests-over-time', data => {

@@ -324,6 +324,8 @@ function testToolCallsErrorsSessionsAndTracesContracts() {
 			user_id: '<user>',
 			request_count: 1,
 			error_count: 0,
+			input_tokens: 7,
+			output_tokens: 3,
 			total_tokens: 10,
 			total_cost_usd: 0.01,
 			avg_latency_ms: 30,
@@ -335,6 +337,10 @@ function testToolCallsErrorsSessionsAndTracesContracts() {
 	assert.ok(elements.sessBody.innerHTML.includes('&lt;sid&gt;'));
 	assert.ok(!elements.sessBody.innerHTML.includes('<sid>'));
 	assert.ok(elements.sessBody.innerHTML.includes("showRecordDetails('sessions', 0)"), 'session rows should open full details');
+	context.showRecordDetails('sessions', 0);
+	assert.strictEqual(elements.detailTitle.textContent, 'Session details');
+	assert.ok(elements.detailBody.children.find(field => field.children[0].textContent === 'input tokens'), 'session details should include input token totals');
+	assert.ok(elements.detailBody.children.find(field => field.children[0].textContent === 'output tokens'), 'session details should include output token totals');
 
 	context.state.agentSteps = [
 		{
