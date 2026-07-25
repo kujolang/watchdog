@@ -118,6 +118,6 @@ Validation/testing expectations:
 Date: 2026-06-19
 Summary: Completed review pass with focused hardening and cleanup: proxy path/query validation, safe scalar query forwarding, export `max_rows` cap enforcement, time-filter SQLite indexes, root fixture cleanup, README clarification, and regression coverage.
 Files changed: <src/dashboard_server.kujo, src/watchdog_shared.kujo, tests/proxy_integration_stub_suite.js, tests/export_jsonl_mode_check.js, tests/schema_migration_static_check.js, tests/proxy_route_compatibility_static_check.js, tests/fixtures/http_server_smoke.kujo, README.md, docs/WATCHDOG_SCOUT_CHECKLIST.md, docs/WATCHDOG_ENTERPRISE_REVIEW_2026-06-19.md>
-Tests and validation: <PASS: KUJO_BIN=/Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/release/kujo for f in tests/*.js; do node "$f"; done; PASS: node scripts/sync_compat_entrypoints.js --check>
+Tests and validation: <PASS: KUJO_BIN=kujo for f in tests/*.js; do node "$f"; done; PASS: node scripts/sync_compat_entrypoints.js --check>
 README/docs updated: <yes + README.md, docs/WATCHDOG_SCOUT_CHECKLIST.md, docs/WATCHDOG_ENTERPRISE_REVIEW_2026-06-19.md>
 Follow-ups: <execute the unchecked items above in priority order>

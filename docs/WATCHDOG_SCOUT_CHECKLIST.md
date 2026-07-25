@@ -410,14 +410,14 @@ Follow-ups: <optional>
 	Item ID: <DOC-001>
 	Summary: Fixed quick-start repository path and added a dedicated implementation backlog section linking the scout checklist.
 	Files changed: README.md, docs/WATCHDOG_SCOUT_CHECKLIST.md
-	Tests and validation: Verified documented startup command runs from /path/to/kujo-watchdog using /path/to/kujo/target/release/kujo run dashboard_server.kujo --interpreter (server start pass)
+	Tests and validation: Verified documented startup command runs from /path/to/kujo-watchdog using kujo run dashboard_server.kujo --interpreter (server start pass)
 	README or docs updated: yes, quick-start and backlog discovery sections
 	Follow-ups: Keep README command samples synchronized with any future file layout refactors.
 - Date: 2026-05-22
 	Item ID: <ARC-002>
 	Summary: Introduced watchdog_shared.kujo for pricing and schema setup, then rewired dashboard_server.kujo and watchdog.kujo to consume shared helpers.
 	Files changed: watchdog_shared.kujo, dashboard_server.kujo, watchdog.kujo, tests/shared_module_dedupe_check.js, docs/WATCHDOG_SCOUT_CHECKLIST.md
-	Tests and validation: node tests/shared_module_dedupe_check.js (pass); runtime startup smoke via /path/to/kujo/target/release/kujo run dashboard_server.kujo --interpreter (pass, with existing Kujo type-check warning signatures)
+	Tests and validation: node tests/shared_module_dedupe_check.js (pass); runtime startup smoke via kujo run dashboard_server.kujo --interpreter (pass, with existing Kujo type-check warning signatures)
 	README or docs updated: yes, checklist status and work log
 	Follow-ups: Add runtime-level unit tests around watchdog_shared.kujo helper behavior once dedicated Kujo test harness is in place.
 - Date: 2026-05-22
@@ -459,7 +459,7 @@ Follow-ups: <optional>
 	Item ID: <SEC-002>
 	Summary: Added optional token auth for Watchdog API routes, enforced 401/403/500 auth outcomes, and documented non-local hardening defaults around Kujo's current all-interface server binding.
 	Files changed: dashboard_server.kujo, README.md, tests/api_auth_mode_check.js, docs/WATCHDOG_SCOUT_CHECKLIST.md
-	Tests and validation: node tests/api_auth_mode_check.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off /path/to/kujo/target/debug/kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests, /proxy/v1/chat/completions, /api/export (pass with expected upstream 401 on proxy call); command check for scripts/run_tests.kujo (not present)
+	Tests and validation: node tests/api_auth_mode_check.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests, /proxy/v1/chat/completions, /api/export (pass with expected upstream 401 on proxy call); command check for scripts/run_tests.kujo (not present)
 	README or docs updated: yes, API auth mode and non-local hardening guidance
 	Follow-ups: When Kujo adds host-binding controls to http_server, expose an explicit bind-host setting and document secure non-local examples.
 - Date: 2026-05-22
@@ -480,21 +480,21 @@ Follow-ups: <optional>
 	Item ID: <SEC-004>
 	Summary: Added configurable proxy body-size and JSON parse-size guards with deterministic 400/413 failures, error telemetry logging, and defensive handling for malformed or oversized proxy payloads.
 	Files changed: dashboard_server.kujo, README.md, tests/request_body_limits_check.js, docs/WATCHDOG_SCOUT_CHECKLIST.md
-	Tests and validation: node tests/request_body_limits_check.js (pass); node tests/proxy_integration_stub_suite.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off /path/to/kujo/target/debug/kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests, /proxy/v1/chat/completions, /api/export (pass with expected upstream 401 on proxy call); command check for scripts/run_tests.kujo (not present)
+	Tests and validation: node tests/request_body_limits_check.js (pass); node tests/proxy_integration_stub_suite.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests, /proxy/v1/chat/completions, /api/export (pass with expected upstream 401 on proxy call); command check for scripts/run_tests.kujo (not present)
 	README or docs updated: yes, body-size and parse-limit env configuration
 	Follow-ups: Add optional per-route body limits if future proxy routes include large non-JSON payload workflows.
 - Date: 2026-05-22
 	Item ID: <SEC-005>
 	Summary: Added configurable telemetry redaction policy with default sensitive-term masking for prompt summaries, tool payload fields, step metadata, and error messages before persistence/export.
 	Files changed: dashboard_server.kujo, README.md, tests/telemetry_redaction_check.js, docs/WATCHDOG_SCOUT_CHECKLIST.md
-	Tests and validation: node tests/telemetry_redaction_check.js (pass); node tests/proxy_integration_stub_suite.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off /path/to/kujo/target/debug/kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests, /proxy/v1/chat/completions, /api/export (pass with expected upstream 401 on proxy call); command check for scripts/run_tests.kujo (not present)
+	Tests and validation: node tests/telemetry_redaction_check.js (pass); node tests/proxy_integration_stub_suite.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests, /proxy/v1/chat/completions, /api/export (pass with expected upstream 401 on proxy call); command check for scripts/run_tests.kujo (not present)
 	README or docs updated: yes, telemetry redaction policy configuration and behavior
 	Follow-ups: Expand redaction to deep nested structures with deterministic key-path allowlists once larger payload examples are available.
 - Date: 2026-05-22
 	Item ID: <SEC-006>
 	Summary: Added configurable in-memory throttling for API and proxy endpoints with session/IP-style bucket keying, reset windows, and explicit 429 responses.
 	Files changed: dashboard_server.kujo, README.md, tests/rate_limit_controls_check.js, docs/WATCHDOG_SCOUT_CHECKLIST.md
-	Tests and validation: node tests/rate_limit_controls_check.js (pass); node tests/proxy_integration_stub_suite.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off /path/to/kujo/target/debug/kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests, /proxy/v1/chat/completions, /api/export (pass with expected upstream 401 on proxy call); command check for scripts/run_tests.kujo (not present)
+	Tests and validation: node tests/rate_limit_controls_check.js (pass); node tests/proxy_integration_stub_suite.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests, /proxy/v1/chat/completions, /api/export (pass with expected upstream 401 on proxy call); command check for scripts/run_tests.kujo (not present)
 	README or docs updated: yes, rate-limit configuration and behavior guidance
 	Follow-ups: Add bounded bucket-eviction controls if long-lived deployments accumulate excessive unique client/session keys.
 - Date: 2026-05-22
@@ -508,21 +508,21 @@ Follow-ups: <optional>
 	Item ID: <FEAT-004>
 	Summary: Extended request telemetry schema with workflow/task/correlation identifiers, populated values from Observe headers/payload fields, added API filtering support, and surfaced fields in dashboard requests views.
 	Files changed: watchdog_shared.kujo, dashboard_server.kujo, dashboard.html, README.md, tests/kennel_correlation_fields_check.js, docs/WATCHDOG_SCOUT_CHECKLIST.md
-	Tests and validation: node tests/kennel_correlation_fields_check.js (pass); WDG_API_AUTH_MODE=off WDG_API_AUTH_TOKEN= node tests/watchdog_api_route_suite.js (pass); node tests/frontend_contract_suite.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off WDG_API_AUTH_TOKEN= /path/to/kujo/target/debug/kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests, /proxy/v1/chat/completions, /api/export (pass with expected upstream 401 on proxy call); command check for scripts/run_tests.kujo (not present)
+	Tests and validation: node tests/kennel_correlation_fields_check.js (pass); WDG_API_AUTH_MODE=off WDG_API_AUTH_TOKEN= node tests/watchdog_api_route_suite.js (pass); node tests/frontend_contract_suite.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off WDG_API_AUTH_TOKEN= kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests, /proxy/v1/chat/completions, /api/export (pass with expected upstream 401 on proxy call); command check for scripts/run_tests.kujo (not present)
 	README or docs updated: yes, new correlation headers and request filter docs
 	Follow-ups: Add dedicated dashboard filter controls for workflow/task/correlation IDs in addition to free-text request search.
 - Date: 2026-05-22
 	Item ID: <FEAT-005>
 	Summary: Added machine-friendly NDJSON/JSONL export mode on /api/export while preserving default JSON envelope responses and existing filter behavior.
 	Files changed: dashboard_server.kujo, README.md, tests/export_jsonl_mode_check.js, docs/WATCHDOG_SCOUT_CHECKLIST.md
-	Tests and validation: node tests/export_jsonl_mode_check.js (pass); WDG_API_AUTH_MODE=off WDG_API_AUTH_TOKEN= node tests/watchdog_api_route_suite.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off WDG_API_AUTH_TOKEN= /path/to/kujo/target/debug/kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests, /proxy/v1/chat/completions, and /api/export?format=jsonl (pass with expected upstream 401 on proxy call and ndjson content-type); command check for scripts/run_tests.kujo (not present)
+	Tests and validation: node tests/export_jsonl_mode_check.js (pass); WDG_API_AUTH_MODE=off WDG_API_AUTH_TOKEN= node tests/watchdog_api_route_suite.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off WDG_API_AUTH_TOKEN= kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests, /proxy/v1/chat/completions, and /api/export?format=jsonl (pass with expected upstream 401 on proxy call and ndjson content-type); command check for scripts/run_tests.kujo (not present)
 	README or docs updated: yes, export format query parameter and JSONL usage examples
 	Follow-ups: Add optional chunk-size controls for very large NDJSON responses if long-running exports become latency-sensitive.
 - Date: 2026-05-22
 	Item ID: <FEAT-006>
 	Summary: Added tenant/project partitioning fields with proxy header/body extraction, persisted request metadata, API/export query scoping, and dashboard tenant/project filters/columns.
 	Files changed: watchdog_shared.kujo, dashboard_server.kujo, dashboard.html, README.md, tests/tenant_project_partitioning_check.js, tests/frontend_contract_suite.js, docs/WATCHDOG_SCOUT_CHECKLIST.md
-	Tests and validation: node tests/tenant_project_partitioning_check.js (pass); WDG_API_AUTH_MODE=off WDG_API_AUTH_TOKEN= node tests/watchdog_api_route_suite.js (pass); node tests/frontend_contract_suite.js (pass); node tests/export_jsonl_mode_check.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off WDG_API_AUTH_TOKEN= /path/to/kujo/target/debug/kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests?tenant_id=tenant_alpha&project_id=project_red, /api/export?tenant_id=tenant_alpha&format=json, and /proxy/v1/chat/completions (pass with expected upstream 401 on proxy call); command check for scripts/run_tests.kujo (not present)
+	Tests and validation: node tests/tenant_project_partitioning_check.js (pass); WDG_API_AUTH_MODE=off WDG_API_AUTH_TOKEN= node tests/watchdog_api_route_suite.js (pass); node tests/frontend_contract_suite.js (pass); node tests/export_jsonl_mode_check.js (pass); WDG_PORT=7700 WDG_API_AUTH_MODE=off WDG_API_AUTH_TOKEN= kujo run dashboard_server.kujo --interpreter with curl smoke checks for /api/stats, /api/proxy-config, /api/requests?tenant_id=tenant_alpha&project_id=project_red, /api/export?tenant_id=tenant_alpha&format=json, and /proxy/v1/chat/completions (pass with expected upstream 401 on proxy call); command check for scripts/run_tests.kujo (not present)
 	README or docs updated: yes, tenant/project headers, persisted fields, and filter/export examples
 	Follow-ups: Extend tenant/project scoping to tool-call and agent-step exports via request-join session derivation when cross-session exports are required.
 - Date: 2026-05-22

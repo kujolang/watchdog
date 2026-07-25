@@ -26,8 +26,8 @@ Use the Kujo runtime expected by this repository. Most repos support one of
 these environment variables:
 
 ```bash
-export KUJO_BIN=/path/to/kujo
-export KUJO=/path/to/kujo
+export KUJO_BIN=kujo
+export KUJO=kujo
 ```
 
 Watchdog local startup:
@@ -112,7 +112,7 @@ the repo.
 Watchdog source and docs validation:
 
 ```bash
-export KUJO_BIN=/path/to/kujo/target/release/kujo
+export KUJO_BIN=kujo
 for f in tests/*.js; do
   echo "==> $f"
   node "$f" || exit 1
