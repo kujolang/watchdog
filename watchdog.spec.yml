@@ -1,0 +1,74 @@
+# Spec - Watchdog launch readiness review
+
+name: "Watchdog launch readiness review"
+goal: "Keep Watchdog locally release-ready as a local-first Kujo observability dashboard and OpenAI-compatible proxy with deterministic fixture tests and scoped deployment claims."
+version: "0.1.0"
+background: "Watchdog is part of the Kujo prelaunch ecosystem review. The verified scope is local dashboard/API/proxy telemetry behavior; production deployment, live upstream provider traffic, and enterprise controls require target-environment proof."
+scope: "Repository-local dashboard/API/proxy contracts, SQLite telemetry, redaction/auth/rate-limit/backup controls, frontend contract checks, benchmark fixtures, readiness wording, and launch evidence capture."
+non_goals:
+  - "Publishing packages or public releases"
+  - "Deploying hosted services"
+  - "Using live upstream provider credentials without explicit approval"
+  - "Claiming production or enterprise readiness without target-environment validation"
+relevant_systems:
+  - "Kujo runtime"
+  - "Watchdog dashboard server"
+  - "SQLite telemetry"
+  - "Node.js regression tests"
+  - "prelaunch launch evidence packet"
+likely_files:
+  - "README.md"
+  - "dashboard_server.kujo"
+  - "src/dashboard_server.kujo"
+  - "src/watchdog.kujo"
+  - "dashboard.html"
+  - "tests/"
+  - "scripts/"
+acceptance_criteria:
+  - "README version badge matches VERSION and kujo.toml."
+  - "Documented Node and Kujo regression suites pass locally."
+  - "Fixture benchmark and proxy/rate-limit/backup/frontend/API tests pass without live provider credentials."
+  - "Charts build without artifact drift."
+  - "ShipCheck, Concord, Lens where applicable, and ChangeBucket/PatchBrief evidence are captured."
+  - "Production/enterprise claims remain scoped to target-environment auth, TLS, firewall, retention, backup, secret-management, and live-upstream validation."
+eval_requirements:
+  - description: "Run benchmark schema check."
+    check_type: "command"
+    params:
+      command: "node tests/benchmark_script_schema_check.js"
+  - description: "Run frontend contract suite."
+    check_type: "command"
+    params:
+      command: "node tests/frontend_contract_suite.js"
+  - description: "Run API route suite."
+    check_type: "command"
+    params:
+      command: "KUJO_BIN=kujo node tests/watchdog_api_route_suite.js"
+  - description: "Run fixture benchmark profiles."
+    check_type: "command"
+    params:
+      command: "node scripts/benchmark_profiles.js --fixture --profiles=quick,soak --json-out=tmp/eval-benchmark-fixture.json"
+risks:
+  - risk: "Live upstream provider behavior is unproven without approved credentials and outbound policy."
+    mitigation: "Use stub/fixture proxy proof locally and record live upstream validation as external."
+    severity: "high"
+  - risk: "Production readiness depends on deployment controls outside this repo."
+    mitigation: "Require target-environment proof for token auth, TLS/reverse proxy, firewalling, retention, backups, and secret-management."
+    severity: "high"
+dependencies:
+  - "kujo on PATH"
+  - "Node.js and npm dependencies installed"
+  - "SQLite available through the Kujo runtime"
+review_expectations:
+  - "Review auth/redaction/rate-limit/backup evidence before launch sign-off."
+  - "Review target deployment proof before production or enterprise claims."
+human_approval_points:
+  - "Before publishing packages or public releases"
+  - "Before deploying hosted services"
+  - "Before using live upstream provider credentials"
+  - "Before production or enterprise readiness claims"
+priority: "high"
+tags:
+  - "kujo"
+  - "watchdog"
+  - "launch-readiness"

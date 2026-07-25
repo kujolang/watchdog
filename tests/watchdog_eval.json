@@ -1,0 +1,34 @@
+{
+  "name": "watchdog-launch-readiness",
+  "version": "0.1.0",
+  "tests": [
+    {
+      "name": "Watchdog benchmark schema check succeeds",
+      "check": "command_succeeds",
+      "params": {
+        "command": "cd /Users/robertdevore/2026/Kujolang/kujo-repos/watchdog && node tests/benchmark_script_schema_check.js"
+      }
+    },
+    {
+      "name": "Watchdog frontend contract suite succeeds",
+      "check": "command_succeeds",
+      "params": {
+        "command": "cd /Users/robertdevore/2026/Kujolang/kujo-repos/watchdog && node tests/frontend_contract_suite.js"
+      }
+    },
+    {
+      "name": "Watchdog API route suite succeeds",
+      "check": "command_succeeds",
+      "params": {
+        "command": "cd /Users/robertdevore/2026/Kujolang/kujo-repos/watchdog && KUJO_BIN=kujo node tests/watchdog_api_route_suite.js"
+      }
+    },
+    {
+      "name": "Watchdog project metadata exists",
+      "check": "file_exists",
+      "params": {
+        "path": "/Users/robertdevore/2026/Kujolang/kujo-repos/watchdog/kujo.toml"
+      }
+    }
+  ]
+}
