@@ -47,13 +47,6 @@ key behavior) to use the proxy.
 
 ```bash
 cd /path/to/kujo-watchdog
-export KUJO_BIN=${KUJO_BIN:-kujo}
-"$KUJO_BIN" run --interpreter dashboard_server.kujo
-```
-
-If `kujo` is already on your `PATH`, this works too:
-
-```bash
 kujo run --interpreter dashboard_server.kujo
 ```
 

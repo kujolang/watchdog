@@ -22,19 +22,16 @@ policy, auth mode semantics, and root compatibility entrypoints that mirror
 
 ## Local Setup
 
-Use the Kujo runtime expected by this repository. Most repos support one of
-these environment variables:
+Install Kujo so the `kujo` command is available on your `PATH`:
 
 ```bash
-export KUJO_BIN=kujo
-export KUJO=kujo
+kujo --version
 ```
 
 Watchdog local startup:
 
 ```bash
-export KUJO_BIN="${KUJO_BIN:-kujo}"
-"$KUJO_BIN" run --interpreter dashboard_server.kujo
+kujo run --interpreter dashboard_server.kujo
 ```
 
 Default dashboard:
@@ -112,7 +109,6 @@ the repo.
 Watchdog source and docs validation:
 
 ```bash
-export KUJO_BIN=kujo
 for f in tests/*.js; do
   echo "==> $f"
   node "$f" || exit 1
