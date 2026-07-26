@@ -34,6 +34,13 @@ const PROFILES = {
 	},
 };
 
+function minRpsFor(profileName, settings) {
+	const profileEnvName = 'WDG_LOAD_MIN_RPS_' + profileName.toUpperCase();
+	const raw = process.env[profileEnvName] || process.env.WDG_LOAD_MIN_RPS || '';
+	const parsed = Number.parseFloat(String(raw).trim());
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : settings.minRps;
+}
+
 function delay(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -250,6 +257,7 @@ async function runProfile(profileName) {
 	if (!settings) {
 		throw new Error('Unknown profile: ' + profileName);
 	}
+	const minRps = minRpsFor(profileName, settings);
 
 	ensureTmpDir();
 	const upstreamPort = profileName === 'soak' ? 8854 : 8853;
@@ -282,7 +290,7 @@ async function runProfile(profileName) {
 		const growthBytes = Math.max(0, dbSize - baselineSize);
 		const bytesPerRequest = growthBytes / Math.max(1, settings.totalRequests);
 
-		assert.ok(loadStats.rps >= settings.minRps, profileName + ' throughput below threshold: ' + loadStats.rps.toFixed(2) + ' < ' + settings.minRps);
+		assert.ok(loadStats.rps >= minRps, profileName + ' throughput below threshold: ' + loadStats.rps.toFixed(2) + ' < ' + minRps);
 		assert.ok(loadStats.p95 <= settings.maxP95Ms, profileName + ' p95 latency above threshold: ' + loadStats.p95 + ' > ' + settings.maxP95Ms);
 		assert.ok(statsResp.elapsed <= settings.maxStatsMs, profileName + ' /api/stats latency above threshold: ' + statsResp.elapsed + ' > ' + settings.maxStatsMs);
 		assert.ok(reqResp.elapsed <= settings.maxRequestsMs, profileName + ' /api/requests latency above threshold: ' + reqResp.elapsed + ' > ' + settings.maxRequestsMs);

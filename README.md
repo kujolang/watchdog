@@ -548,6 +548,10 @@ Run deterministic fixture mode for local validation/schema checks:
 
 `node scripts/benchmark_profiles.js --fixture --profiles=quick,soak --json-out=tmp/benchmark-fixture.json`
 
+Constrained CI or Workcell environments may set `WDG_LOAD_MIN_RPS` or
+`WDG_LOAD_MIN_RPS_QUICK`/`WDG_LOAD_MIN_RPS_SOAK` to document the local CPU
+budget while keeping the live proxy, latency, and SQLite growth assertions on.
+
 ---
 
 ## Project structure
