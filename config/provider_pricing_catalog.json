@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_id": "watchdog-provider-catalog:2026-07-19",
+  "catalog_id": "watchdog-provider-catalog:2026-07-26",
   "models": {
     "gpt-4.1": {
       "model_id": "gpt-4.1",
@@ -160,6 +160,26 @@
       "input_rate_per_million": 0.5,
       "output_rate_per_million": 3.0,
       "cached_input_rate_per_million": 0.05,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "gemini-3.5-flash": {
+      "model_id": "gemini-3.5-flash",
+      "priced_model": "gemini-3.5-flash",
+      "has_pricing": true,
+      "pricing_source": "google-gemini-pricing:2026-07-26",
+      "input_rate_per_million": 1.5,
+      "output_rate_per_million": 9.0,
+      "cached_input_rate_per_million": 0.15,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "gemini-3.5-flash-lite": {
+      "model_id": "gemini-3.5-flash-lite",
+      "priced_model": "gemini-3.5-flash-lite",
+      "has_pricing": true,
+      "pricing_source": "google-gemini-pricing:2026-07-26",
+      "input_rate_per_million": 0.3,
+      "output_rate_per_million": 2.5,
+      "cached_input_rate_per_million": 0.03,
       "cache_write_input_rate_per_million": 0.0
     },
     "kimi-k2.7-code": {
