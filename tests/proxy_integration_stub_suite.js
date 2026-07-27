@@ -224,6 +224,7 @@ function countByValue(rows, key, value) {
 }
 
 async function runPassthroughScenario(stubPort, received) {
+	console.log('proxy_integration_stub_suite: passthrough start');
 	const watchdogPort = 7721;
 	const dbPath = path.join(TMP_DIR, 'proxy-passthrough-check.db');
 	const cfgPath = path.join(TMP_DIR, 'proxy-passthrough-config.json');
@@ -261,6 +262,7 @@ async function runPassthroughScenario(stubPort, received) {
 			JSON.stringify({ model: 'gpt-4.1-mini', messages: [{ role: 'user', content: 'json path' }] })
 		);
 		assert.strictEqual(jsonResp.status, 200, 'passthrough JSON proxy call should succeed');
+		console.log('proxy_integration_stub_suite: json passthrough ok');
 
 		const namedProfileResp = await httpRequest(
 			watchdogPort,
@@ -276,6 +278,7 @@ async function runPassthroughScenario(stubPort, received) {
 		);
 		assert.strictEqual(namedProfileResp.status, 200, 'named upstream profile proxy call should succeed');
 		assert.strictEqual(received[received.length - 1].authorization, 'Bearer named-profile-key', 'named profile should override Authorization');
+		console.log('proxy_integration_stub_suite: named profile ok');
 
 		const queryResp = await httpRequest(
 			watchdogPort,
@@ -287,6 +290,7 @@ async function runPassthroughScenario(stubPort, received) {
 			}
 		);
 		assert.strictEqual(queryResp.status, 200, 'passthrough GET proxy call with query params should succeed');
+		console.log('proxy_integration_stub_suite: query passthrough ok');
 
 		const sseResp = await httpRequest(
 			watchdogPort,
@@ -301,6 +305,7 @@ async function runPassthroughScenario(stubPort, received) {
 		);
 		assert.strictEqual(sseResp.status, 200, 'passthrough SSE proxy call should succeed');
 		assert.ok(sseResp.body.includes('data:'), 'SSE proxy body should contain event frames');
+		console.log('proxy_integration_stub_suite: sse passthrough ok');
 
 		const errResp = await httpRequest(
 			watchdogPort,
@@ -314,6 +319,7 @@ async function runPassthroughScenario(stubPort, received) {
 			JSON.stringify({ sample: true })
 		);
 		assert.strictEqual(errResp.status, 429, 'upstream error status should pass through');
+		console.log('proxy_integration_stub_suite: upstream error ok');
 
 		const malformedResp = await httpRequest(
 			watchdogPort,
@@ -327,6 +333,7 @@ async function runPassthroughScenario(stubPort, received) {
 			JSON.stringify({ sample: true })
 		);
 		assert.strictEqual(malformedResp.status, 200, 'malformed JSON upstream body should still proxy through');
+		console.log('proxy_integration_stub_suite: malformed upstream ok');
 
 		const timeoutResp = await httpRequest(
 			watchdogPort,
@@ -340,6 +347,7 @@ async function runPassthroughScenario(stubPort, received) {
 			JSON.stringify({ sample: true })
 		);
 		assert.strictEqual(timeoutResp.status, 502, 'slow upstream should hit timeout and return 502');
+		console.log('proxy_integration_stub_suite: timeout upstream ok');
 
 		const receivedBeforeUnsafe = received.length;
 		const unsafeResp = await httpRequest(
@@ -353,6 +361,7 @@ async function runPassthroughScenario(stubPort, received) {
 		);
 		assert.strictEqual(unsafeResp.status, 400, 'unsafe encoded proxy paths should be rejected');
 		assert.strictEqual(received.length, receivedBeforeUnsafe, 'unsafe paths should not reach upstream');
+		console.log('proxy_integration_stub_suite: unsafe path ok');
 
 		const requests = await getApiData(watchdogPort, '/api/requests?session_id=sess_proxy_stub_pass&page_size=50');
 		assert.ok(Array.isArray(requests) && requests.length >= 6, 'requests log should capture proxy side effects');
@@ -379,12 +388,14 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_forwarded'));
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_completed'));
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_failed'));
+		console.log('proxy_integration_stub_suite: passthrough done');
 	} finally {
 		await stopWatchdog(wd.child);
 	}
 }
 
 async function runOverrideScenario(stubPort, received) {
+	console.log('proxy_integration_stub_suite: override start');
 	const watchdogPort = 7722;
 	const dbPath = path.join(TMP_DIR, 'proxy-override-check.db');
 	const cfgPath = path.join(TMP_DIR, 'proxy-override-config.json');
@@ -418,6 +429,7 @@ async function runOverrideScenario(stubPort, received) {
 		const latest = received[received.length - 1] || {};
 		assert.strictEqual(latest.path, '/v1/chat/completions', 'override request should hit chat endpoint');
 		assert.strictEqual(latest.authorization, 'Bearer override-inline-key', 'override auth should replace incoming token');
+		console.log('proxy_integration_stub_suite: override done');
 	} finally {
 		await stopWatchdog(wd.child);
 	}
