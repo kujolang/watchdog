@@ -114,7 +114,7 @@ async function startWatchdog(port, dbPath, cfgPath, envExtras) {
 }
 
 async function stopWatchdog(child) {
-	if (!child || child.killed) return;
+	if (!child || child.exitCode != null) return;
 	child.kill('SIGTERM');
 	await delay(250);
 	if (child.exitCode == null) child.kill('SIGKILL');
@@ -129,7 +129,7 @@ async function runRateLimitOnScenario(upstreamPort) {
 	const wd = await startWatchdog(port, dbPath, cfgPath, {
 		WDG_RATE_LIMIT_MODE: 'basic',
 		WDG_RATE_LIMIT_MAX_REQUESTS: '3',
-		WDG_RATE_LIMIT_WINDOW_SECS: '2',
+		WDG_RATE_LIMIT_WINDOW_SECS: '30',
 		WDG_API_AUTH_MODE: 'token',
 		WDG_API_AUTH_TOKEN: API_TOKEN,
 	});
@@ -172,8 +172,32 @@ async function runRateLimitOnScenario(upstreamPort) {
 		);
 		assert.strictEqual(proxyBlocked.status, 429, 'proxy should enforce rate limit');
 
+	} finally {
+		await stopWatchdog(wd.child);
+	}
+}
+
+async function runRateLimitResetScenario(upstreamPort) {
+	const port = 7753;
+	const dbPath = path.join(TMP_DIR, 'rate-limit-reset.db');
+	const cfgPath = path.join(TMP_DIR, 'rate-limit-reset-config.json');
+	writeProxyConfig(cfgPath, upstreamPort);
+
+	const wd = await startWatchdog(port, dbPath, cfgPath, {
+		WDG_RATE_LIMIT_MODE: 'basic',
+		WDG_RATE_LIMIT_MAX_REQUESTS: '1',
+		WDG_RATE_LIMIT_WINDOW_SECS: '2',
+		WDG_API_AUTH_MODE: 'token',
+		WDG_API_AUTH_TOKEN: API_TOKEN,
+	});
+
+	try {
+		const first = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_reset', 'X-Watchdog-Token': API_TOKEN });
+		assert.strictEqual(first.status, 200, 'first reset-window request should succeed');
+		const blocked = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_reset', 'X-Watchdog-Token': API_TOKEN });
+		assert.strictEqual(blocked.status, 429, 'reset-window request should block before the window expires');
 		await delay(2200);
-		const afterWindow = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_api', 'X-Watchdog-Token': API_TOKEN });
+		const afterWindow = await httpRequest(port, 'GET', '/api/stats', { 'X-Observe-Session-Id': 'sess_rate_reset', 'X-Watchdog-Token': API_TOKEN });
 		assert.strictEqual(afterWindow.status, 200, 'bucket should reset after window duration');
 	} finally {
 		await stopWatchdog(wd.child);
@@ -210,6 +234,7 @@ async function run() {
 
 	try {
 		await runRateLimitOnScenario(upstreamPort);
+		await runRateLimitResetScenario(upstreamPort);
 		await runRateLimitOffScenario(upstreamPort);
 		console.log('rate_limit_controls_check: PASS');
 	} finally {
