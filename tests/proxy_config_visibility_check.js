@@ -1,9 +1,13 @@
 const assert = require('assert');
+const fs = require('fs');
 const http = require('http');
+const path = require('path');
 const { spawn } = require('child_process');
 const { resolveKujoBinOrThrow } = require('./_kujo_bin');
 
 const KUJO_BIN = resolveKujoBinOrThrow(__filename);
+const ROOT = path.join(__dirname, '..');
+const TMP_DIR = path.join(ROOT, 'tmp');
 
 function delay(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
@@ -27,10 +31,15 @@ function httpGetJson(url) {
 	});
 }
 
-async function startServer(port, visibility) {
+function ensureTmpDir() {
+	if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
+}
+
+async function startServer(port, visibility, dbPath) {
 	const env = {
 		...process.env,
 		WDG_PORT: String(port),
+		WDG_DB_PATH: dbPath,
 		WDG_API_AUTH_MODE: 'off',
 		WDG_API_AUTH_TOKEN: '',
 	};
@@ -39,7 +48,7 @@ async function startServer(port, visibility) {
 	}
 
 	const child = spawn(KUJO_BIN, ['run', '--interpreter', 'dashboard_server.kujo'], {
-		cwd: process.cwd(),
+		cwd: ROOT,
 		env,
 		stdio: ['ignore', 'pipe', 'pipe'],
 	});
@@ -78,19 +87,27 @@ async function stopServer(child) {
 }
 
 async function run() {
+	ensureTmpDir();
 	const safePort = 7781;
 	const verbosePort = 7782;
+	const safeDbPath = path.join(TMP_DIR, 'proxy-config-safe.db');
+	const verboseDbPath = path.join(TMP_DIR, 'proxy-config-verbose.db');
+	for (const dbPath of [safeDbPath, verboseDbPath]) {
+		for (const filePath of [dbPath, dbPath + '-shm', dbPath + '-wal']) {
+			if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+		}
+	}
 	let safeServer = null;
 	let verboseServer = null;
 
 	try {
-		safeServer = await startServer(safePort, 'safe');
+		safeServer = await startServer(safePort, 'safe', safeDbPath);
 		const safeResp = await httpGetJson(`http://127.0.0.1:${safePort}/api/proxy-config`);
 		assert.strictEqual(safeResp.ok, true);
 		assert.ok(!Object.prototype.hasOwnProperty.call(safeResp.data, 'config_path'));
 		assert.ok(!Object.prototype.hasOwnProperty.call(safeResp.data, 'upstream_api_key_env'));
 
-		verboseServer = await startServer(verbosePort, 'verbose');
+		verboseServer = await startServer(verbosePort, 'verbose', verboseDbPath);
 		const verboseResp = await httpGetJson(`http://127.0.0.1:${verbosePort}/api/proxy-config`);
 		assert.strictEqual(verboseResp.ok, true);
 		assert.ok(Object.prototype.hasOwnProperty.call(verboseResp.data, 'config_path'));
