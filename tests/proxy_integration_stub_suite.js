@@ -225,7 +225,7 @@ function countByValue(rows, key, value) {
 
 async function runPassthroughScenario(stubPort, received) {
 	console.log('proxy_integration_stub_suite: passthrough start');
-	const watchdogPort = 7721;
+	const watchdogPort = 17921;
 	const dbPath = path.join(TMP_DIR, 'proxy-passthrough-check.db');
 	const cfgPath = path.join(TMP_DIR, 'proxy-passthrough-config.json');
 
@@ -396,7 +396,7 @@ async function runPassthroughScenario(stubPort, received) {
 
 async function runOverrideScenario(stubPort, received) {
 	console.log('proxy_integration_stub_suite: override start');
-	const watchdogPort = 7722;
+	const watchdogPort = 17922;
 	const dbPath = path.join(TMP_DIR, 'proxy-override-check.db');
 	const cfgPath = path.join(TMP_DIR, 'proxy-override-config.json');
 
@@ -438,7 +438,7 @@ async function runOverrideScenario(stubPort, received) {
 async function run() {
 
 	ensureTmpDir();
-	const stubPort = 8811;
+	const stubPort = 18811;
 	const { server, received, sockets } = await startUpstreamStub(stubPort);
 
 	try {

@@ -69,10 +69,10 @@ async function startServer(port, visibility) {
 }
 
 async function stopServer(child) {
-	if (!child || child.killed) return;
+	if (!child || child.exitCode != null) return;
 	child.kill('SIGTERM');
 	await delay(200);
-	if (!child.killed) {
+	if (child.exitCode == null) {
 		child.kill('SIGKILL');
 	}
 }
