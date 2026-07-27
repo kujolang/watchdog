@@ -53,6 +53,7 @@ function httpRequest(port, method, pathname, headers = {}, body = '') {
 
 function startUpstreamStub(port) {
 	const received = [];
+	const sockets = new Set();
 
 	const server = http.createServer((req, res) => {
 		let body = '';
@@ -128,18 +129,32 @@ function startUpstreamStub(port) {
 		});
 	});
 
+	server.on('connection', socket => {
+		sockets.add(socket);
+		socket.on('close', () => {
+			sockets.delete(socket);
+		});
+	});
+
 	return new Promise((resolve, reject) => {
 		server.on('error', reject);
 		server.listen(port, '127.0.0.1', () => {
-			resolve({ server, received });
+			resolve({ server, received, sockets });
 		});
 	});
 }
 
-async function stopNodeServer(server) {
+async function stopNodeServer(server, sockets = new Set()) {
 	if (!server) return;
+	for (const socket of sockets) {
+		socket.destroy();
+	}
 	await new Promise(resolve => {
-		server.close(() => resolve());
+		const timer = setTimeout(resolve, 1000);
+		server.close(() => {
+			clearTimeout(timer);
+			resolve();
+		});
 	});
 }
 
@@ -412,7 +427,7 @@ async function run() {
 
 	ensureTmpDir();
 	const stubPort = 8811;
-	const { server, received } = await startUpstreamStub(stubPort);
+	const { server, received, sockets } = await startUpstreamStub(stubPort);
 
 	try {
 		await runPassthroughScenario(stubPort, received);
@@ -432,7 +447,7 @@ async function run() {
 
 		console.log('proxy_integration_stub_suite: PASS');
 	} finally {
-		await stopNodeServer(server);
+		await stopNodeServer(server, sockets);
 	}
 }
 
