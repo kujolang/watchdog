@@ -34,11 +34,19 @@ const PROFILES = {
 	},
 };
 
-function minRpsFor(profileName, settings) {
-	const profileEnvName = 'WDG_LOAD_MIN_RPS_' + profileName.toUpperCase();
-	const raw = process.env[profileEnvName] || process.env.WDG_LOAD_MIN_RPS || '';
+function positiveNumberFromEnv(baseName, profileName, fallback) {
+	const profileEnvName = baseName + '_' + profileName.toUpperCase();
+	const raw = process.env[profileEnvName] || process.env[baseName] || '';
 	const parsed = Number.parseFloat(String(raw).trim());
-	return Number.isFinite(parsed) && parsed > 0 ? parsed : settings.minRps;
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function minRpsFor(profileName, settings) {
+	return positiveNumberFromEnv('WDG_LOAD_MIN_RPS', profileName, settings.minRps);
+}
+
+function maxP95For(profileName, settings) {
+	return positiveNumberFromEnv('WDG_LOAD_MAX_P95_MS', profileName, settings.maxP95Ms);
 }
 
 function delay(ms) {
@@ -258,6 +266,7 @@ async function runProfile(profileName) {
 		throw new Error('Unknown profile: ' + profileName);
 	}
 	const minRps = minRpsFor(profileName, settings);
+	const maxP95Ms = maxP95For(profileName, settings);
 
 	ensureTmpDir();
 	const upstreamPort = profileName === 'soak' ? 8854 : 8853;
@@ -291,7 +300,7 @@ async function runProfile(profileName) {
 		const bytesPerRequest = growthBytes / Math.max(1, settings.totalRequests);
 
 		assert.ok(loadStats.rps >= minRps, profileName + ' throughput below threshold: ' + loadStats.rps.toFixed(2) + ' < ' + minRps);
-		assert.ok(loadStats.p95 <= settings.maxP95Ms, profileName + ' p95 latency above threshold: ' + loadStats.p95 + ' > ' + settings.maxP95Ms);
+		assert.ok(loadStats.p95 <= maxP95Ms, profileName + ' p95 latency above threshold: ' + loadStats.p95 + ' > ' + maxP95Ms);
 		assert.ok(statsResp.elapsed <= settings.maxStatsMs, profileName + ' /api/stats latency above threshold: ' + statsResp.elapsed + ' > ' + settings.maxStatsMs);
 		assert.ok(reqResp.elapsed <= settings.maxRequestsMs, profileName + ' /api/requests latency above threshold: ' + reqResp.elapsed + ' > ' + settings.maxRequestsMs);
 		assert.ok(chartResp.elapsed <= settings.maxChartsMs, profileName + ' /api/charts/requests-over-time latency above threshold: ' + chartResp.elapsed + ' > ' + settings.maxChartsMs);

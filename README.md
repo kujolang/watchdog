@@ -550,7 +550,10 @@ Run deterministic fixture mode for local validation/schema checks:
 
 Constrained CI or Workcell environments may set `WDG_LOAD_MIN_RPS` or
 `WDG_LOAD_MIN_RPS_QUICK`/`WDG_LOAD_MIN_RPS_SOAK` to document the local CPU
-budget while keeping the live proxy, latency, and SQLite growth assertions on.
+budget. They may also set `WDG_LOAD_MAX_P95_MS` or
+`WDG_LOAD_MAX_P95_MS_QUICK`/`WDG_LOAD_MAX_P95_MS_SOAK` when container
+scheduling makes strict local-laptop latency budgets unrealistic. The suite
+still runs the live proxy, dashboard latency, and SQLite growth assertions.
 
 ---
 
