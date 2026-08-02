@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_id": "watchdog-provider-catalog:2026-07-26",
+  "catalog_id": "watchdog-provider-catalog:2026-08-02",
   "models": {
     "gpt-4.1": {
       "model_id": "gpt-4.1",
@@ -282,6 +282,26 @@
       "cached_input_rate_per_million": 0.0,
       "cache_write_input_rate_per_million": 0.0
     },
+    "deepseek-chat": {
+      "model_id": "deepseek-chat",
+      "priced_model": "deepseek-chat",
+      "has_pricing": true,
+      "pricing_source": "deepseek-pricing:2026-08-02",
+      "input_rate_per_million": 0.27,
+      "output_rate_per_million": 1.1,
+      "cached_input_rate_per_million": 0.07,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "deepseek-reasoner": {
+      "model_id": "deepseek-reasoner",
+      "priced_model": "deepseek-reasoner",
+      "has_pricing": true,
+      "pricing_source": "deepseek-pricing:2026-08-02",
+      "input_rate_per_million": 0.55,
+      "output_rate_per_million": 2.19,
+      "cached_input_rate_per_million": 0.14,
+      "cache_write_input_rate_per_million": 0.0
+    },
     "deepseek-v4-flash": {
       "model_id": "deepseek-v4-flash",
       "priced_model": "deepseek-v4-flash",
@@ -304,14 +324,6 @@
     }
   },
   "aliases": {
-    "deepseek-chat": {
-      "target_model_id": "deepseek-v4-flash",
-      "pricing_source": "deepseek-pricing:2026-07-19#compat-alias"
-    },
-    "deepseek-reasoner": {
-      "target_model_id": "deepseek-v4-flash",
-      "pricing_source": "deepseek-pricing:2026-07-19#compat-alias"
-    },
     "claude-haiku-latest": {
       "target_model_id": "claude-haiku-4.5",
       "pricing_source": "anthropic-pricing:2026-07-19#alias"

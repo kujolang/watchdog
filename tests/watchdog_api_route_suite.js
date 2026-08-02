@@ -206,7 +206,7 @@ async function run() {
 			assert.ok(trace.cached_input_cost_usd > 0);
 			assert.ok(trace.cache_write_input_cost_usd > 0);
 			assert.strictEqual(trace.pricing_kind, 'catalog');
-			assert.match(String(trace.pricing_source || ''), /^openrouter-public-catalog:2026-07-26/);
+			assert.match(String(trace.pricing_source || ''), /^openrouter-public-catalog:2026-08-02/);
 			assert.strictEqual(trace.priced_model, 'anthropic/claude-sonnet-5');
 			assert.match(String(trace.attributes_json || ''), /"transport":"direct"/);
 		});
@@ -225,7 +225,7 @@ async function run() {
 			const request = data.find(row => row.request_id === 'request-contract-001');
 			assert.ok(request, 'contract request should be listed');
 			assert.strictEqual(request.pricing_kind, 'catalog');
-			assert.match(String(request.pricing_source || ''), /^openrouter-public-catalog:2026-07-26/);
+			assert.match(String(request.pricing_source || ''), /^openrouter-public-catalog:2026-08-02/);
 			assert.ok(Number(request.cached_input_rate_per_million || 0) > 0);
 			assert.ok(Number(request.cache_write_input_rate_per_million || 0) > 0);
 		});
