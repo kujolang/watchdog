@@ -1,6 +1,6 @@
 # Watchdog
 
-[![Version](https://img.shields.io/badge/version-0.1.0-black)](https://github.com/kujolang/watchdog)
+[![Version](https://img.shields.io/badge/version-1.0.0-black)](https://github.com/kujolang/watchdog)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 [![built with Kujo](https://img.shields.io/badge/built%20with-Kujo-white.svg)](https://github.com/kujolang/kujo)
 
@@ -585,11 +585,9 @@ Keep root compatibility entrypoints synced from `src/`:
 
 ## Implementation backlog
 
-- Primary execution checklist: [docs/WATCHDOG_SCOUT_CHECKLIST.md](docs/WATCHDOG_SCOUT_CHECKLIST.md)
+- Primary execution checklist: [docs/ENTERPRISE_RELEASE_LOOP_CHECKLIST.md](docs/ENTERPRISE_RELEASE_LOOP_CHECKLIST.md)
 - Deployment and hardening runbook: [docs/DEPLOYMENT_HARDENING_RUNBOOK.md](docs/DEPLOYMENT_HARDENING_RUNBOOK.md)
 - Kennel integration guide: [docs/KENNEL_INTEGRATION_GUIDE.md](docs/KENNEL_INTEGRATION_GUIDE.md)
-- Enterprise next-session checklist: [docs/WATCHDOG_ENTERPRISE_NEXT_SESSION_CHECKLIST.md](docs/WATCHDOG_ENTERPRISE_NEXT_SESSION_CHECKLIST.md)
-- Enterprise review follow-up checklist: [docs/WATCHDOG_ENTERPRISE_REVIEW_2026-06-19.md](docs/WATCHDOG_ENTERPRISE_REVIEW_2026-06-19.md)
 - Enterprise deployment architecture: [docs/ENTERPRISE_DEPLOYMENT_ARCHITECTURE.md](docs/ENTERPRISE_DEPLOYMENT_ARCHITECTURE.md)
 - Enterprise release loop checklist: [docs/ENTERPRISE_RELEASE_LOOP_CHECKLIST.md](docs/ENTERPRISE_RELEASE_LOOP_CHECKLIST.md)
 - Release checklist and versioning policy: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)

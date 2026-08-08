@@ -13,6 +13,12 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 - Added expression indexes for timestamp filters and stricter export chunk caps for larger telemetry datasets.
 - Moved the standalone HTTP runtime smoke fixture out of the project root and added a new enterprise review follow-up checklist.
 
+## [1.0.0] - 2026-08-08
+
+- Declared the local dashboard, OpenAI-compatible proxy, SQLite telemetry, redaction, auth, rate-limit, backup, and export surfaces stable.
+- Aligned the VERSION file, Kujo metadata, and README badge at 1.0.0.
+- Kept deployment-specific TLS, firewall, retention, secrets, and live-upstream proof as operator responsibilities.
+
 ## [0.1.0] - 2026-05-22
 
 - Initial Watchdog release with a local dashboard, SQLite telemetry storage, and an OpenAI-compatible proxy.
