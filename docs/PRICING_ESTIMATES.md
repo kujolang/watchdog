@@ -49,7 +49,7 @@ Common `pricing_source` patterns:
 - `moonshot-kimi-pricing:2026-07-19`
 - `ollama-cloud-equivalent:*`
 - `deepseek-pricing:2026-08-02`
-- `openrouter-public-catalog:2026-08-02`
+- `openrouter-public-catalog:2026-08-09`
 - `watchdog-fallback-estimate:v1`
 
 ## Reprice historical records
@@ -106,7 +106,7 @@ Apply the same command with `--apply` once the dry-run output looks correct.
 
 ## Provider catalog coverage
 
-The local provider catalog is intentionally versioned and explicit. As of August 2, 2026 it includes:
+The local provider catalog is intentionally versioned and explicit. As of August 9, 2026 it includes:
 
 - direct OpenAI text-token models used by AI Chat such as `gpt-4.1`, `gpt-4.1-mini`, and `o4-mini`
 - direct Anthropic models such as `claude-sonnet-5`, `claude-opus-4.8`, and `claude-haiku-4.5`
@@ -117,10 +117,16 @@ The local provider catalog is intentionally versioned and explicit. As of August
 
 Current direct-provider gaps are also explicit. `deepseek-v3.1-pro` and `deepseek-v3.1-flash` are recognized in the provider catalog but intentionally remain `unknown` because DeepSeek's current public pricing page no longer lists public rates for those model IDs.
 
+AI Chat now includes Ollama Cloud's `kimi-k3:cloud`. Ollama publishes it as
+subscription usage and the public OpenRouter catalog publishes an OpenRouter
+route, but Moonshot does not currently publish a direct Kimi K3 per-token API
+rate. Watchdog therefore records the Ollama route as `unknown` instead of
+borrowing OpenRouter pricing or applying the generic fallback estimate.
+
 Ollama itself does not publish a public per-model token price table. When Watchdog uses an `ollama-cloud-equivalent:*` source, the estimate is based on the underlying provider's public pricing, not on an Ollama invoice or GPU-time statement.
 
-The current AI Chat Ollama Cloud inventory still falls back to Watchdog's
-generic estimate for `gpt-oss:120b`, `gpt-oss:20b`,
+The current AI Chat Ollama Cloud inventory records `kimi-k3:cloud` as explicitly
+unknown and still falls back to Watchdog's generic estimate for `gpt-oss:120b`, `gpt-oss:20b`,
 `mistral-large-3:675b`, `gemma4:31b`, `nemotron-3-ultra`,
 `nemotron-3-nano:30b`, `nemotron-3-super`, and `qwen3.5:397b`. Their
 Ollama-hosted deployments do not have a trustworthy public per-token price or

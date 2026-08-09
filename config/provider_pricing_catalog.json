@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_id": "watchdog-provider-catalog:2026-08-02",
+  "catalog_id": "watchdog-provider-catalog:2026-08-09",
   "models": {
     "gpt-4.1": {
       "model_id": "gpt-4.1",
@@ -321,6 +321,16 @@
       "output_rate_per_million": 0.87,
       "cached_input_rate_per_million": 0.003625,
       "cache_write_input_rate_per_million": 0.0
+    },
+    "kimi-k3": {
+      "model_id": "kimi-k3",
+      "priced_model": "kimi-k3",
+      "has_pricing": false,
+      "pricing_source": "moonshot-kimi-pricing:2026-08-09:not-listed-on-current-public-pricing-page",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
     }
   },
   "aliases": {
@@ -331,6 +341,10 @@
     "ollama-cloud/kimi-k2.7-code": {
       "target_model_id": "kimi-k2.7-code",
       "pricing_source": "ollama-cloud-equivalent:moonshot-kimi-pricing:2026-07-19"
+    },
+    "ollama-cloud/kimi-k3:cloud": {
+      "target_model_id": "kimi-k3",
+      "pricing_source": "ollama-cloud-unpriced:2026-08-09#subscription-usage-no-per-token-rate"
     },
     "ollama-cloud/kimi-k2.6": {
       "target_model_id": "kimi-k2.6",
