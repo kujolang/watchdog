@@ -60,6 +60,16 @@ function runTest() {
 		assert.strictEqual(JSON.parse(fs.readFileSync(resultFile, 'utf8')).ok, true);
 		const retained = fs.readdirSync(backups).filter(name => /^watchdog-backup-.*\.db(?:\.enc)?$/.test(name));
 		assert.strictEqual(retained.length, 2);
+
+		fs.rmSync(path.join(backups, '.watchdog-backups.json'), { force: true });
+		const orphanName = 'watchdog-backup-20000101T000000000Z-aaaaaa.db';
+		fs.writeFileSync(path.join(backups, orphanName), 'orphaned-manifest-entry');
+		fs.writeFileSync(path.join(backups, orphanName + '.sha256'), 'stale checksum');
+		result = run(['--db', db, '--out-dir', backups, '--retention-count', '2']);
+		assert.strictEqual(result.status, 0, result.stderr || result.stdout);
+		const retainedAfterManifestLoss = fs.readdirSync(backups).filter(name => /^watchdog-backup-.*\.db(?:\.enc)?$/.test(name));
+		assert.strictEqual(retainedAfterManifestLoss.length, 2, 'retention should inventory files even when the manifest is missing');
+		assert.strictEqual(fs.existsSync(path.join(backups, orphanName)), false, 'old orphaned backup should be pruned');
 		console.log('backup_script_check: PASS');
 	} finally {
 		fs.rmSync(temp, { recursive: true, force: true });

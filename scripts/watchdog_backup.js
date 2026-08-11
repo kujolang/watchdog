@@ -62,14 +62,14 @@ function assertSecureKeyFile(keyPath) {
 
 function pruneOldBackups(outDir, retentionCount, latestPath) {
 	const manifestPath = path.join(outDir, '.watchdog-backups.json');
-	let candidates = [];
-	try {
-		const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-		if (Array.isArray(parsed)) candidates = parsed.map(String);
-	} catch (err) {}
 	const knownPattern = /^watchdog-backup-\d{8}T\d{9}Z-[a-f0-9]{6}\.db(?:\.enc)?$/;
-	candidates = [...new Set([...candidates, latestPath])]
-		.filter(target => path.dirname(target) === outDir && knownPattern.test(path.basename(target)))
+	const candidates = [...new Set([
+		...fs.readdirSync(outDir)
+			.filter(name => knownPattern.test(name))
+			.map(name => path.join(outDir, name)),
+		latestPath,
+	])]
+		.filter(target => fs.existsSync(target) && path.dirname(target) === outDir && knownPattern.test(path.basename(target)))
 		.sort();
 	const removeCount = Math.max(0, candidates.length - retentionCount);
 	const removed = [];
