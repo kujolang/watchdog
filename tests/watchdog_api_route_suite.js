@@ -90,7 +90,7 @@ function parseJson(text, context) {
 async function startServer() {
 	const child = spawn(KUJO_BIN, ['run', '--interpreter', 'dashboard_server.kujo'], {
 		cwd: ROOT,
-		env: { ...process.env, WDG_DB_PATH: DB_PATH, WDG_PORT: String(PORT), WDG_API_AUTH_MODE: 'off', WDG_PROXY_AUTHZ_MODE: 'off' },
+		env: { ...process.env, WDG_DB_PATH: DB_PATH, WDG_PORT: String(PORT), WDG_API_AUTH_MODE: 'off', WDG_PROXY_AUTHZ_MODE: 'off', WDG_MAX_PARSE_BODY_BYTES: '4096' },
 		stdio: ['ignore', 'pipe', 'pipe'],
 	});
 
@@ -167,6 +167,12 @@ async function run() {
 		assert.strictEqual(dashboardResp.status, 200, '/ should return HTTP 200');
 		assert.strictEqual(String(dashboardResp.headers['x-content-type-options'] || ''), 'nosniff', 'Dashboard response should set X-Content-Type-Options');
 
+		const oversizedTelemetry = { request_id: 'oversized-request', prompt_summary: 'x'.repeat(5000) };
+		const oversizedRequestResp = await httpPost('/api/telemetry/requests', oversizedTelemetry);
+		assert.strictEqual(oversizedRequestResp.status, 400, 'request telemetry intake should enforce the JSON body limit');
+		const oversizedTraceResp = await httpPost('/api/telemetry/traces', { trace_id: 'oversized-trace', events: [], padding: 'x'.repeat(5000) });
+		assert.strictEqual(oversizedTraceResp.status, 400, 'trace telemetry intake should enforce the JSON body limit');
+
 		await assertEndpoint('/api/stats', data => {
 			assert.ok(data.total_requests >= 1, 'stats.total_requests should be populated after demo seed');
 			assert.ok(Object.prototype.hasOwnProperty.call(data, 'total_tool_calls'));
@@ -177,7 +183,7 @@ async function run() {
 
 		const traceId = 'trace-contract-001';
 		const intake = await httpPost('/api/telemetry/requests', {
-			source_app: 'contract-client', request_id: 'request-contract-001', session_id: 'session-contract', provider: 'openrouter-work', model: 'anthropic/claude-sonnet-5', status: 'success', input_tokens: 100, output_tokens: 50, total_tokens: 150,
+			source_app: 'contract-client', request_id: 'request-contract-001', session_id: 'session-contract', provider: 'openrouter-work', model: 'anthropic/claude-sonnet-5', status: 'success', input_tokens: 100, output_tokens: 50, total_tokens: 150, cost_usd: 0.123, pricing_source: 'provider-usage-response',
 			trace: { trace_id: traceId, model: 'anthropic/claude-sonnet-5', name: 'independent_tool_workflow', status: 'success', started_at_ms: 1000, ended_at_ms: 1400, duration_ms: 400, cached_input_tokens: 10, cache_write_input_tokens: 5, attributes: { transport: 'direct', content_mode: 'off' } },
 			spans: [
 				{ span_id: 'span-model', parent_span_id: '', span_kind: 'model', name: 'provider_round', status: 'success', started_at_ms: 1000, ended_at_ms: 1200, duration_ms: 200, attributes: { time_to_first_token_ms: 25 } },
@@ -224,8 +230,9 @@ async function run() {
 			assert.ok(data.length >= 1, 'requests should have records after seed');
 			const request = data.find(row => row.request_id === 'request-contract-001');
 			assert.ok(request, 'contract request should be listed');
-			assert.strictEqual(request.pricing_kind, 'catalog');
-			assert.match(String(request.pricing_source || ''), /^openrouter-public-catalog:2026-08-09/);
+			assert.strictEqual(request.pricing_kind, 'provider_reported');
+			assert.strictEqual(request.pricing_source, 'provider-usage-response');
+			assert.strictEqual(Number(request.cost_usd), 0.123);
 			assert.ok(Number(request.cached_input_rate_per_million || 0) > 0);
 			assert.ok(Number(request.cache_write_input_rate_per_million || 0) > 0);
 		});

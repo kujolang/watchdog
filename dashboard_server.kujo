@@ -184,9 +184,20 @@ func parse_json_safe(text_value) {
 	}
 }
 
+func utf8_byte_length(text_value) {
+	encoded := encode_base64(to_string(text_value))
+	padding := 0
+	if ends_with(encoded, "==") {
+		padding = 2
+	} else if ends_with(encoded, "=") {
+		padding = 1
+	}
+	return ((len(encoded) / 4) * 3) - padding
+}
+
 func parse_json_with_limit(text_value, max_bytes) {
 	text := to_string(text_value)
-	if len(text) > max_bytes {
+	if utf8_byte_length(text) > max_bytes {
 		return {
 			"ok": false,
 			"data": null,
@@ -1684,7 +1695,20 @@ func insert_external_request(body) {
 	cache_write_input_tokens := to_int_or_zero(safe_dict_get(body, "cache_write_input_tokens", 0))
 	model_name := external_text(body, "model", "", 160)
 	pricing := watchdog_cost_breakdown(model_name, input_tokens * 1.0, output_tokens * 1.0, cached_input_tokens * 1.0, cache_write_input_tokens * 1.0)
-	cost_usd := safe_dict_get(body, "cost_usd", pricing["total_cost_usd"])
+	cost_usd := pricing["total_cost_usd"]
+	if has_key(body, "cost_usd") {
+		try {
+			cost_usd = parse_float(to_string(body["cost_usd"]))
+		} except err {
+			return {"ok": false, "error": "cost_usd must be a non-negative number"}
+		}
+		if cost_usd < 0 {
+			return {"ok": false, "error": "cost_usd must be a non-negative number"}
+		}
+		pricing["pricing_kind"] = "provider_reported"
+		pricing["pricing_source"] = external_text(body, "pricing_source", "provider-reported-cost", 160)
+		pricing["priced_model"] = model_name
+	}
 	latency_ms := to_int_or_zero(safe_dict_get(body, "latency_ms", 0))
 	ts := to_string(current_timestamp())
 
@@ -2409,20 +2433,27 @@ func proxy_route_dispatch(req) {
 	return proxy_forward(req, resource, action)
 }
 
-func proxy_forward_named_upstream(req, resource, action, upstream_profile) {
+func proxy_forward_named_upstream(req, resource, action, profile_name) {
 	file_cfg := read_proxy_config_file(PROXY_CONFIG_PATH)
 	raw_profiles := safe_dict_get(file_cfg, "upstream_profiles", {})
-	profile_cfg := raw_profiles[upstream_profile]
+	profile_cfg := safe_dict_get(raw_profiles, profile_name, null)
+	if type(profile_cfg) != "dict" {
+		error_message := "Unknown Watchdog upstream profile: " + profile_name
+		insert_audit_event("proxy_profile_rejected", resolve_audit_actor_key(req, "proxy"), "denied", {
+			"reason": error_message
+		})
+		return api_error(400, error_message)
+	}
 	cfg := merge_config_maps({"upstream_base_url": DEFAULT_UPSTREAM_BASE_URL, "auth_mode": DEFAULT_AUTH_MODE, "upstream_api_key": "", "upstream_api_key_env": ""}, profile_cfg)
 	cfg["upstream_base_url"] := normalize_base_url(string_dict_get(cfg, "upstream_base_url", DEFAULT_UPSTREAM_BASE_URL))
-	return proxy_forward_with_config(req, resource, action, cfg, "named")
+	return proxy_forward_with_config(req, resource, action, cfg, profile_name)
 }
 
 func proxy_forward(req, resource, action) {
 	headers_in := safe_dict_get(req, "headers", {})
-	requested_upstream_profile := trim(get_header(headers_in, "X-Watchdog-Upstream-Profile"))
-	if requested_upstream_profile != "" && requested_upstream_profile != "default" {
-		return proxy_forward_named_upstream(req, resource, action, requested_upstream_profile)
+	profile_name := trim(get_header(headers_in, "X-Watchdog-Upstream-Profile"))
+	if profile_name != "" && profile_name != "default" {
+		return proxy_forward_named_upstream(req, resource, action, profile_name)
 	}
 	return proxy_forward_with_config(req, resource, action, effective_proxy_config(PROXY_CONFIG_PATH), "default")
 }
@@ -2497,7 +2528,8 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		return api_error(400, error_message)
 	}
 
-	if len(request_body) > MAX_PROXY_BODY_BYTES {
+	request_body_bytes := utf8_byte_length(request_body)
+	if request_body_bytes > MAX_PROXY_BODY_BYTES {
 		session_id_hint := resolve_session_id(req, null)
 		user_id_hint := resolve_user_id(req, null)
 		tenant_id_hint := resolve_tenant_id(req, null)
@@ -2520,7 +2552,7 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		insert_agent_step_row(session_id_hint, agent_id_hint, "proxy_failed", "Proxy request body exceeded configured max bytes.", {
 			"path": forwarded_path,
 			"max_proxy_body_bytes": MAX_PROXY_BODY_BYTES,
-			"request_body_bytes": len(request_body)
+			"request_body_bytes": request_body_bytes
 		})
 		return api_error(413, error_message)
 	}
@@ -2954,7 +2986,7 @@ server := server.route("POST", "/api/telemetry/requests", func(req) {
 	}
 	maybe_run_scheduled_backup()
 
-	body_parse := parse_json_safe(to_string(safe_dict_get(req, "body", "{}")))
+	body_parse := parse_json_with_limit(to_string(safe_dict_get(req, "body", "{}")), MAX_PARSE_BODY_BYTES)
 	if !body_parse["ok"] || type(body_parse["data"]) != "dict" {
 		return api_error(400, "Request body must be a JSON object")
 	}
@@ -2984,7 +3016,7 @@ server := server.route("POST", "/api/telemetry/traces", func(req) {
 		return api_error(auth["status"], auth["error"])
 	}
 	maybe_run_scheduled_backup()
-	body_parse := parse_json_safe(to_string(safe_dict_get(req, "body", "{}")))
+	body_parse := parse_json_with_limit(to_string(safe_dict_get(req, "body", "{}")), MAX_PARSE_BODY_BYTES)
 	if !body_parse["ok"] || type(body_parse["data"]) != "dict" {
 		return api_error(400, "Request body must be a JSON object")
 	}

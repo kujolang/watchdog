@@ -163,7 +163,7 @@ async function runThresholdScenario(upstreamPort) {
 			{ 'Content-Type': 'application/json', 'X-Observe-Session-Id': 'sess_body_limit' },
 			smallBody
 		);
-		assert.strictEqual(smallResp.status, 200, 'below-limit JSON request should succeed');
+		assert.strictEqual(smallResp.status, 200, 'below-limit JSON request should succeed: ' + smallResp.body);
 
 		const nearLimitBody = buildContentBody(205);
 		assert.ok(parseBodyByteLength(nearLimitBody) <= 220, 'near-limit payload must stay within limit');
@@ -222,6 +222,18 @@ async function runParseLimitScenario(upstreamPort) {
 			parseLimitedBody
 		);
 		assert.strictEqual(parseLimitedResp.status, 413, 'JSON parse-limit overflow should return HTTP 413');
+
+		const unicodeBody = JSON.stringify({ model: 'gpt-4.1-mini', messages: [{ role: 'user', content: '犬'.repeat(60) }] });
+		assert.ok(unicodeBody.length < 220, 'Unicode fixture should remain below the character-count limit');
+		assert.ok(Buffer.byteLength(unicodeBody, 'utf8') > 220, 'Unicode fixture should exceed the UTF-8 byte limit');
+		const unicodeResp = await httpRequest(
+			watchdogPort,
+			'POST',
+			'/proxy/v1/chat/completions',
+			{ 'Content-Type': 'application/json', 'X-Observe-Session-Id': 'sess_body_unicode_limit' },
+			unicodeBody
+		);
+		assert.strictEqual(unicodeResp.status, 413, 'body limits should count UTF-8 bytes rather than characters');
 	} finally {
 		await stopWatchdog(wd.child);
 	}

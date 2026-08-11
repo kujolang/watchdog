@@ -276,9 +276,20 @@ async function runPassthroughScenario(stubPort, received) {
 			},
 			JSON.stringify({ model: 'named-profile-model', messages: [{ role: 'user', content: 'named profile path' }] })
 		);
-		assert.strictEqual(namedProfileResp.status, 200, 'named upstream profile proxy call should succeed');
+		assert.strictEqual(namedProfileResp.status, 200, 'named upstream profile proxy call should succeed: ' + namedProfileResp.body);
 		assert.strictEqual(received[received.length - 1].authorization, 'Bearer named-profile-key', 'named profile should override Authorization');
 		console.log('proxy_integration_stub_suite: named profile ok');
+
+		const receivedBeforeUnknownProfile = received.length;
+		const unknownProfileResp = await httpRequest(
+			watchdogPort,
+			'POST',
+			'/proxy/v1/chat/completions',
+			{ 'Content-Type': 'application/json', 'X-Watchdog-Upstream-Profile': 'missing-profile' },
+			JSON.stringify({ model: 'gpt-4.1-mini', messages: [] })
+		);
+		assert.strictEqual(unknownProfileResp.status, 400, 'unknown upstream profiles should be rejected cleanly');
+		assert.strictEqual(received.length, receivedBeforeUnknownProfile, 'unknown profiles must not reach any upstream');
 
 		const queryResp = await httpRequest(
 			watchdogPort,
@@ -377,7 +388,7 @@ async function runPassthroughScenario(stubPort, received) {
 		);
 
 		const namedRequests = await getApiData(watchdogPort, '/api/requests?session_id=sess_proxy_named_profile&page_size=50');
-		assert.ok(namedRequests.some(row => String(row.provider) === 'named'), 'request log should identify a named upstream profile');
+		assert.ok(namedRequests.some(row => String(row.provider) === 'openrouter-work'), 'request log should preserve the selected upstream profile name');
 
 		const toolCalls = await getApiData(watchdogPort, '/api/tool-calls?session_id=sess_proxy_stub_pass&page_size=50');
 		assert.ok(Array.isArray(toolCalls) && toolCalls.length >= 6, 'tool call log should capture forwarding events');
