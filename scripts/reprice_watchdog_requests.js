@@ -30,10 +30,17 @@ function parseArgs(argv) {
 		else if (token.startsWith('--until-ms=')) out.untilMs = Number(token.slice('--until-ms='.length) || 0);
 		else if (token.startsWith('--source-app=')) out.sourceApp = token.slice('--source-app='.length).trim();
 		else if (token.startsWith('--models=')) out.models = token.slice('--models='.length).split(',').map(normalizeModelId).filter(Boolean);
-		else if (token.startsWith('--limit=')) out.limit = Math.max(1, Math.min(25000, Number(token.slice('--limit='.length) || 5000)));
+		else if (token.startsWith('--limit=')) out.limit = Number(token.slice('--limit='.length));
 	}
 
 	return out;
+}
+
+function validateArgs(args) {
+	if (!Number.isSafeInteger(args.fromMs) || args.fromMs < 0) fail('--from-ms must be a non-negative safe integer.');
+	if (!Number.isSafeInteger(args.untilMs) || args.untilMs < 0) fail('--until-ms must be a non-negative safe integer.');
+	if (args.fromMs > 0 && args.untilMs > 0 && args.fromMs > args.untilMs) fail('--from-ms must not be greater than --until-ms.');
+	if (!Number.isSafeInteger(args.limit) || args.limit < 1 || args.limit > 25000) fail('--limit must be an integer from 1 to 25000.');
 }
 
 function fail(message) {
@@ -124,6 +131,7 @@ function requestUpdateSql(row, breakdown, nowMs) {
 
 function main() {
 	const args = parseArgs(process.argv.slice(2));
+	validateArgs(args);
 	if (!fs.existsSync(args.dbPath)) fail(`Watchdog DB not found: ${args.dbPath}`);
 	if (!fs.existsSync(args.providerCatalogPath)) fail(`Provider pricing catalog not found: ${args.providerCatalogPath}`);
 	if (!fs.existsSync(args.catalogPath)) fail(`Pricing catalog not found: ${args.catalogPath}`);
@@ -222,6 +230,8 @@ function main() {
 		candidate_rows: candidates.length,
 		changed_request_ids: candidates.map(row => row.id),
 	};
+	const pricingSources = [...new Set(candidates.map(row => String(row.breakdown.pricing_source || '')).filter(Boolean))].sort();
+	summary.pricing_sources = pricingSources;
 
 	if (!args.apply) {
 		console.log(JSON.stringify(summary, null, 2));
@@ -236,7 +246,7 @@ function main() {
 	const nowMs = Date.now();
 	const statements = [
 		'BEGIN;',
-		`INSERT INTO pricing_reprice_runs (run_id, dry_run, selector_json, pricing_source, candidate_count, applied_change_count, created_at) VALUES (${sqlValue(runId)}, 0, ${sqlValue(JSON.stringify(selector))}, ${sqlValue(String(catalog.catalog_id || ''))}, ${sqlValue(candidates.length)}, ${sqlValue(candidates.length)}, ${sqlValue(String(nowMs))});`
+		`INSERT INTO pricing_reprice_runs (run_id, dry_run, selector_json, pricing_source, candidate_count, applied_change_count, created_at) VALUES (${sqlValue(runId)}, 0, ${sqlValue(JSON.stringify(selector))}, ${sqlValue(JSON.stringify(pricingSources))}, ${sqlValue(candidates.length)}, ${sqlValue(candidates.length)}, ${sqlValue(String(nowMs))});`
 	];
 	for (const row of candidates) {
 		statements.push(requestUpdateSql(row, row.breakdown, nowMs));

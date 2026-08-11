@@ -38,9 +38,15 @@ function toRatePerMillion(value) {
 	return Number((parsed * 1e6).toFixed(6));
 }
 
+function hasNonNegativeRate(value) {
+	if (value === null || value === undefined || String(value).trim() === '') return false;
+	const parsed = Number(value);
+	return Number.isFinite(parsed) && parsed >= 0;
+}
+
 function buildModelEntry(model, pricingSource) {
 	const pricing = model && model.pricing && typeof model.pricing === 'object' ? model.pricing : {};
-	const hasBasePricing = Number(pricing.prompt) >= 0 && Number(pricing.completion) >= 0;
+	const hasBasePricing = hasNonNegativeRate(pricing.prompt) && hasNonNegativeRate(pricing.completion);
 	return {
 		model_id: normalizeModelId(model.id),
 		canonical_slug: String(model.canonical_slug || ''),
@@ -100,8 +106,12 @@ async function main() {
 	console.log(`openrouter_pricing_catalog refreshed ${args.output} models=${catalog.model_count} aliases=${catalog.alias_count} source=${catalog.catalog_id}`);
 }
 
-main().catch(err => {
-	console.error('refresh_openrouter_pricing_catalog: FAIL');
-	console.error(err && err.stack ? err.stack : err);
-	process.exit(1);
-});
+if (require.main === module) {
+	main().catch(err => {
+		console.error('refresh_openrouter_pricing_catalog: FAIL');
+		console.error(err && err.stack ? err.stack : err);
+		process.exit(1);
+	});
+}
+
+module.exports = { buildModelEntry, hasNonNegativeRate, toRatePerMillion };

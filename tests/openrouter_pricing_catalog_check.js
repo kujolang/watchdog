@@ -8,10 +8,16 @@ const {
 	resolvePricing,
 	computeBreakdown
 } = require('../scripts/pricing_catalog_lib');
+const { buildModelEntry } = require('../scripts/refresh_openrouter_pricing_catalog');
 
 const root = path.join(__dirname, '..');
 const providerCatalog = loadProviderCatalog(path.join(root, 'config', 'provider_pricing_catalog.json'));
 const openrouterCatalog = loadOpenRouterCatalog(path.join(root, 'config', 'openrouter_pricing_catalog.json'));
+
+const missingPromptRate = buildModelEntry({ id: 'test/missing-prompt', pricing: { prompt: null, completion: '0.001' } }, 'test-catalog');
+assert.equal(missingPromptRate.has_pricing, false, 'null base rates must not be published as free pricing');
+const emptyCompletionRate = buildModelEntry({ id: 'test/missing-completion', pricing: { prompt: '0.001', completion: '' } }, 'test-catalog');
+assert.equal(emptyCompletionRate.has_pricing, false, 'empty base rates must not be published as free pricing');
 
 const gpt54 = resolvePricing('openai/gpt-5.4', { providerCatalog, openrouterCatalog });
 assert.equal(gpt54.pricing_kind, 'catalog');

@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const root = path.join(__dirname, '..');
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-reprice-'));
@@ -12,6 +12,10 @@ const dbPath = path.join(tempRoot, 'watchdog.db');
 const providerCatalogPath = path.join(root, 'config', 'provider_pricing_catalog.json');
 const catalogPath = path.join(root, 'config', 'openrouter_pricing_catalog.json');
 const scriptPath = path.join(root, 'scripts', 'reprice_watchdog_requests.js');
+
+const invalidLimit = spawnSync('node', [scriptPath, '--limit=not-a-number', '--source-app=ai-chat'], { encoding: 'utf8' });
+assert.notEqual(invalidLimit.status, 0, 'invalid numeric CLI options should fail before generating malformed SQL');
+assert.match(invalidLimit.stderr, /--limit must be an integer from 1 to 25000/);
 
 function sqlite(sql, json = false) {
 	const args = json ? ['-json', dbPath, sql] : [dbPath, sql];
@@ -133,9 +137,10 @@ const providerReported = sqlite('SELECT pricing_kind, cost_usd FROM requests WHE
 assert.equal(providerReported.pricing_kind, 'provider_reported', 'provider-reported rows should be skipped');
 assert.equal(Number(providerReported.cost_usd), 9.999);
 
-const auditRun = sqlite('SELECT candidate_count, applied_change_count FROM pricing_reprice_runs', true)[0];
+const auditRun = sqlite('SELECT candidate_count, applied_change_count, pricing_source FROM pricing_reprice_runs', true)[0];
 assert.equal(auditRun.candidate_count, 2);
 assert.equal(auditRun.applied_change_count, 2);
+assert.deepStrictEqual(JSON.parse(auditRun.pricing_source), ['openrouter-public-catalog:2026-08-09', 'openrouter-public-catalog:2026-08-09#alias'], 'reprice audit should record the sources actually applied');
 assert.equal(sqlite('SELECT COUNT(*) AS n FROM pricing_reprice_changes', true)[0].n, 2, 'applied reprices should be auditable');
 
 console.log('reprice_workflow_check: PASS');
