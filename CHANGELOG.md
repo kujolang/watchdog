@@ -6,12 +6,20 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 
 ## [Unreleased]
 
-- Align README version badge with `VERSION` and `kujo.toml`.
-- Add launch readiness spec and deterministic Eval suite for prelaunch review evidence.
-- Added configurable 24-hour online SQLite backups with dashboard controls, retention, SHA-256 verification, Dropbox/Google Drive folder support, and optional AES-256 encryption.
-- Added safer proxy path/query validation with safe scalar query forwarding to upstream OpenAI-compatible endpoints.
-- Added expression indexes for timestamp filters and stricter export chunk caps for larger telemetry datasets.
-- Moved the standalone HTTP runtime smoke fixture out of the project root and added a new enterprise review follow-up checklist.
+## [1.0.1] - 2026-08-11
+
+### Fixed
+
+- Reject unknown named upstream profiles before egress and preserve the selected profile name in telemetry.
+- Enforce proxy and telemetry request limits using UTF-8 byte counts, including both external telemetry intake routes.
+- Classify trusted externally supplied costs as provider-reported and validate that supplied costs are non-negative numbers.
+- Make backup retention inventory the generated files on disk so missing or stale manifests cannot bypass pruning.
+- Validate reprice time and row-limit selectors before generating SQL and record every pricing source actually applied.
+- Treat missing, null, and empty OpenRouter base rates as unavailable instead of zero-cost pricing.
+
+### Changed
+
+- Refresh the checked-in provider and OpenRouter pricing catalogs and their documented coverage.
 
 ## [1.0.0] - 2026-08-08
 

@@ -1,6 +1,6 @@
 [project]
 name = "kujo-watchdog"
-version = "1.0.0"
+version = "1.0.1"
 description = "Watchdog is an observability dashboard for AI applications written in Kujo."
 author = "Kujolang <contact@kujolang.ai>"
 license = "MIT"
