@@ -80,7 +80,7 @@ function startUpstreamStub(port) {
 
 				if (payload.stream === true) {
 					res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-					res.write('data: {"id":"sse-1","model":"stub-stream-model","choices":[{"delta":{"content":"hello"},"finish_reason":null}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}\n\n');
+					res.write('data: {"id":"sse-1","model":"stub-stream-model","choices":[{"delta":{"content":"hello data:"},"finish_reason":null}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}\n\n');
 					res.write('data: {"id":"sse-1","model":"stub-stream-model","choices":[{"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}\n\n');
 					res.end('data: [DONE]\n\n');
 					return;
@@ -99,7 +99,7 @@ function startUpstreamStub(port) {
 			}
 
 			if (pathname === '/v1/error') {
-				res.writeHead(429, { 'Content-Type': 'application/json' });
+				res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '7', 'X-Request-Id': 'stub-rate-limit-1' });
 				res.end(JSON.stringify({ error: { message: 'rate limited by stub' } }));
 				return;
 			}
@@ -330,6 +330,8 @@ async function runPassthroughScenario(stubPort, received) {
 			JSON.stringify({ sample: true })
 		);
 		assert.strictEqual(errResp.status, 429, 'upstream error status should pass through');
+		assert.strictEqual(String(errResp.headers['retry-after'] || ''), '7', 'proxy should preserve upstream Retry-After guidance');
+		assert.strictEqual(String(errResp.headers['x-request-id'] || ''), 'stub-rate-limit-1', 'proxy should preserve upstream request identifiers');
 		console.log('proxy_integration_stub_suite: upstream error ok');
 
 		const malformedResp = await httpRequest(
@@ -360,6 +362,18 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.strictEqual(timeoutResp.status, 502, 'slow upstream should hit timeout and return 502');
 		console.log('proxy_integration_stub_suite: timeout upstream ok');
 
+		const dottedIdResp = await httpRequest(
+			watchdogPort,
+			'GET',
+			'/proxy/v1/files/file..safe/content',
+			{
+				Authorization: 'Bearer passthrough-token',
+				'X-Observe-Session-Id': 'sess_proxy_stub_pass',
+			}
+		);
+		assert.strictEqual(dottedIdResp.status, 404, 'safe dotted paths should preserve the upstream response instead of being rejected locally');
+		assert.ok(received.some(entry => entry.path === '/v1/files/file..safe/content'), 'safe dotted resource ids should reach upstream unchanged');
+
 		const receivedBeforeUnsafe = received.length;
 		const unsafeResp = await httpRequest(
 			watchdogPort,
@@ -381,6 +395,10 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.ok(
 			requests.some(row => String(row.request_id) === 'sse-1' && Number(row.total_tokens) === 4),
 			'requests log should preserve streamed request identity and usage'
+		);
+		assert.ok(
+			requests.some(row => String(row.request_id) === 'sse-1' && String(row.response_summary) === 'hello data: world'),
+			'requests log should preserve data: text inside streamed JSON payloads'
 		);
 		assert.ok(
 			requests.some(row => String(row.error_code) === 'unsafe_proxy_path'),

@@ -173,6 +173,32 @@ async function run() {
 		const oversizedTraceResp = await httpPost('/api/telemetry/traces', { trace_id: 'oversized-trace', events: [], padding: 'x'.repeat(5000) });
 		assert.strictEqual(oversizedTraceResp.status, 400, 'trace telemetry intake should enforce the JSON body limit');
 
+		const negativeRequestId = 'negative-token-request';
+		const negativeRequestResp = await httpPost('/api/telemetry/requests', {
+			source_app: 'contract-client', request_id: negativeRequestId, model: 'gpt-4.1-mini', input_tokens: -1, output_tokens: 2, total_tokens: 1
+		});
+		assert.strictEqual(negativeRequestResp.status, 400, 'request telemetry intake should reject negative token counts');
+
+		const negativeTraceId = 'negative-token-trace';
+		const negativeTraceResp = await httpPost('/api/telemetry/traces', {
+			source_app: 'contract-client', trace_id: negativeTraceId, input_tokens: -1, output_tokens: 0
+		});
+		assert.strictEqual(negativeTraceResp.status, 400, 'trace telemetry intake should reject negative token counts');
+
+		for (const cost of ['NaN', 'Infinity']) {
+			const invalidCostResp = await httpPost('/api/telemetry/requests', {
+				source_app: 'contract-client', request_id: `invalid-cost-${cost}`, cost_usd: cost
+			});
+			assert.strictEqual(invalidCostResp.status, 400, `request telemetry intake should reject non-finite cost ${cost}`);
+		}
+
+		await assertEndpoint('/api/requests', data => {
+			assert.ok(!data.some(row => row.request_id === negativeRequestId), 'rejected request telemetry must not mutate request state');
+		});
+		await assertEndpoint('/api/traces', data => {
+			assert.ok(!data.some(row => row.trace_id === negativeTraceId), 'rejected trace telemetry must not mutate trace state');
+		});
+
 		await assertEndpoint('/api/stats', data => {
 			assert.ok(data.total_requests >= 1, 'stats.total_requests should be populated after demo seed');
 			assert.ok(Object.prototype.hasOwnProperty.call(data, 'total_tool_calls'));

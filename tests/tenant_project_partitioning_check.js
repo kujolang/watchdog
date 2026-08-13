@@ -233,6 +233,15 @@ async function run() {
 		assert.ok(Array.isArray(exportData.requests) && exportData.requests.length === 1, 'tenant-scoped export should include only matching request rows');
 		assert.strictEqual(exportData.requests[0].tenant_id, 'tenant_alpha');
 		assert.strictEqual(exportData.requests[0].project_id, 'project_red');
+		const exportedRequestIds = new Set(exportData.requests.map(row => Number(row.id)));
+		assert.ok(exportData.tool_calls.length > 0, 'tenant-scoped export should retain related tool calls');
+		assert.ok(exportData.tool_calls.every(row => exportedRequestIds.has(Number(row.request_dbid))), 'tenant-scoped export must exclude tool calls from other tenants');
+		assert.ok(exportData.agent_steps.length > 0, 'tenant-scoped export should retain related agent steps');
+		assert.ok(exportData.agent_steps.every(row => row.session_id === 'sess_part_a'), 'tenant-scoped export must exclude agent steps from other tenants');
+		assert.ok(exportData.traces.every(row => row.session_id === 'sess_part_a'), 'tenant-scoped export must exclude traces from other tenants');
+		assert.ok(exportData.trace_spans.every(row => row.session_id === 'sess_part_a'), 'tenant-scoped export must exclude trace spans from other tenants');
+		const exportedTraceIds = new Set(exportData.traces.map(row => String(row.trace_id)));
+		assert.ok(exportData.trace_events.every(row => exportedTraceIds.has(String(row.trace_id))), 'tenant-scoped export must exclude trace events from other tenants');
 
 		const tenantSessionRows = parseApiData(
 			await httpRequest(watchdogPort, 'GET', '/api/sessions?tenant_id=tenant_alpha&page_size=20'),
