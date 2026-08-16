@@ -48,8 +48,8 @@ Common `pricing_source` patterns:
 - `google-gemini-pricing:2026-07-19`
 - `moonshot-kimi-pricing:2026-07-19`
 - `ollama-cloud-equivalent:*`
-- `deepseek-pricing:2026-08-02`
-- `openrouter-public-catalog:2026-08-09`
+- `deepseek-pricing:2026-08-16`
+- `openrouter-public-catalog:2026-08-16`
 - `watchdog-fallback-estimate:v1`
 
 ## Reprice historical records
@@ -106,13 +106,13 @@ Apply the same command with `--apply` once the dry-run output looks correct.
 
 ## Provider catalog coverage
 
-The local provider catalog is intentionally versioned and explicit. As of August 9, 2026 it includes:
+The local provider catalog is intentionally versioned and explicit. As of August 16, 2026 it includes:
 
 - direct OpenAI text-token models used by AI Chat such as `gpt-4.1`, `gpt-4.1-mini`, and `o4-mini`
 - direct Anthropic models such as `claude-sonnet-5`, `claude-opus-4.8`, and `claude-haiku-4.5`
 - direct Google Gemini models such as `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-3.5-flash`, and `gemini-3.5-flash-lite`
 - direct Moonshot Kimi models such as `kimi-k2.7-code`, `kimi-k2.6`, and `kimi-k2.5`
-- direct Z.AI, MiniMax, and DeepSeek model IDs already surfaced by AI Chat; current DeepSeek `deepseek-chat` and `deepseek-reasoner` rates are kept separate because their public cache-hit, cache-miss, and output rates differ
+- direct Z.AI, MiniMax, and DeepSeek model IDs already surfaced by AI Chat; current DeepSeek `deepseek-chat` and `deepseek-reasoner` rates are kept separate because their public cache-hit, cache-miss, and output rates differ, and `deepseek-v4-pro` uses the current $0.435/M cache-miss input rate rather than its earlier $0.30/M rate
 - Ollama Cloud aliases only when there is a defensible public per-token equivalent from the underlying model provider
 
 Current direct-provider gaps are also explicit. `deepseek-v3.1-pro` and `deepseek-v3.1-flash` are recognized in the provider catalog but intentionally remain `unknown` because DeepSeek's current public pricing page no longer lists public rates for those model IDs.

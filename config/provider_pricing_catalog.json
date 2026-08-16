@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_id": "watchdog-provider-catalog:2026-08-09",
+  "catalog_id": "watchdog-provider-catalog:2026-08-16",
   "models": {
     "gpt-4.1": {
       "model_id": "gpt-4.1",
@@ -306,7 +306,7 @@
       "model_id": "deepseek-v4-flash",
       "priced_model": "deepseek-v4-flash",
       "has_pricing": true,
-      "pricing_source": "deepseek-pricing:2026-07-19",
+      "pricing_source": "deepseek-pricing:2026-08-16",
       "input_rate_per_million": 0.14,
       "output_rate_per_million": 0.28,
       "cached_input_rate_per_million": 0.0028,
@@ -316,8 +316,8 @@
       "model_id": "deepseek-v4-pro",
       "priced_model": "deepseek-v4-pro",
       "has_pricing": true,
-      "pricing_source": "deepseek-pricing:2026-07-19",
-      "input_rate_per_million": 0.3,
+      "pricing_source": "deepseek-pricing:2026-08-16",
+      "input_rate_per_million": 0.435,
       "output_rate_per_million": 0.87,
       "cached_input_rate_per_million": 0.003625,
       "cache_write_input_rate_per_million": 0.0
@@ -356,11 +356,11 @@
     },
     "ollama-cloud/deepseek-v4-flash": {
       "target_model_id": "deepseek-v4-flash",
-      "pricing_source": "ollama-cloud-equivalent:deepseek-pricing:2026-07-19"
+      "pricing_source": "ollama-cloud-equivalent:deepseek-pricing:2026-08-16"
     },
     "ollama-cloud/deepseek-v4-pro": {
       "target_model_id": "deepseek-v4-pro",
-      "pricing_source": "ollama-cloud-equivalent:deepseek-pricing:2026-07-19"
+      "pricing_source": "ollama-cloud-equivalent:deepseek-pricing:2026-08-16"
     },
     "ollama-cloud/minimax-m3": {
       "target_model_id": "minimax-m3",

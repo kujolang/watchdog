@@ -238,7 +238,7 @@ async function run() {
 			assert.ok(trace.cached_input_cost_usd > 0);
 			assert.ok(trace.cache_write_input_cost_usd > 0);
 			assert.strictEqual(trace.pricing_kind, 'catalog');
-			assert.match(String(trace.pricing_source || ''), /^openrouter-public-catalog:2026-08-09/);
+			assert.match(String(trace.pricing_source || ''), /^openrouter-public-catalog:2026-08-16/);
 			assert.strictEqual(trace.priced_model, 'anthropic/claude-sonnet-5');
 			assert.match(String(trace.attributes_json || ''), /"transport":"direct"/);
 		});
