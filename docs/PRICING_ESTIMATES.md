@@ -49,7 +49,8 @@ Common `pricing_source` patterns:
 - `moonshot-kimi-pricing:2026-07-19`
 - `ollama-cloud-equivalent:*`
 - `deepseek-pricing:2026-08-16`
-- `openrouter-public-catalog:2026-08-16`
+- `openai-api-pricing:2026-08-23:standard-short-context`
+- `openrouter-public-catalog:2026-08-23`
 - `watchdog-fallback-estimate:v1`
 
 ## Reprice historical records
@@ -106,13 +107,13 @@ Apply the same command with `--apply` once the dry-run output looks correct.
 
 ## Provider catalog coverage
 
-The local provider catalog is intentionally versioned and explicit. As of August 16, 2026 it includes:
+The local provider catalog is intentionally versioned and explicit. As of August 23, 2026 it includes:
 
-- direct OpenAI text-token models used by AI Chat such as `gpt-4.1`, `gpt-4.1-mini`, and `o4-mini`
+- direct OpenAI text-token models used by AI Chat such as `gpt-4.1`, `gpt-4.1-mini`, and `o4-mini`, plus the current Codex inventory models `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini`; `gpt-daybreak-blue-latest` uses OpenAI's documented `gpt-5.6-sol` alias basis, while non-public-API `gpt-5.3-codex-spark` remains explicitly `unknown`
 - direct Anthropic models such as `claude-sonnet-5`, `claude-opus-4.8`, and `claude-haiku-4.5`
 - direct Google Gemini models such as `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-3.5-flash`, and `gemini-3.5-flash-lite`
 - direct Moonshot Kimi models such as `kimi-k2.7-code`, `kimi-k2.6`, and `kimi-k2.5`
-- direct Z.AI, MiniMax, and DeepSeek model IDs already surfaced by AI Chat; current DeepSeek `deepseek-chat` and `deepseek-reasoner` rates are kept separate because their public cache-hit, cache-miss, and output rates differ, and `deepseek-v4-pro` uses the current $0.435/M cache-miss input rate rather than its earlier $0.30/M rate
+- direct Z.AI, MiniMax, and DeepSeek model IDs already surfaced by AI Chat; deprecated DeepSeek `deepseek-chat` and `deepseek-reasoner` now resolve to the public `deepseek-v4-flash` non-thinking and thinking compatibility modes, while `deepseek-v4-pro` uses the current $0.435/M cache-miss input rate
 - Ollama Cloud aliases only when there is a defensible public per-token equivalent from the underlying model provider
 
 Current direct-provider gaps are also explicit. `deepseek-v3.1-pro` and `deepseek-v3.1-flash` are recognized in the provider catalog but intentionally remain `unknown` because DeepSeek's current public pricing page no longer lists public rates for those model IDs.
@@ -136,7 +137,7 @@ model-specific catalog rate.
 ## Limitations
 
 - Catalog pricing is still an estimate, not an invoice.
-- Some direct-provider features still cannot be priced exactly from token counts alone. Examples include OpenAI audio-minute billing, Anthropic cache-write TTL selection, and provider pages that publish prompt-length breakpoints Watchdog's static snapshot cannot yet encode.
+- Some direct-provider features still cannot be priced exactly from token counts alone. Examples include OpenAI audio-minute billing, Anthropic cache-write TTL selection, and provider pages that publish prompt-length breakpoints Watchdog's static snapshot cannot yet encode. The GPT-5.4, GPT-5.5, and GPT-5.6 rows therefore use standard short-context rates; requests above OpenAI's documented long-context threshold can cost more than Watchdog estimates.
 - OpenRouter routing, workspace discounts, negotiated rates, and future price changes may differ from the snapshot Watchdog used at ingest time.
 - Ollama Cloud usage is measured by Ollama infrastructure utilization, not a public per-token invoice schedule, so `ollama-cloud-equivalent:*` rows are best-effort comparability estimates.
 - Historical prices are not reconstructed automatically; a reprice run uses the current local catalog snapshot and records that provenance.

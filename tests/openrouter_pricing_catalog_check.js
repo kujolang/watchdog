@@ -32,9 +32,9 @@ assert.equal(opus5.output_rate_per_million, 25);
 assert.equal(opus5.cache_write_input_rate_per_million, 6.25);
 
 const glm52 = resolvePricing('z-ai/glm-5.2', { providerCatalog, openrouterCatalog });
-assert.equal(glm52.input_rate_per_million, 0.308);
-assert.equal(glm52.output_rate_per_million, 0.968);
-assert.equal(glm52.cached_input_rate_per_million, 0.0572);
+assert.equal(glm52.input_rate_per_million, 0.966);
+assert.equal(glm52.output_rate_per_million, 3.036);
+assert.equal(glm52.cached_input_rate_per_million, 0.1932);
 
 const alias = resolvePricing('~anthropic/claude-haiku-latest', { providerCatalog, openrouterCatalog });
 assert.equal(alias.pricing_kind, 'catalog');
@@ -47,19 +47,36 @@ assert.equal(openaiDirect.pricing_kind, 'catalog');
 assert.equal(openaiDirect.pricing_source, 'openai-api-pricing:2026-07-19');
 assert.equal(openaiDirect.cached_input_rate_per_million, 0.5);
 
+const codexModel = resolvePricing('gpt-5.6-terra', { providerCatalog, openrouterCatalog });
+assert.equal(codexModel.pricing_kind, 'catalog');
+assert.equal(codexModel.pricing_source, 'openai-api-pricing:2026-08-23:standard-short-context');
+assert.equal(codexModel.input_rate_per_million, 2);
+assert.equal(codexModel.cached_input_rate_per_million, 0.2);
+assert.equal(codexModel.cache_write_input_rate_per_million, 2.5);
+assert.equal(codexModel.output_rate_per_million, 12);
+
+const daybreakAlias = resolvePricing('gpt-daybreak-blue-latest', { providerCatalog, openrouterCatalog });
+assert.equal(daybreakAlias.priced_model, 'gpt-5.6-sol');
+assert.equal(daybreakAlias.input_rate_per_million, 5);
+assert.equal(daybreakAlias.output_rate_per_million, 30);
+
+const codexSpark = resolvePricing('gpt-5.3-codex-spark', { providerCatalog, openrouterCatalog });
+assert.equal(codexSpark.pricing_kind, 'unknown');
+assert.match(codexSpark.pricing_source, /not-supported-in-public-api-model-cache$/);
+
 const deepSeekChat = resolvePricing('deepseek-chat', { providerCatalog, openrouterCatalog });
 assert.equal(deepSeekChat.pricing_kind, 'catalog');
-assert.equal(deepSeekChat.priced_model, 'deepseek-chat');
-assert.equal(deepSeekChat.pricing_source, 'deepseek-pricing:2026-08-02');
-assert.equal(deepSeekChat.input_rate_per_million, 0.27);
-assert.equal(deepSeekChat.cached_input_rate_per_million, 0.07);
-assert.equal(deepSeekChat.output_rate_per_million, 1.1);
+assert.equal(deepSeekChat.priced_model, 'deepseek-v4-flash');
+assert.match(deepSeekChat.pricing_source, /^deepseek-pricing:2026-08-23#deprecated-alias/);
+assert.equal(deepSeekChat.input_rate_per_million, 0.14);
+assert.equal(deepSeekChat.cached_input_rate_per_million, 0.0028);
+assert.equal(deepSeekChat.output_rate_per_million, 0.28);
 
 const deepSeekReasoner = resolvePricing('deepseek-reasoner', { providerCatalog, openrouterCatalog });
-assert.equal(deepSeekReasoner.priced_model, 'deepseek-reasoner');
-assert.equal(deepSeekReasoner.input_rate_per_million, 0.55);
-assert.equal(deepSeekReasoner.cached_input_rate_per_million, 0.14);
-assert.equal(deepSeekReasoner.output_rate_per_million, 2.19);
+assert.equal(deepSeekReasoner.priced_model, 'deepseek-v4-flash');
+assert.equal(deepSeekReasoner.input_rate_per_million, 0.14);
+assert.equal(deepSeekReasoner.cached_input_rate_per_million, 0.0028);
+assert.equal(deepSeekReasoner.output_rate_per_million, 0.28);
 
 const ollamaKimiK3 = resolvePricing('kimi-k3:cloud', { providerCatalog, openrouterCatalog });
 assert.equal(ollamaKimiK3.pricing_kind, 'unknown');
