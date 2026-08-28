@@ -1,0 +1,14 @@
+{
+  "upstream_base_url": "https://inference-api.nousresearch.com/v1",
+  "auth_mode": "passthrough",
+  "upstream_profiles": {
+    "openrouter": {
+      "upstream_base_url": "https://openrouter.ai/api/v1",
+      "auth_mode": "passthrough"
+    },
+    "ollama": {
+      "upstream_base_url": "https://ollama.com/v1",
+      "auth_mode": "passthrough"
+    }
+  }
+}
