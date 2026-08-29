@@ -6,7 +6,9 @@ sit between every Discord gateway and the Nous inference API without changing
 Hermes' OAuth refresh flow. Hermes continues to send its short-lived bearer;
 Watchdog forwards it in passthrough mode and records the request in SQLite.
 
-Start the dedicated Hermes listener from the Watchdog repository:
+Keep the existing Watchdog listener running on port `7700`. Hermes uses a
+named upstream profile on that listener, so its requests share the normal
+Watchdog database and dashboard with other AI traffic.
 
 ```bash
 scripts/start_hermes_watchdog.sh
@@ -15,15 +17,14 @@ scripts/start_hermes_watchdog.sh
 Set this in `~/.hermes/.env` and restart the Hermes Discord gateways:
 
 ```dotenv
-NOUS_INFERENCE_BASE_URL=http://127.0.0.1:7701/proxy/v1
+NOUS_INFERENCE_BASE_URL=http://127.0.0.1:7700/proxy/v1
 ```
 
-The dedicated listener uses port `7701` and `data/hermes-watchdog.db` so an
-existing Watchdog deployment on port `7700` can continue serving its current
-upstream without competing for a SQLite write lock. The default route is Nous;
-the checked-in config
-also defines passthrough profiles for OpenRouter and Ollama for clients that
-send `X-Watchdog-Upstream-Profile`.
+The shared listener uses `data/watchdog.db`. Hermes' `model.default_headers`
+configuration sends `X-Watchdog-Upstream-Profile: hermes`, selecting the Nous
+passthrough route without changing the default upstream used by other clients.
+The checked-in config also preserves the existing OpenRouter and Ollama
+profiles.
 
 This integration intentionally uses loopback-only client configuration and
 basic redaction. The current Kujo HTTP server binds all interfaces, so keep
@@ -33,6 +34,6 @@ proxy boundary in front of it before using it beyond the local host.
 Verify the route with:
 
 ```bash
-curl -s http://127.0.0.1:7701/api/proxy-config
-curl -s http://127.0.0.1:7701/api/stats
+curl -s http://127.0.0.1:7700/api/proxy-config
+curl -s http://127.0.0.1:7700/api/stats
 ```
