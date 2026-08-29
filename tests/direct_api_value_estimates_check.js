@@ -30,8 +30,8 @@ contains(shared, 'CREATE TABLE IF NOT EXISTS pricing_reprice_runs', 'Reprice run
 contains(shared, 'CREATE TABLE IF NOT EXISTS pricing_reprice_changes', 'Reprice changes should preserve before/after records');
 contains(server, 'cached_tokens := to_int_or_zero(safe_dict_get(trace, "cached_input_tokens", 0))', 'Trace intake should persist cached token counts');
 contains(server, 'cache_write_tokens := to_int_or_zero(safe_dict_get(trace, "cache_write_input_tokens", 0))', 'Trace intake should persist cache write token counts');
-contains(server, 'cached_input_tokens = traces.cached_input_tokens + excluded.cached_input_tokens', 'Trace persistence should accumulate cached token counts');
-contains(server, 'input_cost_usd = traces.input_cost_usd + excluded.input_cost_usd', 'Trace persistence should store cost components');
+contains(server, 'excluded.cached_input_tokens > traces.cached_input_tokens', 'Trace persistence should keep replay-safe cumulative cached token counts');
+contains(server, 'excluded.input_cost_usd > traces.input_cost_usd', 'Trace persistence should keep replay-safe cumulative cost components');
 contains(dashboard, 'Est. API Value', 'Dashboard summary label should remain present');
 
 assert(providerCatalog.catalog_id === 'watchdog-provider-catalog:2026-08-23', 'Provider catalog snapshot should be versioned with the refresh date');
