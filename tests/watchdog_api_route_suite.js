@@ -174,6 +174,10 @@ async function run() {
 		assert.strictEqual(oversizedTraceResp.status, 400, 'trace telemetry intake should enforce the JSON body limit');
 
 		const negativeRequestId = 'negative-token-request';
+		const unsupportedSchemaResp = await httpPost('/api/telemetry/traces', {
+			schema_version: 'kujo.telemetry.v999', trace_id: 'unsupported-schema'
+		});
+		assert.strictEqual(unsupportedSchemaResp.status, 400, 'trace telemetry intake should reject unsupported schema versions');
 		const negativeRequestResp = await httpPost('/api/telemetry/requests', {
 			source_app: 'contract-client', request_id: negativeRequestId, model: 'gpt-4.1-mini', input_tokens: -1, output_tokens: 2, total_tokens: 1
 		});
@@ -227,13 +231,24 @@ async function run() {
 		}
 		assert.strictEqual(intake.status, 200, 'granular trace intake should succeed: ' + intake.body);
 
-		const append = await httpPost('/api/telemetry/traces', { source_app: 'contract-client', trace_id: traceId, session_id: 'session-contract', events: [{ event_id: 'persistence-contract', sequence: 99, event_name: 'persistence_saved', occurred_at_ms: 1450, attributes: { state: 'committed' } }] });
+		const append = await httpPost('/api/telemetry/traces', { schema_version: 'kujo.telemetry.v1', source_app: 'contract-client', trace_id: traceId, session_id: 'session-contract', events: [{ event_id: 'persistence-contract', sequence: 99, event_name: 'persistence_saved', occurred_at_ms: 1450, attributes: { state: 'committed' } }] });
 		assert.strictEqual(append.status, 200, 'independent trace event append should succeed');
+
+		const replayBundle = {
+			schema_version: 'kujo.telemetry.v1', source_app: 'contract-client', trace_id: traceId, session_id: 'session-contract', input_tokens: 125, output_tokens: 60,
+			trace: { trace_id: traceId, schema_version: 'kujo.telemetry.v1', name: 'independent_tool_workflow', status: 'success', started_at_ms: 1000, ended_at_ms: 1500, duration_ms: 500, input_tokens: 125, output_tokens: 60 },
+			spans: [{ span_id: 'span-replayed', parent_span_id: '', span_kind: 'tool', name: 'tool.replayed', status: 'success', started_at_ms: 1400, ended_at_ms: 1500, duration_ms: 100, attributes: {} }],
+			tool_calls: [{ tool_call_id: 'tool-call-replayed', tool_name: 'replayed', status: 'success', latency_ms: 100 }]
+		};
+		assert.strictEqual((await httpPost('/api/telemetry/traces', replayBundle)).status, 200);
+		assert.strictEqual((await httpPost('/api/telemetry/traces', replayBundle)).status, 200, 'ambiguous-response replay should remain accepted');
 
 		await assertEndpoint('/api/traces', data => {
 			const trace = data.find(row => row.trace_id === traceId);
 			assert.ok(trace, 'trace should be queryable');
-			assert.strictEqual(trace.input_tokens, 100);
+			assert.strictEqual(trace.input_tokens, 125, 'replayed cumulative metrics must not be added twice');
+			assert.strictEqual(trace.output_tokens, 60, 'replayed cumulative metrics must remain absolute');
+			assert.strictEqual(trace.schema_version, 'kujo.telemetry.v1');
 			assert.ok(trace.input_cost_usd > 0);
 			assert.ok(trace.cached_input_cost_usd > 0);
 			assert.ok(trace.cache_write_input_cost_usd > 0);
@@ -243,12 +258,15 @@ async function run() {
 			assert.match(String(trace.attributes_json || ''), /"transport":"direct"/);
 		});
 		await assertEndpoint(`/api/trace-spans?trace_id=${traceId}`, data => {
-			assert.strictEqual(data.length, 2);
+			assert.strictEqual(data.length, 3);
 			assert.ok(data.some(row => String(row.attributes_json || '').includes('\"time_to_first_token_ms\":25')));
 		});
 		await assertEndpoint(`/api/trace-events?trace_id=${traceId}`, data => {
 			assert.strictEqual(data.length, 2);
 			assert.ok(data.some(row => row.event_name === 'persistence_saved'));
+		});
+		await assertEndpoint('/api/tool-calls?session_id=session-contract&page_size=100', data => {
+			assert.strictEqual(data.filter(row => row.tool_call_id === 'tool-call-replayed').length, 1, 'replayed tool calls must deduplicate by producer identity');
 		});
 
 		await assertEndpoint('/api/requests', data => {

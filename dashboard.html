@@ -464,6 +464,7 @@
   .span-lane { position: relative; height: 20px; background: #eef2f8; border: 1px solid var(--border); overflow: hidden; }
   .span-bar { position: absolute; top: 2px; bottom: 2px; min-width: 3px; background: var(--accent); }
   .span-bar.tool { background: var(--green); }
+  .span-bar.shell { background: var(--amber); }
   .span-bar.model { background: var(--purple); }
   .span-bar.error { background: var(--red); }
   .event-marker { position: absolute; top: 0; width: 2px; height: 100%; background: var(--orange); }
@@ -1235,6 +1236,7 @@
           <option value="workflow">Workflow</option>
           <option value="model">Model</option>
           <option value="tool">Tool</option>
+          <option value="shell">Shell</option>
           <option value="persistence">Persistence</option>
         </select>
         <select class="filter-select" id="traceStatusFilter" onchange="renderAgentTraces()">
@@ -2020,7 +2022,7 @@ function renderTraceSpanRow(trace, span, events, traceStart, traceDuration) {
 
 function safeSpanKind(value) {
   const kind = String(value || '').toLowerCase();
-  return ['workflow', 'model', 'tool', 'persistence', 'internal'].includes(kind) ? kind : 'internal';
+  return ['workflow', 'model', 'tool', 'shell', 'persistence', 'internal'].includes(kind) ? kind : 'internal';
 }
 
 function renderLegacyProxyRollup(proxySteps, hideProxy) {

@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kujolang.dev/schemas/telemetry-trace-v1.schema.json",
+  "title": "Kujo producer-neutral telemetry trace bundle",
+  "type": "object",
+  "required": ["schema_version", "source_app", "trace_id", "session_id"],
+  "properties": {
+    "schema_version": { "const": "kujo.telemetry.v1" },
+    "source_app": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "trace_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "session_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "trace": { "$ref": "#/$defs/trace" },
+    "spans": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/span" }
+    },
+    "events": {
+      "type": "array",
+      "maxItems": 512,
+      "items": { "$ref": "#/$defs/event" }
+    },
+    "tool_calls": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/toolCall" }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "attributes": {
+      "type": "object",
+      "description": "Metadata-only allowlisted attributes. Producers must not include prompts, response bodies, tool arguments, shell text, file contents, or credentials by default."
+    },
+    "trace": {
+      "type": "object",
+      "required": ["trace_id", "name", "status", "started_at_ms"],
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "schema_version": { "const": "kujo.telemetry.v1" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "status": { "type": "string", "maxLength": 32 },
+        "started_at_ms": { "type": "integer", "minimum": 0 },
+        "ended_at_ms": { "type": "integer", "minimum": 0 },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "cached_input_tokens": { "type": "integer", "minimum": 0 },
+        "cache_write_input_tokens": { "type": "integer", "minimum": 0 },
+        "attributes": { "$ref": "#/$defs/attributes" }
+      },
+      "additionalProperties": true
+    },
+    "span": {
+      "type": "object",
+      "required": ["span_id", "span_kind", "name", "status", "started_at_ms", "ended_at_ms", "duration_ms"],
+      "properties": {
+        "span_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "parent_span_id": { "type": "string", "maxLength": 160 },
+        "span_kind": { "enum": ["workflow", "model", "tool", "shell", "persistence", "internal"] },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "status": { "type": "string", "maxLength": 32 },
+        "started_at_ms": { "type": "integer", "minimum": 0 },
+        "ended_at_ms": { "type": "integer", "minimum": 0 },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "attributes": { "$ref": "#/$defs/attributes" }
+      },
+      "additionalProperties": true
+    },
+    "event": {
+      "type": "object",
+      "required": ["event_id", "event_name", "sequence", "occurred_at_ms"],
+      "properties": {
+        "event_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "span_id": { "type": "string", "maxLength": 160 },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "event_name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "occurred_at_ms": { "type": "integer", "minimum": 0 },
+        "attributes": { "$ref": "#/$defs/attributes" }
+      },
+      "additionalProperties": true
+    },
+    "toolCall": {
+      "type": "object",
+      "required": ["tool_call_id", "tool_name", "status", "latency_ms"],
+      "properties": {
+        "tool_call_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "tool_name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "status": { "type": "string", "maxLength": 32 },
+        "latency_ms": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    }
+  }
+}

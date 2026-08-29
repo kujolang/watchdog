@@ -32,6 +32,8 @@ Attach these headers on agent-originated proxy calls:
 - `X-Observe-Workflow-Id`
 - `X-Observe-Task-Id`
 - `X-Observe-Correlation-Id`
+- `X-Observe-Trace-Id`
+- `X-Observe-Parent-Span-Id`
 
 If headers are not available, you can still provide `tenant_id`, `project_id`, `workflow_id`, `task_id`, and `correlation_id` in JSON payloads.
 
@@ -112,6 +114,8 @@ In the Requests tab, use Tenant ID and Project ID filters to scope rows.
 | Workflow name/id | `X-Observe-Workflow-Id` or `workflow_id` |
 | Task/step name/id | `X-Observe-Task-Id` or `task_id` |
 | Trace correlation id | `X-Observe-Correlation-Id` or `correlation_id` |
+| Granular trace id | `X-Observe-Trace-Id` or `trace_id` |
+| Parent span id | `X-Observe-Parent-Span-Id` or `parent_span_id` |
 
 ## 5) Troubleshooting
 

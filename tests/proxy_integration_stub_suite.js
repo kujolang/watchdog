@@ -228,6 +228,7 @@ async function runPassthroughScenario(stubPort, received) {
 	const watchdogPort = 17921;
 	const dbPath = path.join(TMP_DIR, 'proxy-passthrough-check.db');
 	const cfgPath = path.join(TMP_DIR, 'proxy-passthrough-config.json');
+	fs.rmSync(dbPath, { force: true });
 
 	writeProxyConfig(cfgPath, {
 		upstream_base_url: 'http://127.0.0.1:' + stubPort + '/v1',
@@ -258,6 +259,9 @@ async function runPassthroughScenario(stubPort, received) {
 				Authorization: 'Bearer passthrough-token',
 				'X-Observe-Session-Id': 'sess_proxy_stub_pass',
 				'X-Observe-User-Id': 'user_proxy_stub',
+				'X-Observe-Correlation-Id': 'trace-pi-proxy',
+				'X-Observe-Trace-Id': 'trace-pi-proxy',
+				'X-Observe-Parent-Span-Id': 'turn-1',
 			},
 			JSON.stringify({ model: 'gpt-4.1-mini', messages: [{ role: 'user', content: 'json path' }] })
 		);
@@ -396,10 +400,8 @@ async function runPassthroughScenario(stubPort, received) {
 			requests.some(row => String(row.request_id) === 'sse-1' && Number(row.total_tokens) === 4),
 			'requests log should preserve streamed request identity and usage'
 		);
-		assert.ok(
-			requests.some(row => String(row.request_id) === 'sse-1' && String(row.response_summary) === 'hello data: world'),
-			'requests log should preserve data: text inside streamed JSON payloads'
-		);
+		assert.ok(requests.every(row => String(row.prompt_summary || '') === ''), 'metadata-only mode should not persist prompt summaries');
+		assert.ok(requests.every(row => String(row.response_summary || '') === ''), 'metadata-only mode should not persist response summaries');
 		assert.ok(
 			requests.some(row => String(row.error_code) === 'unsafe_proxy_path'),
 			'requests log should capture unsafe proxy path rejections'
@@ -417,6 +419,10 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_forwarded'));
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_completed'));
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_failed'));
+		const correlatedTraces = await getApiData(watchdogPort, '/api/traces?session_id=sess_proxy_stub_pass&page_size=50');
+		assert.ok(correlatedTraces.some(trace => String(trace.trace_id) === 'trace-pi-proxy'), 'proxy request should create or update the producer trace');
+		const correlatedSpans = await getApiData(watchdogPort, '/api/trace-spans?trace_id=trace-pi-proxy&page_size=50');
+		assert.ok(correlatedSpans.some(span => String(span.span_kind) === 'model' && String(span.parent_span_id) === 'turn-1'), 'proxy model span should attach to the producer turn span');
 		console.log('proxy_integration_stub_suite: passthrough done');
 	} finally {
 		await stopWatchdog(wd.child);
@@ -428,6 +434,7 @@ async function runOverrideScenario(stubPort, received) {
 	const watchdogPort = 17922;
 	const dbPath = path.join(TMP_DIR, 'proxy-override-check.db');
 	const cfgPath = path.join(TMP_DIR, 'proxy-override-config.json');
+	fs.rmSync(dbPath, { force: true });
 
 	writeProxyConfig(cfgPath, {
 		upstream_base_url: 'http://127.0.0.1:' + stubPort + '/v1',
@@ -439,6 +446,7 @@ async function runOverrideScenario(stubPort, received) {
 	received.length = 0;
 	const wd = await startWatchdog(watchdogPort, dbPath, cfgPath, {
 		WDG_PROXY_TIMEOUT_SECS: '2',
+		WDG_CONTENT_CAPTURE_MODE: 'summaries',
 	});
 
 	try {
@@ -458,6 +466,8 @@ async function runOverrideScenario(stubPort, received) {
 		const latest = received[received.length - 1] || {};
 		assert.strictEqual(latest.path, '/v1/chat/completions', 'override request should hit chat endpoint');
 		assert.strictEqual(latest.authorization, 'Bearer override-inline-key', 'override auth should replace incoming token');
+		const contentRows = await getApiData(watchdogPort, '/api/requests?session_id=sess_proxy_stub_override&page_size=20');
+		assert.ok(contentRows.some(row => String(row.prompt_summary) === 'override path' && String(row.response_summary) === 'stub response'), 'summaries mode should persist bounded content only after explicit opt-in');
 		console.log('proxy_integration_stub_suite: override done');
 	} finally {
 		await stopWatchdog(wd.child);

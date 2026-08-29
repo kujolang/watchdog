@@ -36,6 +36,7 @@ DEFAULT_PROXY_TIMEOUT_SECS := 120
 DEFAULT_MAX_PROXY_BODY_BYTES := 1048576
 DEFAULT_MAX_PARSE_BODY_BYTES := 524288
 DEFAULT_REDACTION_MODE := "basic"
+DEFAULT_CONTENT_CAPTURE_MODE := "off"
 DEFAULT_REDACT_TERMS := "api_key,authorization,bearer,password,secret,token,sk-"
 DEFAULT_RATE_LIMIT_MODE := "off"
 DEFAULT_RATE_LIMIT_MAX_REQUESTS := 60
@@ -57,6 +58,7 @@ MIN_BACKUP_INTERVAL_MINUTES := 15
 MAX_BACKUP_INTERVAL_MINUTES := 43200
 API_CONTRACT_VERSION := "v1"
 API_CONTRACT_STATUS := "stable"
+TELEMETRY_SCHEMA_VERSION := "kujo.telemetry.v1"
 
 func env_or(key, fallback_value) {
 	v := env(key)
@@ -234,6 +236,9 @@ func truncate_str(value, max_len) {
 }
 
 func safe_prompt_summary(messages) {
+	if CONTENT_CAPTURE_MODE != "summaries" {
+		return ""
+	}
 	if type(messages) != "array" {
 		return ""
 	}
@@ -1049,6 +1054,9 @@ func usage_from_stream_events(events) {
 }
 
 func response_summary_from_json_data(data) {
+	if CONTENT_CAPTURE_MODE != "summaries" {
+		return ""
+	}
 	choices := safe_dict_get(data, "choices", [])
 	if type(choices) != "array" || len(choices) == 0 {
 		return ""
@@ -1081,6 +1089,9 @@ func response_summary_from_json_data(data) {
 }
 
 func response_summary_from_stream_events(events) {
+	if CONTENT_CAPTURE_MODE != "summaries" {
+		return ""
+	}
 	joined := ""
 	i := 0
 	while i < len(events) {
@@ -1347,6 +1358,10 @@ PROXY_TIMEOUT_SECS := parse_int_env_many(["WDG_PROXY_TIMEOUT_SECS"], DEFAULT_PRO
 MAX_PROXY_BODY_BYTES := parse_int_env_many(["WDG_MAX_PROXY_BODY_BYTES"], DEFAULT_MAX_PROXY_BODY_BYTES)
 MAX_PARSE_BODY_BYTES := parse_int_env_many(["WDG_MAX_PARSE_BODY_BYTES"], DEFAULT_MAX_PARSE_BODY_BYTES)
 REDACTION_MODE := to_lower(env_or_many(["WDG_REDACTION_MODE"], DEFAULT_REDACTION_MODE))
+CONTENT_CAPTURE_MODE := to_lower(env_or_many(["WDG_CONTENT_CAPTURE_MODE"], DEFAULT_CONTENT_CAPTURE_MODE))
+if CONTENT_CAPTURE_MODE != "summaries" {
+	CONTENT_CAPTURE_MODE = "off"
+}
 REDACT_TERMS := parse_csv_terms(env_or_many(["WDG_REDACT_TERMS"], DEFAULT_REDACT_TERMS))
 RATE_LIMIT_MODE := to_lower(env_or_many(["WDG_RATE_LIMIT_MODE"], DEFAULT_RATE_LIMIT_MODE))
 RATE_LIMIT_MAX_REQUESTS := parse_int_env_many(["WDG_RATE_LIMIT_MAX_REQUESTS"], DEFAULT_RATE_LIMIT_MAX_REQUESTS)
@@ -1389,6 +1404,7 @@ kv("Proxy timeout seconds", PROXY_TIMEOUT_SECS)
 kv("Max proxy body bytes", MAX_PROXY_BODY_BYTES)
 kv("Max parse body bytes", MAX_PARSE_BODY_BYTES)
 kv("Telemetry redaction mode", REDACTION_MODE)
+kv("Content capture mode", CONTENT_CAPTURE_MODE)
 kv("Rate limit mode", RATE_LIMIT_MODE)
 kv("Rate limit max requests", RATE_LIMIT_MAX_REQUESTS)
 kv("Rate limit window seconds", RATE_LIMIT_WINDOW_SECS)
@@ -1532,6 +1548,14 @@ func negative_token_metric_error(body) {
 	return ""
 }
 
+func telemetry_schema_error(body) {
+	version := external_text(body, "schema_version", TELEMETRY_SCHEMA_VERSION, 80)
+	if version != TELEMETRY_SCHEMA_VERSION {
+		return "Unsupported telemetry schema_version: " + version
+	}
+	return ""
+}
+
 func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class) {
 	trace := safe_dict_get(body, "trace", {})
 	has_trace_payload := has_key(body, "trace") != 0 && type(trace) == "dict"
@@ -1544,6 +1568,7 @@ func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class)
 	}
 
 	ts := to_string(current_timestamp())
+	schema_version := external_text(body, "schema_version", external_text(trace, "schema_version", TELEMETRY_SCHEMA_VERSION, 80), 80)
 	started_at_ms := to_int_or_zero(safe_dict_get(trace, "started_at_ms", 0))
 	ended_at_ms := to_int_or_zero(safe_dict_get(trace, "ended_at_ms", started_at_ms))
 	duration_ms := to_int_or_zero(safe_dict_get(trace, "duration_ms", ended_at_ms - started_at_ms))
@@ -1554,7 +1579,7 @@ func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class)
 	model_name := external_text(body, "model", external_text(trace, "model", "", 160), 160)
 	pricing := watchdog_cost_breakdown(model_name, input_tokens * 1.0, output_tokens * 1.0, cached_tokens * 1.0, cache_write_tokens * 1.0)
 	if has_trace_payload {
-		db_execute(db, "INSERT INTO traces (trace_id, request_dbid, session_id, source_app, data_class, model, name, status, started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_input_tokens, cache_write_input_tokens, input_cost_usd, output_cost_usd, cached_input_cost_usd, cache_write_input_cost_usd, input_rate_per_million, output_rate_per_million, cached_input_rate_per_million, cache_write_input_rate_per_million, pricing_source, pricing_kind, priced_model, attributes_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trace_id) DO UPDATE SET status = excluded.status, ended_at_ms = CASE WHEN excluded.ended_at_ms > traces.ended_at_ms THEN excluded.ended_at_ms ELSE traces.ended_at_ms END, duration_ms = CASE WHEN excluded.ended_at_ms > traces.ended_at_ms THEN excluded.ended_at_ms - traces.started_at_ms ELSE traces.duration_ms END, input_tokens = traces.input_tokens + excluded.input_tokens, output_tokens = traces.output_tokens + excluded.output_tokens, cached_input_tokens = traces.cached_input_tokens + excluded.cached_input_tokens, cache_write_input_tokens = traces.cache_write_input_tokens + excluded.cache_write_input_tokens, input_cost_usd = traces.input_cost_usd + excluded.input_cost_usd, output_cost_usd = traces.output_cost_usd + excluded.output_cost_usd, cached_input_cost_usd = traces.cached_input_cost_usd + excluded.cached_input_cost_usd, cache_write_input_cost_usd = traces.cache_write_input_cost_usd + excluded.cache_write_input_cost_usd, input_rate_per_million = excluded.input_rate_per_million, output_rate_per_million = excluded.output_rate_per_million, cached_input_rate_per_million = excluded.cached_input_rate_per_million, cache_write_input_rate_per_million = excluded.cache_write_input_rate_per_million, pricing_source = excluded.pricing_source, pricing_kind = excluded.pricing_kind, priced_model = excluded.priced_model, attributes_json = excluded.attributes_json", [trace_id, request_dbid, session_id, source_app, data_class, model_name, external_text(trace, "name", "interactive_chat", 120), external_text(trace, "status", "success", 32), started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, pricing["input_cost_usd"], pricing["output_cost_usd"], pricing["cached_input_cost_usd"], pricing["cache_write_input_cost_usd"], pricing["input_rate_per_million"], pricing["output_rate_per_million"], pricing["cached_input_rate_per_million"], pricing["cache_write_input_rate_per_million"], pricing["pricing_source"], pricing["pricing_kind"], pricing["priced_model"], external_json_summary(safe_dict_get(trace, "attributes", {}), 12000), ts])
+		db_execute(db, "INSERT INTO traces (trace_id, schema_version, request_dbid, session_id, source_app, data_class, model, name, status, started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_input_tokens, cache_write_input_tokens, input_cost_usd, output_cost_usd, cached_input_cost_usd, cache_write_input_cost_usd, input_rate_per_million, output_rate_per_million, cached_input_rate_per_million, cache_write_input_rate_per_million, pricing_source, pricing_kind, priced_model, attributes_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trace_id) DO UPDATE SET schema_version = excluded.schema_version, request_dbid = CASE WHEN traces.request_dbid = 0 THEN excluded.request_dbid ELSE traces.request_dbid END, session_id = CASE WHEN excluded.session_id <> '' THEN excluded.session_id ELSE traces.session_id END, model = CASE WHEN excluded.model <> '' THEN excluded.model ELSE traces.model END, name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE traces.name END, status = excluded.status, started_at_ms = CASE WHEN traces.started_at_ms = 0 OR (excluded.started_at_ms > 0 AND excluded.started_at_ms < traces.started_at_ms) THEN excluded.started_at_ms ELSE traces.started_at_ms END, ended_at_ms = CASE WHEN excluded.ended_at_ms > traces.ended_at_ms THEN excluded.ended_at_ms ELSE traces.ended_at_ms END, duration_ms = CASE WHEN excluded.duration_ms > traces.duration_ms THEN excluded.duration_ms ELSE traces.duration_ms END, input_tokens = CASE WHEN excluded.input_tokens > traces.input_tokens THEN excluded.input_tokens ELSE traces.input_tokens END, output_tokens = CASE WHEN excluded.output_tokens > traces.output_tokens THEN excluded.output_tokens ELSE traces.output_tokens END, cached_input_tokens = CASE WHEN excluded.cached_input_tokens > traces.cached_input_tokens THEN excluded.cached_input_tokens ELSE traces.cached_input_tokens END, cache_write_input_tokens = CASE WHEN excluded.cache_write_input_tokens > traces.cache_write_input_tokens THEN excluded.cache_write_input_tokens ELSE traces.cache_write_input_tokens END, input_cost_usd = CASE WHEN excluded.input_cost_usd > traces.input_cost_usd THEN excluded.input_cost_usd ELSE traces.input_cost_usd END, output_cost_usd = CASE WHEN excluded.output_cost_usd > traces.output_cost_usd THEN excluded.output_cost_usd ELSE traces.output_cost_usd END, cached_input_cost_usd = CASE WHEN excluded.cached_input_cost_usd > traces.cached_input_cost_usd THEN excluded.cached_input_cost_usd ELSE traces.cached_input_cost_usd END, cache_write_input_cost_usd = CASE WHEN excluded.cache_write_input_cost_usd > traces.cache_write_input_cost_usd THEN excluded.cache_write_input_cost_usd ELSE traces.cache_write_input_cost_usd END, input_rate_per_million = CASE WHEN excluded.model <> '' THEN excluded.input_rate_per_million ELSE traces.input_rate_per_million END, output_rate_per_million = CASE WHEN excluded.model <> '' THEN excluded.output_rate_per_million ELSE traces.output_rate_per_million END, cached_input_rate_per_million = CASE WHEN excluded.model <> '' THEN excluded.cached_input_rate_per_million ELSE traces.cached_input_rate_per_million END, cache_write_input_rate_per_million = CASE WHEN excluded.model <> '' THEN excluded.cache_write_input_rate_per_million ELSE traces.cache_write_input_rate_per_million END, pricing_source = CASE WHEN excluded.model <> '' THEN excluded.pricing_source ELSE traces.pricing_source END, pricing_kind = CASE WHEN excluded.model <> '' THEN excluded.pricing_kind ELSE traces.pricing_kind END, priced_model = CASE WHEN excluded.model <> '' THEN excluded.priced_model ELSE traces.priced_model END, attributes_json = CASE WHEN excluded.attributes_json <> '{}' THEN excluded.attributes_json ELSE traces.attributes_json END", [trace_id, schema_version, request_dbid, session_id, source_app, data_class, model_name, external_text(trace, "name", "interactive_chat", 120), external_text(trace, "status", "success", 32), started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, pricing["input_cost_usd"], pricing["output_cost_usd"], pricing["cached_input_cost_usd"], pricing["cache_write_input_cost_usd"], pricing["input_rate_per_million"], pricing["output_rate_per_million"], pricing["cached_input_rate_per_million"], pricing["cache_write_input_rate_per_million"], pricing["pricing_source"], pricing["pricing_kind"], pricing["priced_model"], external_json_summary(safe_dict_get(trace, "attributes", {}), 12000), ts])
 	}
 
 	span_count := 0
@@ -1567,7 +1592,7 @@ func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class)
 					span_started := to_int_or_zero(safe_dict_get(span, "started_at_ms", started_at_ms))
 					span_ended := to_int_or_zero(safe_dict_get(span, "ended_at_ms", span_started))
 					span_duration := to_int_or_zero(safe_dict_get(span, "duration_ms", span_ended - span_started))
-					db_execute(db, "INSERT OR IGNORE INTO trace_spans (trace_id, span_id, parent_span_id, request_dbid, session_id, source_app, data_class, span_kind, name, status, started_at_ms, ended_at_ms, duration_ms, attributes_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [trace_id, span_id, external_text(span, "parent_span_id", "", 160), request_dbid, session_id, source_app, data_class, external_text(span, "span_kind", "internal", 40), external_text(span, "name", "span", 120), external_text(span, "status", "success", 32), span_started, span_ended, span_duration, external_json_summary(safe_dict_get(span, "attributes", {}), 12000), ts])
+					db_execute(db, "INSERT INTO trace_spans (trace_id, span_id, parent_span_id, request_dbid, session_id, source_app, data_class, span_kind, name, status, started_at_ms, ended_at_ms, duration_ms, attributes_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trace_id, span_id) DO UPDATE SET parent_span_id = CASE WHEN excluded.parent_span_id <> '' THEN excluded.parent_span_id ELSE trace_spans.parent_span_id END, request_dbid = CASE WHEN trace_spans.request_dbid = 0 THEN excluded.request_dbid ELSE trace_spans.request_dbid END, status = excluded.status, ended_at_ms = CASE WHEN excluded.ended_at_ms > trace_spans.ended_at_ms THEN excluded.ended_at_ms ELSE trace_spans.ended_at_ms END, duration_ms = CASE WHEN excluded.duration_ms > trace_spans.duration_ms THEN excluded.duration_ms ELSE trace_spans.duration_ms END, attributes_json = excluded.attributes_json", [trace_id, span_id, external_text(span, "parent_span_id", "", 160), request_dbid, session_id, source_app, data_class, external_text(span, "span_kind", "internal", 40), external_text(span, "name", "span", 120), external_text(span, "status", "success", 32), span_started, span_ended, span_duration, external_json_summary(safe_dict_get(span, "attributes", {}), 12000), ts])
 					span_count = span_count + 1
 				}
 			}
@@ -1591,13 +1616,65 @@ func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class)
 	if type(tool_calls) == "array" {
 		for tool_call in tool_calls {
 			if tool_count < 64 && type(tool_call) == "dict" {
-				db_execute(db, "INSERT INTO tool_calls (request_dbid, session_id, tool_name, tool_args, tool_result, status, latency_ms, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", [request_dbid, session_id, external_text(tool_call, "tool_name", "unknown", 120), external_json_summary(safe_dict_get(tool_call, "arguments", {}), 4000), external_json_summary(safe_dict_get(tool_call, "result", {}), 8000), external_text(tool_call, "status", "success", 32), to_int_or_zero(safe_dict_get(tool_call, "latency_ms", 0)), source_app, data_class, ts])
+				tool_call_id := external_text(tool_call, "tool_call_id", "", 160)
+				db_execute(db, "INSERT OR IGNORE INTO tool_calls (request_dbid, session_id, tool_call_id, tool_name, tool_args, tool_result, status, latency_ms, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", [request_dbid, session_id, tool_call_id, external_text(tool_call, "tool_name", "unknown", 120), external_json_summary(safe_dict_get(tool_call, "arguments", {}), 4000), external_json_summary(safe_dict_get(tool_call, "result", {}), 8000), external_text(tool_call, "status", "success", 32), to_int_or_zero(safe_dict_get(tool_call, "latency_ms", 0)), source_app, data_class, ts])
 				tool_count = tool_count + 1
 			}
 		}
 	}
 
 	return {"trace_id": trace_id, "spans": span_count, "events": event_count, "tool_calls": tool_count}
+}
+
+func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, provider, model_name, status, status_code, started_at_ms, ended_at_ms, usage) {
+	if trace_id == "" {
+		return
+	}
+	duration_ms := ended_at_ms - started_at_ms
+	if duration_ms < 0 { duration_ms = 0 }
+	span_id := "proxy-model-" + to_string(request_dbid)
+	completion_event_name := "stream_completed"
+	if status != "success" { completion_event_name = "response_failed" }
+	insert_trace_bundle(request_dbid, {
+		"schema_version": TELEMETRY_SCHEMA_VERSION,
+		"trace_id": trace_id,
+		"trace": {
+			"trace_id": trace_id,
+			"schema_version": TELEMETRY_SCHEMA_VERSION,
+			"name": "agent_run",
+			"status": status,
+			"started_at_ms": started_at_ms,
+			"ended_at_ms": ended_at_ms,
+			"duration_ms": duration_ms,
+			"attributes": {"transport": "watchdog-proxy", "content_mode": CONTENT_CAPTURE_MODE}
+		},
+		"spans": [{
+			"span_id": span_id,
+			"parent_span_id": parent_span_id,
+			"span_kind": "model",
+			"name": "provider_round",
+			"status": status,
+			"started_at_ms": started_at_ms,
+			"ended_at_ms": ended_at_ms,
+			"duration_ms": duration_ms,
+			"attributes": {
+				"provider": provider,
+				"model": model_name,
+				"status_code": status_code,
+				"input_tokens": to_int_or_zero(safe_dict_get(usage, "input_tokens", 0)),
+				"output_tokens": to_int_or_zero(safe_dict_get(usage, "output_tokens", 0)),
+				"request_dbid": request_dbid
+			}
+		}],
+		"events": [{
+			"event_id": span_id + "-completed",
+			"span_id": span_id,
+			"sequence": 0,
+			"event_name": completion_event_name,
+			"occurred_at_ms": ended_at_ms,
+			"attributes": {"status_code": status_code}
+		}]
+	}, "watchdog-proxy", session_id, "live")
 }
 
 func insert_external_agent_steps(request_dbid, body, source_app, session_id) {
@@ -2404,6 +2481,40 @@ func resolve_correlation_id(req, parsed_payload) {
 	return ""
 }
 
+func resolve_trace_id(req, parsed_payload) {
+	headers := safe_dict_get(req, "headers", {})
+	trace_id := get_header(headers, "x-observe-trace-id")
+	if trace_id != "" {
+		return normalize_identifier(trace_id)
+	}
+
+	if type(parsed_payload) == "dict" {
+		trace_id := string_dict_get(parsed_payload, "trace_id", "")
+		if trace_id != "" {
+			return normalize_identifier(trace_id)
+		}
+	}
+
+	return ""
+}
+
+func resolve_parent_span_id(req, parsed_payload) {
+	headers := safe_dict_get(req, "headers", {})
+	span_id := get_header(headers, "x-observe-parent-span-id")
+	if span_id != "" {
+		return normalize_identifier(span_id)
+	}
+
+	if type(parsed_payload) == "dict" {
+		span_id := string_dict_get(parsed_payload, "parent_span_id", "")
+		if span_id != "" {
+			return normalize_identifier(span_id)
+		}
+	}
+
+	return ""
+}
+
 func joined_proxy_action(params) {
 	action := string_dict_get(params, "action", "")
 	subaction := string_dict_get(params, "subaction", "")
@@ -2630,6 +2741,8 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 	workflow_id := resolve_workflow_id(req, payload_obj)
 	task_id := resolve_task_id(req, payload_obj)
 	correlation_id := resolve_correlation_id(req, payload_obj)
+	trace_id := resolve_trace_id(req, payload_obj)
+	parent_span_id := resolve_parent_span_id(req, payload_obj)
 	agent_id := "proxy:" + resource_clean
 
 	prompt_summary := ""
@@ -2653,7 +2766,8 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		override_key := resolve_override_api_key(cfg)
 		if override_key == "" {
 			latency_ms := current_timestamp() - started_ms
-			insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "proxy_auth_missing", "Proxy auth_mode=override but no API key is configured.", prompt_summary, "")
+			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "proxy_auth_missing", "Proxy auth_mode=override but no API key is configured.", prompt_summary, "")
+			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 500, started_ms, current_timestamp(), {})
 			insert_agent_step_row(session_id, agent_id, "proxy_failed", "Proxy override mode is missing an upstream API key.", {"upstream_url": upstream_url})
 			return api_error(500, "Proxy auth_mode=override requires WDG_UPSTREAM_API_KEY or WDG_UPSTREAM_API_KEY_ENV")
 		}
@@ -2749,6 +2863,7 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 			latency_ms := current_timestamp() - started_ms
 			cost_usd := watchdog_estimate_cost(model_name, usage["input_tokens"] * 1.0, usage["output_tokens"] * 1.0)
 			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, request_id, status_label, usage["input_tokens"], usage["output_tokens"], usage["total_tokens"], cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary)
+			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, status_label, status_code, started_ms, current_timestamp(), usage)
 
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
@@ -2774,6 +2889,7 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		case Err(err): {
 			latency_ms := current_timestamp() - started_ms
 			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "network_error", to_string(err), prompt_summary, "")
+			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 502, started_ms, current_timestamp(), {})
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
 				"path": forwarded_path,
@@ -2791,6 +2907,7 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		case other: {
 			latency_ms := current_timestamp() - started_ms
 			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "transport_error", "Unexpected http_request result type: " + type(other), prompt_summary, "")
+			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 502, started_ms, current_timestamp(), {})
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
 				"path": forwarded_path,
@@ -2907,7 +3024,8 @@ server := server.route("GET", "/api/proxy-config", func(req) {
 		"api_auth_mode": API_AUTH_MODE,
 		"api_auth_enabled": API_AUTH_MODE == "token",
 		"proxy_auth_mode": PROXY_AUTHZ_MODE,
-		"proxy_auth_enabled": PROXY_AUTHZ_MODE == "token"
+		"proxy_auth_enabled": PROXY_AUTHZ_MODE == "token",
+		"content_capture_mode": CONTENT_CAPTURE_MODE
 	}
 
 	if PROXY_CONFIG_VISIBILITY == "verbose" {
@@ -2931,6 +3049,7 @@ server := server.route("GET", "/api/version", func(req) {
 		"versioning_mode": "metadata",
 		"legacy_base_path": "/api",
 		"version_metadata_header": "X-Watchdog-API-Version",
+		"telemetry_schema_versions": [TELEMETRY_SCHEMA_VERSION],
 		"notes": "Clients should pin behavior to the reported version metadata and monitor changelog guidance before upgrades."
 	})
 })
@@ -3013,6 +3132,10 @@ server := server.route("POST", "/api/telemetry/requests", func(req) {
 	if !body_parse["ok"] || type(body_parse["data"]) != "dict" {
 		return api_error(400, "Request body must be a JSON object")
 	}
+	schema_error := telemetry_schema_error(body_parse["data"])
+	if schema_error != "" {
+		return api_error(400, schema_error)
+	}
 	metric_error := negative_token_metric_error(body_parse["data"])
 	if metric_error != "" {
 		return api_error(400, metric_error)
@@ -3048,6 +3171,10 @@ server := server.route("POST", "/api/telemetry/traces", func(req) {
 		return api_error(400, "Request body must be a JSON object")
 	}
 	body := body_parse["data"]
+	schema_error := telemetry_schema_error(body)
+	if schema_error != "" {
+		return api_error(400, schema_error)
+	}
 	metric_error := negative_token_metric_error(body)
 	if metric_error != "" {
 		return api_error(400, metric_error)
@@ -3370,7 +3497,7 @@ server := server.route("GET", "/api/tool-calls", func(req) {
 	conditions := time_filter["conditions"]
 	params := time_filter["params"]
 
-	sql := "SELECT id, request_dbid, session_id, tool_name, tool_args, tool_result, status, latency_ms, source_app, data_class, created_at FROM tool_calls"
+	sql := "SELECT id, request_dbid, session_id, tool_call_id, tool_name, tool_args, tool_result, status, latency_ms, source_app, data_class, created_at FROM tool_calls"
 	sql := sql + where_clause_from_conditions(conditions)
 	sql := sql + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
 	params := push(params, page_size)

@@ -152,6 +152,7 @@ Environment variables:
 | `WDG_MAX_PROXY_BODY_BYTES` | `1048576` | Reject proxy request bodies larger than this many bytes |
 | `WDG_MAX_PARSE_BODY_BYTES` | `524288` | Reject JSON request parsing over this many bytes |
 | `WDG_REDACTION_MODE` | `basic` | `basic` or `off` telemetry redaction before persistence/export |
+| `WDG_CONTENT_CAPTURE_MODE` | `off` | `off` stores no proxy prompt/response summaries; `summaries` explicitly stores bounded summaries |
 | `WDG_REDACT_TERMS` | `api_key,authorization,bearer,password,secret,token,sk-` | Comma-separated redaction match terms |
 | `WDG_RATE_LIMIT_MODE` | `off` | `off` or `basic` SQLite-backed throttling for `/api/*` and `/proxy/*` |
 | `WDG_RATE_LIMIT_MAX_REQUESTS` | `60` | Max requests allowed per bucket per window |
@@ -508,7 +509,7 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `POST` | `/api/admin/prune-fixtures` | Remove only rows explicitly classified as fixture data (supports dry-run) |
 | `GET` | `/api/export` | Full export (`json` default or `jsonl`/`ndjson`) |
 
-The granular contract is optional and producer-neutral. Watchdog is a passive collector: applications, model providers, and tool executors remain independently usable, and a tool can append its own telemetry without importing or depending on another tool. See [Granular Tracing](docs/GRANULAR_TRACING.md).
+The granular contract is optional and producer-neutral. Watchdog is a passive collector: applications, model providers, and tool executors remain independently usable, and a tool can append its own telemetry without importing or depending on another tool. New producers should send `schema_version: "kujo.telemetry.v1"`; the checked-in contract is [`schemas/telemetry-trace-v1.schema.json`](schemas/telemetry-trace-v1.schema.json). Trace metrics are cumulative absolute values, and trace/span/event/tool identities are replay-safe for durable at-least-once delivery. See [Granular Tracing](docs/GRANULAR_TRACING.md).
 
 `/api/insights` is intentionally labeled as observed telemetry: runs are grouped by task ID, workflow ID, or session ID; a success signal means no request error was recorded; retry signals are inferred from retry-named trace events; and context pressure is derived from trace token fields. Producers can make these classifications stronger by sending explicit task-completion and retry events.
 
