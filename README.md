@@ -336,7 +336,9 @@ npm run build:charts
 
 ## Telemetry redaction policy
 
-- `WDG_REDACTION_MODE=basic` (default) redacts sensitive terms from prompt summaries, tool-call payload fields, step metadata, and error messages before data is stored or exported.
+- `WDG_CONTENT_CAPTURE_MODE=off` (default) prevents proxy prompt and response summaries from being persisted.
+- `WDG_CONTENT_CAPTURE_MODE=summaries` explicitly enables bounded proxy summaries.
+- `WDG_REDACTION_MODE=basic` (default) redacts sensitive terms from any enabled summaries, tool-call payload fields, step metadata, and error messages before data is stored or exported.
 - `WDG_REDACTION_MODE=off` keeps original text for local debugging workflows.
 - Extend the matching vocabulary with `WDG_REDACT_TERMS` to include environment-specific secret markers.
 

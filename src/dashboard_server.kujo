@@ -3909,6 +3909,7 @@ server := server.route("GET", "/api/admin/diagnostics", func(req) {
 			"rate_limit_max_buckets": RATE_LIMIT_MAX_BUCKETS,
 			"rate_limit_bucket_ttl_secs": RATE_LIMIT_BUCKET_TTL_SECS,
 			"redaction_mode": REDACTION_MODE,
+			"content_capture_mode": CONTENT_CAPTURE_MODE,
 			"identifier_max_len": IDENTIFIER_MAX_LEN,
 			"export_max_rows": EXPORT_MAX_ROWS,
 			"backup_enabled": backup_settings["enabled"],
