@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_id": "watchdog-provider-catalog:2026-08-23",
+  "catalog_id": "watchdog-provider-catalog:2026-08-30",
   "models": {
     "gpt-4.1": {
       "model_id": "gpt-4.1",
@@ -66,11 +66,11 @@
       "model_id": "gpt-5.6-sol",
       "priced_model": "gpt-5.6-sol",
       "has_pricing": true,
-      "pricing_source": "openai-api-pricing:2026-08-23:standard-short-context",
-      "input_rate_per_million": 5.0,
-      "output_rate_per_million": 30.0,
-      "cached_input_rate_per_million": 0.5,
-      "cache_write_input_rate_per_million": 6.25
+      "pricing_source": "openai-api-pricing:2026-08-30:promotional-through-at-least-2026-11-21:standard-short-context",
+      "input_rate_per_million": 4.0,
+      "output_rate_per_million": 20.0,
+      "cached_input_rate_per_million": 0.4,
+      "cache_write_input_rate_per_million": 5.0
     },
     "gpt-5.6-terra": {
       "model_id": "gpt-5.6-terra",
@@ -126,11 +126,11 @@
       "model_id": "gpt-daybreak-blue-latest",
       "priced_model": "gpt-5.6-sol",
       "has_pricing": true,
-      "pricing_source": "openai-api-pricing:2026-08-23#documented-gpt-5.6-sol-alias",
-      "input_rate_per_million": 5.0,
-      "output_rate_per_million": 30.0,
-      "cached_input_rate_per_million": 0.5,
-      "cache_write_input_rate_per_million": 6.25
+      "pricing_source": "openai-api-pricing:2026-08-30#documented-gpt-5.6-sol-alias-promotional-through-at-least-2026-11-21",
+      "input_rate_per_million": 4.0,
+      "output_rate_per_million": 20.0,
+      "cached_input_rate_per_million": 0.4,
+      "cache_write_input_rate_per_million": 5.0
     },
     "gpt-5.3-codex-spark": {
       "model_id": "gpt-5.3-codex-spark",
@@ -400,6 +400,146 @@
       "input_rate_per_million": 0.435,
       "output_rate_per_million": 0.87,
       "cached_input_rate_per_million": 0.003625,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "grok-4.20-0309-non-reasoning": {
+      "model_id": "grok-4.20-0309-non-reasoning",
+      "priced_model": "grok-4.20-0309-non-reasoning",
+      "has_pricing": true,
+      "pricing_source": "xai-api-pricing:2026-08-30:standard-short-context",
+      "input_rate_per_million": 1.25,
+      "output_rate_per_million": 2.5,
+      "cached_input_rate_per_million": 0.2,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "grok-4.20-0309-reasoning": {
+      "model_id": "grok-4.20-0309-reasoning",
+      "priced_model": "grok-4.20-0309-reasoning",
+      "has_pricing": true,
+      "pricing_source": "xai-api-pricing:2026-08-30:standard-short-context",
+      "input_rate_per_million": 1.25,
+      "output_rate_per_million": 2.5,
+      "cached_input_rate_per_million": 0.2,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "grok-4.20-multi-agent-0309": {
+      "model_id": "grok-4.20-multi-agent-0309",
+      "priced_model": "grok-4.20-multi-agent-0309",
+      "has_pricing": true,
+      "pricing_source": "xai-api-pricing:2026-08-30:standard-short-context",
+      "input_rate_per_million": 1.25,
+      "output_rate_per_million": 2.5,
+      "cached_input_rate_per_million": 0.2,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "grok-4.3": {
+      "model_id": "grok-4.3",
+      "priced_model": "grok-4.3",
+      "has_pricing": true,
+      "pricing_source": "xai-api-pricing:2026-08-30:standard-short-context",
+      "input_rate_per_million": 1.25,
+      "output_rate_per_million": 2.5,
+      "cached_input_rate_per_million": 0.2,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "grok-4.5": {
+      "model_id": "grok-4.5",
+      "priced_model": "grok-4.5",
+      "has_pricing": true,
+      "pricing_source": "xai-api-pricing:2026-08-30:standard-short-context",
+      "input_rate_per_million": 2.0,
+      "output_rate_per_million": 6.0,
+      "cached_input_rate_per_million": 0.3,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "grok-4.6": {
+      "model_id": "grok-4.6",
+      "priced_model": "grok-4.6",
+      "has_pricing": true,
+      "pricing_source": "xai-api-pricing:2026-08-30:standard-short-context",
+      "input_rate_per_million": 2.0,
+      "output_rate_per_million": 6.0,
+      "cached_input_rate_per_million": 0.5,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "grok-build-0.1": {
+      "model_id": "grok-build-0.1",
+      "priced_model": "grok-build-0.1",
+      "has_pricing": true,
+      "pricing_source": "xai-api-pricing:2026-08-30:standard-short-context",
+      "input_rate_per_million": 1.0,
+      "output_rate_per_million": 2.0,
+      "cached_input_rate_per_million": 0.2,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "tencent/hy3:free": {
+      "model_id": "tencent/hy3:free",
+      "priced_model": "tencent/hy3:free",
+      "has_pricing": false,
+      "pricing_source": "openrouter-public-catalog:2026-08-30:not-listed-in-current-catalog",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "poolside/laguna-m1:free": {
+      "model_id": "poolside/laguna-m1:free",
+      "priced_model": "poolside/laguna-m1:free",
+      "has_pricing": false,
+      "pricing_source": "openrouter-public-catalog:2026-08-30:not-listed-in-current-catalog",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "openrouter/owl-alpha": {
+      "model_id": "openrouter/owl-alpha",
+      "priced_model": "openrouter/owl-alpha",
+      "has_pricing": false,
+      "pricing_source": "openrouter-public-catalog:2026-08-30:not-listed-in-current-catalog",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "stealth/ox-alpha": {
+      "model_id": "stealth/ox-alpha",
+      "priced_model": "stealth/ox-alpha",
+      "has_pricing": false,
+      "pricing_source": "nous-portal-inventory:2026-08-30:no-current-public-token-rate",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "stepfun/step-3.7-flash:free": {
+      "model_id": "stepfun/step-3.7-flash:free",
+      "priced_model": "stepfun/step-3.7-flash:free",
+      "has_pricing": false,
+      "pricing_source": "nous-portal-inventory:2026-08-30:no-current-public-token-rate",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "upstage/solar-pro4:free": {
+      "model_id": "upstage/solar-pro4:free",
+      "priced_model": "upstage/solar-pro4:free",
+      "has_pricing": false,
+      "pricing_source": "nous-portal-inventory:2026-08-30:no-current-public-token-rate",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "meituan/longcat-2.0:free": {
+      "model_id": "meituan/longcat-2.0:free",
+      "priced_model": "meituan/longcat-2.0:free",
+      "has_pricing": false,
+      "pricing_source": "nous-portal-inventory:2026-08-30:no-current-public-token-rate",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
       "cache_write_input_rate_per_million": 0.0
     },
     "kimi-k3": {

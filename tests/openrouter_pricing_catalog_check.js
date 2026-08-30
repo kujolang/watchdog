@@ -32,9 +32,9 @@ assert.equal(opus5.output_rate_per_million, 25);
 assert.equal(opus5.cache_write_input_rate_per_million, 6.25);
 
 const glm52 = resolvePricing('z-ai/glm-5.2', { providerCatalog, openrouterCatalog });
-assert.equal(glm52.input_rate_per_million, 0.966);
-assert.equal(glm52.output_rate_per_million, 3.036);
-assert.equal(glm52.cached_input_rate_per_million, 0.1932);
+assert.equal(glm52.input_rate_per_million, 1.19);
+assert.equal(glm52.output_rate_per_million, 3.74);
+assert.equal(glm52.cached_input_rate_per_million, 0.221);
 
 const alias = resolvePricing('~anthropic/claude-haiku-latest', { providerCatalog, openrouterCatalog });
 assert.equal(alias.pricing_kind, 'catalog');
@@ -57,8 +57,14 @@ assert.equal(codexModel.output_rate_per_million, 12);
 
 const daybreakAlias = resolvePricing('gpt-daybreak-blue-latest', { providerCatalog, openrouterCatalog });
 assert.equal(daybreakAlias.priced_model, 'gpt-5.6-sol');
-assert.equal(daybreakAlias.input_rate_per_million, 5);
-assert.equal(daybreakAlias.output_rate_per_million, 30);
+assert.equal(daybreakAlias.input_rate_per_million, 4);
+assert.equal(daybreakAlias.output_rate_per_million, 20);
+
+const grok46 = resolvePricing('grok-4.6', { providerCatalog, openrouterCatalog });
+assert.equal(grok46.pricing_kind, 'catalog');
+assert.equal(grok46.input_rate_per_million, 2);
+assert.equal(grok46.cached_input_rate_per_million, 0.5);
+assert.equal(grok46.output_rate_per_million, 6);
 
 const codexSpark = resolvePricing('gpt-5.3-codex-spark', { providerCatalog, openrouterCatalog });
 assert.equal(codexSpark.pricing_kind, 'unknown');
