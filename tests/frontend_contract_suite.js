@@ -60,7 +60,7 @@ function extractDashboardScript(htmlSource) {
 
 	let script = contentMatch[1];
 	script = script.replace('const state = {', 'var state = {');
-	script = script.replace(/loadAll\(\);\s*\/\/ Auto-refresh every 30 s\s*setInterval\(loadAll, 30_000\);/m, '');
+	script = script.replace(/initializeRangeFilter\(\);\s*loadAll\(\);\s*\/\/ Refresh data in the background[^\n]*\s*setInterval\(\(\) => loadAll\(\{ background: true \}\), 30_000\);/m, '');
 	return script;
 }
 
@@ -70,7 +70,7 @@ function createHarness() {
 	const script = extractDashboardScript(source);
 
 	const elements = {};
-	const renderedCharts = { value: null };
+	const renderedCharts = { value: null, count: 0 };
 	const requiredIds = [
 		'globalRangePreset', 'globalRangeCustomFields', 'globalRangeStartField', 'globalRangeEndField', 'globalRangeStart', 'globalRangeEnd',
 		'reqSearch', 'reqTenantFilter', 'reqProjectFilter', 'reqStatusFilter', 'reqProviderFilter', 'reqBody', 'reqEmpty',
@@ -116,6 +116,7 @@ function createHarness() {
 		WatchdogDitherCharts: {
 			renderCharts(data) {
 				renderedCharts.value = data;
+				renderedCharts.count += 1;
 			},
 		},
 		Blob: class FakeBlob {
@@ -427,6 +428,31 @@ function testStatCardSparklinesUseMetricTrends() {
 	assert.deepStrictEqual(sparklines.traces, [0, 0, 0, 0, 0, 0, 9]);
 }
 
+function testBackgroundRefreshPreservesInteractiveView() {
+	const { context, elements, renderedCharts } = createHarness();
+	context.state.visibleRows.traces = [{ trace_id: 'trace-stays-open' }];
+	elements['trace-0'] = makeElement('trace-0');
+	elements['trace-0'].style.display = 'flex';
+	elements['trace-toggle-0'] = makeElement('trace-toggle-0');
+
+	const view = context.captureDashboardView();
+	elements['trace-0'].style.display = 'none';
+	context.restoreDashboardView(view);
+	assert.strictEqual(elements['trace-0'].style.display, 'flex', 'background refresh should restore an expanded trace');
+	assert.ok(elements['trace-toggle-0'].innerHTML.includes('<svg'), 'restored trace should keep its expanded chevron');
+
+	const range = { preset: 'all', sinceMs: 0, untilMs: 0, label: 'All time' };
+	context.renderCharts([], null, [], [], range, null);
+	context.renderCharts([], null, [], [], range, null);
+	assert.strictEqual(renderedCharts.count, 1, 'unchanged chart data should not repaint and flash');
+
+	const source = fs.readFileSync(path.join(__dirname, '..', 'dashboard.html'), 'utf8');
+	assert.ok(source.includes("setInterval(() => loadAll({ background: true }), 30_000)"), 'automatic refresh should use non-disruptive background mode');
+	assert.ok(source.includes('class="range-select-shell"'), 'date range should use the custom site select shell');
+	assert.ok(source.includes('href="https://github.com/kujolang/watchdog"'), 'footer should link to the Watchdog repository');
+	assert.ok(source.includes('class="footer-mark"'), 'footer should include the Kujo SVG mark');
+}
+
 function testBackupPanelsReflectActiveAndArchivedFiles() {
 	const { context, elements } = createHarness();
 	context.state.backups = {
@@ -467,6 +493,7 @@ async function run() {
 	testToolCallsErrorsSessionsAndTracesContracts();
 	testToolChartUsesAggregatedCallCounts();
 	testStatCardSparklinesUseMetricTrends();
+	testBackgroundRefreshPreservesInteractiveView();
 	testBackupPanelsReflectActiveAndArchivedFiles();
 	console.log('frontend_contract_suite: PASS');
 }
