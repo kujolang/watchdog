@@ -8,6 +8,7 @@ const ROOT = path.join(__dirname, '..');
 const EXPECTED_PAIRS = [
 	['src/dashboard_server.kujo', 'dashboard_server.kujo'],
 	['src/watchdog_shared.kujo', 'watchdog_shared.kujo'],
+	['src/telemetry_v2.kujo', 'telemetry_v2.kujo'],
 	['src/watchdog.kujo', 'watchdog.kujo'],
 	['src/dashboard.html', 'dashboard.html'],
 ];

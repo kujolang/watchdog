@@ -1,0 +1,18 @@
+{
+  "baseline_commit": "c5625d0",
+  "captured_at": "2026-09-01",
+  "schema": "kujo.telemetry.v1",
+  "compatibility_endpoints": ["POST /api/telemetry/requests", "POST /api/telemetry/traces", "GET /api/export/jsonl"],
+  "privacy_invariants": [
+    "content capture remains disabled unless explicitly configured",
+    "normalization does not bypass server redaction",
+    "optional export failure cannot fail the primary request"
+  ],
+  "authoritative_tests": [
+    "tests/telemetry_schema_contract_check.js",
+    "tests/external_telemetry_intake_static_check.js",
+    "tests/telemetry_redaction_check.js",
+    "tests/export_jsonl_mode_check.js",
+    "tests/retention_export_controls_static_check.js"
+  ]
+}

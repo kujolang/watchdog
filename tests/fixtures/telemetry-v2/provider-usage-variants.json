@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {"provider": "openai", "normalized": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120, "cached_input_tokens": 25, "reasoning_tokens": 5}, "provider_usage": {"prompt_tokens": 100, "completion_tokens": 20}},
+    {"provider": "anthropic", "normalized": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120, "cache_write_input_tokens": 10, "cached_input_tokens": 25}, "provider_usage": {"cache_creation_input_tokens": 10, "cache_read_input_tokens": 25}},
+    {"provider": "gemini", "normalized": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 125, "cached_input_tokens": 25, "reasoning_tokens": 5}, "provider_usage": {"promptTokenCount": 100, "candidatesTokenCount": 20, "thoughtsTokenCount": 5}},
+    {"provider": "bedrock", "normalized": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}, "provider_usage": {"inputTokens": 100, "outputTokens": 20, "totalTokens": 120}}
+  ]
+}

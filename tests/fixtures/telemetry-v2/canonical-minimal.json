@@ -1,0 +1,35 @@
+{
+  "schema_version": "watchdog.telemetry.v2",
+  "batch_id": "fixture:minimal:1",
+  "sent_at": "2026-09-01T12:00:00Z",
+  "producer": {
+    "name": "fixture",
+    "version": "1.0.0",
+    "adapter_id": "fixture.adapter",
+    "adapter_version": "watchdog.ingestion-adapter.v1",
+    "original_schema": null
+  },
+  "records": [
+    {
+      "record_id": "trace:fixture:1",
+      "record_type": "trace",
+      "trace_id": "0123456789abcdef0123456789abcdef",
+      "span_id": null,
+      "parent_span_id": null,
+      "observed_at": "2026-09-01T12:00:00Z",
+      "started_at": "2026-09-01T12:00:00Z",
+      "ended_at": null,
+      "kind": null,
+      "name": "fixture trace",
+      "status": "unset",
+      "source": {"producer": "fixture"},
+      "references": [{"type": "session", "id": "session-1", "namespace": "fixture", "relation": "groups"}],
+      "attributes": {"deployment.environment": "test"},
+      "usage": null,
+      "costs": [],
+      "error": null,
+      "content": [],
+      "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+    }
+  ]
+}

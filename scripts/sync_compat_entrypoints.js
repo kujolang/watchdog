@@ -8,6 +8,7 @@ const ROOT = path.join(__dirname, '..');
 const ENTRYPOINTS = [
 	{ src: 'src/dashboard_server.kujo', root: 'dashboard_server.kujo' },
 	{ src: 'src/watchdog_shared.kujo', root: 'watchdog_shared.kujo' },
+	{ src: 'src/telemetry_v2.kujo', root: 'telemetry_v2.kujo' },
 	{ src: 'src/watchdog.kujo', root: 'watchdog.kujo' },
 	{ src: 'src/dashboard.html', root: 'dashboard.html' },
 ];

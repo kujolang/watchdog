@@ -1,0 +1,64 @@
+from telemetry_v2 import watchdog_telemetry_v2_canonical_id
+from telemetry_v2 import watchdog_telemetry_v2_is_hex_id
+from telemetry_v2 import watchdog_telemetry_v2_span_kind
+from telemetry_v2 import watchdog_telemetry_v2_status
+from telemetry_v2 import watchdog_telemetry_v2_translate_v1
+from telemetry_v2 import watchdog_telemetry_v2_version
+
+assert(watchdog_telemetry_v2_version == "watchdog.telemetry.v2", "v2 schema version drift")
+assert(watchdog_telemetry_v2_is_hex_id("0123456789abcdef0123456789abcdef", 32), "valid trace id rejected")
+assert(watchdog_telemetry_v2_is_hex_id("00000000000000000000000000000000", 32) == false, "zero trace id accepted")
+assert(watchdog_telemetry_v2_canonical_id("source-trace", "fixture", 32) == watchdog_telemetry_v2_canonical_id("source-trace", "fixture", 32), "canonical id is not deterministic")
+assert(watchdog_telemetry_v2_status("completed") == "ok", "completed status mapping drift")
+assert(watchdog_telemetry_v2_status("blocked") == "denied", "blocked status mapping drift")
+assert(watchdog_telemetry_v2_span_kind("shell") == "execution", "shell kind mapping drift")
+
+source := {
+	"schema_version": "kujo.telemetry.v1",
+	"source_app": "fixture-agent",
+	"trace_id": "trace-source-id",
+	"session_id": "session-1",
+	"run_id": "run-1",
+	"trace": {
+		"trace_id": "trace-source-id",
+		"name": "agent turn",
+		"status": "success",
+		"started_at_ms": 1788300000000,
+		"ended_at_ms": 1788300000100,
+		"input_tokens": 12,
+		"output_tokens": 4,
+		"cached_input_tokens": 3,
+		"attributes": {"provider": "fixture"}
+	},
+	"spans": [{
+		"span_id": "model-call-1",
+		"span_kind": "model",
+		"name": "chat",
+		"status": "success",
+		"started_at_ms": 1788300000010,
+		"ended_at_ms": 1788300000090,
+		"duration_ms": 80,
+		"attributes": {"model": "fixture-model"}
+	}],
+	"events": [{
+		"event_id": "first-byte",
+		"span_id": "model-call-1",
+		"event_name": "stream.first_byte",
+		"sequence": 1,
+		"occurred_at_ms": 1788300000020,
+		"attributes": {"bytes": 12}
+	}]
+}
+
+translated := watchdog_telemetry_v2_translate_v1(source, 1788300000200)
+assert(translated["ok"], "v1 translation failed")
+batch := translated["batch"]
+assert(batch["schema_version"] == "watchdog.telemetry.v2", "translated schema drift")
+assert(len(batch["records"]) == 3, "translated record count drift")
+assert(batch["records"][0]["record_type"] == "trace", "trace record missing")
+assert(batch["records"][1]["kind"] == "model", "model span mapping missing")
+assert(batch["records"][2]["record_type"] == "event", "event mapping missing")
+assert(batch["records"][0]["privacy"]["content_mode"] == "off", "content policy widened")
+assert(len(batch["records"][0]["references"]) == 2, "session/run references missing")
+
+print("telemetry_v2_module_check: PASS")

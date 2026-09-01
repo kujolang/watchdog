@@ -1,0 +1,301 @@
+# Watchdog canonical telemetry v2 normalization primitives.
+#
+# This module is intentionally pure: it does not open a database, read
+# configuration, perform network I/O, or select exporters. Source adapters use
+# it to produce canonical records before the authoritative server policy runs.
+
+WATCHDOG_TELEMETRY_V2 := "watchdog.telemetry.v2"
+WATCHDOG_INGESTION_ADAPTER_V1 := "watchdog.ingestion-adapter.v1"
+WATCHDOG_PRIVACY_POLICY_V1 := "watchdog.privacy.v1"
+
+func v2_get(value, key, fallback_value) {
+	if type(value) != "dict" || has_key(value, key) == 0 {
+		return fallback_value
+	}
+	return value[key]
+}
+
+func v2_text(value, max_len) {
+	if type(value) == "null" {
+		return ""
+	}
+	text := trim(to_string(value))
+	if len(text) <= max_len {
+		return text
+	}
+	return substring(text, 0, max_len)
+}
+
+func v2_non_negative_int(value) {
+	if type(value) == "null" {
+		return null
+	}
+	parsed := null
+	try {
+		parsed = parse_int(to_string(value))
+	} except err {
+		return null
+	}
+	if parsed < 0 {
+		return null
+	}
+	return parsed
+}
+
+func v2_is_hex_id(value, expected_len) {
+	text := to_lower(trim(to_string(value)))
+	if len(text) != expected_len {
+		return false
+	}
+	i := 0
+	while i < len(text) {
+		ch := substring(text, i, i + 1)
+		if contains("0123456789abcdef", ch) == 0 {
+			return false
+		}
+		i = i + 1
+	}
+	if text == substring("00000000000000000000000000000000", 0, expected_len) {
+		return false
+	}
+	return true
+}
+
+func v2_canonical_id(raw_value, source_namespace, expected_len) {
+	raw_text := to_lower(trim(to_string(raw_value)))
+	if v2_is_hex_id(raw_text, expected_len) {
+		return raw_text
+	}
+	digest := sha256(v2_text(source_namespace, 80) + ":" + v2_text(raw_value, 160))
+	return substring(digest, 0, expected_len)
+}
+
+func v2_rfc3339_from_ms(value, fallback_ms) {
+	ms := v2_non_negative_int(value)
+	if type(ms) == "null" {
+		ms = fallback_ms
+	}
+	seconds := ms / 1000.0
+	return format_date(seconds, "YYYY-MM-DDTHH:mm:ss") + "Z"
+}
+
+func v2_status(value) {
+	text := to_lower(trim(to_string(value)))
+	if text == "success" || text == "completed" || text == "complete" || text == "ok" {
+		return "ok"
+	}
+	if text == "failed" || text == "failure" || text == "error" {
+		return "error"
+	}
+	if text == "cancelled" || text == "canceled" {
+		return "cancelled"
+	}
+	if text == "timeout" || text == "timed_out" {
+		return "timeout"
+	}
+	if text == "denied" || text == "blocked" {
+		return "denied"
+	}
+	return "unset"
+}
+
+func v2_span_kind(value) {
+	text := to_lower(trim(to_string(value)))
+	if text == "model" { return "model" }
+	if text == "agent" { return "agent" }
+	if text == "tool" { return "tool" }
+	if text == "retrieval" || text == "retriever" { return "retrieval" }
+	if text == "workflow" || text == "chain" { return "workflow" }
+	if text == "handoff" { return "handoff" }
+	if text == "approval" { return "approval" }
+	if text == "shell" || text == "execution" { return "execution" }
+	if text == "persistence" { return "persistence" }
+	if text == "evaluation" || text == "evaluator" { return "evaluation" }
+	return "internal"
+}
+
+func v2_privacy_metadata_only() {
+	return {
+		"content_mode": "off",
+		"policy_version": WATCHDOG_PRIVACY_POLICY_V1,
+		"transformations": []
+	}
+}
+
+func v2_reference(ref_type, ref_id, namespace, relation) {
+	return {
+		"type": ref_type,
+		"id": v2_text(ref_id, 160),
+		"namespace": v2_text(namespace, 80),
+		"relation": v2_text(relation, 40)
+	}
+}
+
+func v2_usage_from_v1(container) {
+	return {
+		"input_tokens": v2_non_negative_int(v2_get(container, "input_tokens", null)),
+		"output_tokens": v2_non_negative_int(v2_get(container, "output_tokens", null)),
+		"total_tokens": v2_non_negative_int(v2_get(container, "total_tokens", null)),
+		"cached_input_tokens": v2_non_negative_int(v2_get(container, "cached_input_tokens", null)),
+		"cache_write_input_tokens": v2_non_negative_int(v2_get(container, "cache_write_input_tokens", null)),
+		"reasoning_tokens": v2_non_negative_int(v2_get(container, "reasoning_tokens", null)),
+		"usage_source": "kujo.telemetry.v1",
+		"total_semantics": "producer_reported",
+		"provider_usage": null
+	}
+}
+
+func v2_source(source_app, original_schema, source_record_id) {
+	return {
+		"producer": v2_text(source_app, 80),
+		"adapter_id": "watchdog.v1-translator",
+		"adapter_version": WATCHDOG_INGESTION_ADAPTER_V1,
+		"original_schema": v2_text(original_schema, 120),
+		"source_record_id": v2_text(source_record_id, 160)
+	}
+}
+
+func v2_base_record(record_id, record_type, trace_id, span_id, parent_span_id, observed_at, source) {
+	return {
+		"record_id": v2_text(record_id, 160),
+		"record_type": record_type,
+		"trace_id": trace_id,
+		"span_id": span_id,
+		"parent_span_id": parent_span_id,
+		"observed_at": observed_at,
+		"started_at": null,
+		"ended_at": null,
+		"kind": null,
+		"name": null,
+		"status": "unset",
+		"source": source,
+		"references": [],
+		"attributes": {},
+		"usage": null,
+		"costs": [],
+		"error": null,
+		"content": [],
+		"privacy": v2_privacy_metadata_only()
+	}
+}
+
+func v2_add_common_references(record, source_app, bundle) {
+	session_id := v2_text(v2_get(bundle, "session_id", ""), 160)
+	if session_id != "" {
+		record["references"] = push(record["references"], v2_reference("session", session_id, source_app, "groups"))
+	}
+	run_id := v2_text(v2_get(bundle, "run_id", ""), 160)
+	if run_id != "" {
+		record["references"] = push(record["references"], v2_reference("run", run_id, source_app, "groups"))
+	}
+	return record
+}
+
+func v2_translate_v1(bundle, observed_at_ms) {
+	if type(bundle) != "dict" {
+		return {"ok": false, "error": "telemetry batch must be an object", "batch": null}
+	}
+	version := v2_text(v2_get(bundle, "schema_version", "kujo.telemetry.v1"), 80)
+	if version != "kujo.telemetry.v1" {
+		return {"ok": false, "error": "unsupported source schema: " + version, "batch": null}
+	}
+	source_app := v2_text(v2_get(bundle, "source_app", "external"), 80)
+	source_trace_id := v2_text(v2_get(bundle, "trace_id", v2_get(v2_get(bundle, "trace", {}), "trace_id", "")), 160)
+	if source_trace_id == "" {
+		return {"ok": false, "error": "trace_id is required", "batch": null}
+	}
+	trace_id := v2_canonical_id(source_trace_id, source_app, 32)
+	observed_at := v2_rfc3339_from_ms(observed_at_ms, current_timestamp())
+	records := []
+	trace := v2_get(bundle, "trace", {})
+	if type(trace) != "dict" { trace = {} }
+	trace_source := v2_source(source_app, version, source_trace_id)
+	trace_record := v2_base_record("trace:" + source_trace_id, "trace", trace_id, null, null, observed_at, trace_source)
+	trace_record["name"] = v2_text(v2_get(trace, "name", "trace"), 160)
+	trace_record["status"] = v2_status(v2_get(trace, "status", "unset"))
+	trace_record["started_at"] = v2_rfc3339_from_ms(v2_get(trace, "started_at_ms", observed_at_ms), observed_at_ms)
+	trace_record["ended_at"] = v2_rfc3339_from_ms(v2_get(trace, "ended_at_ms", v2_get(trace, "started_at_ms", observed_at_ms)), observed_at_ms)
+	trace_record["usage"] = v2_usage_from_v1(trace)
+	trace_record["attributes"] = v2_get(trace, "attributes", {})
+	trace_source_fields := trace_record["source"]
+	trace_source_fields["source_trace_id"] = source_trace_id
+	trace_record["source"] = trace_source_fields
+	trace_record = v2_add_common_references(trace_record, source_app, bundle)
+	records = push(records, trace_record)
+
+	spans := v2_get(bundle, "spans", [])
+	if type(spans) == "array" {
+		for span in spans {
+			if type(span) == "dict" && len(records) < 100 {
+				source_span_id := v2_text(v2_get(span, "span_id", ""), 160)
+				if source_span_id != "" {
+					span_id := v2_canonical_id(source_span_id, source_app + ":" + source_trace_id, 16)
+					source_parent_id := v2_text(v2_get(span, "parent_span_id", ""), 160)
+					parent_span_id := null
+					if source_parent_id != "" {
+						parent_span_id = v2_canonical_id(source_parent_id, source_app + ":" + source_trace_id, 16)
+					}
+					record := v2_base_record("span:" + source_trace_id + ":" + source_span_id, "span", trace_id, span_id, parent_span_id, observed_at, v2_source(source_app, version, source_span_id))
+					span_source_fields := record["source"]
+					span_source_fields["source_span_id"] = source_span_id
+					record["source"] = span_source_fields
+					record["kind"] = v2_span_kind(v2_get(span, "span_kind", "internal"))
+					record["name"] = v2_text(v2_get(span, "name", "span"), 160)
+					record["status"] = v2_status(v2_get(span, "status", "unset"))
+					record["started_at"] = v2_rfc3339_from_ms(v2_get(span, "started_at_ms", observed_at_ms), observed_at_ms)
+					record["ended_at"] = v2_rfc3339_from_ms(v2_get(span, "ended_at_ms", v2_get(span, "started_at_ms", observed_at_ms)), observed_at_ms)
+					record["attributes"] = v2_get(span, "attributes", {})
+					record = v2_add_common_references(record, source_app, bundle)
+					records = push(records, record)
+				}
+			}
+		}
+	}
+
+	events := v2_get(bundle, "events", [])
+	if type(events) == "array" {
+		for event in events {
+			if type(event) == "dict" && len(records) < 100 {
+				source_event_id := v2_text(v2_get(event, "event_id", ""), 160)
+				if source_event_id != "" {
+					source_span_id := v2_text(v2_get(event, "span_id", ""), 160)
+					span_id := null
+					if source_span_id != "" {
+						span_id = v2_canonical_id(source_span_id, source_app + ":" + source_trace_id, 16)
+					}
+					record := v2_base_record("event:" + source_trace_id + ":" + source_event_id, "event", trace_id, span_id, null, v2_rfc3339_from_ms(v2_get(event, "occurred_at_ms", observed_at_ms), observed_at_ms), v2_source(source_app, version, source_event_id))
+					record["name"] = v2_text(v2_get(event, "event_name", "event"), 160)
+					record["attributes"] = v2_get(event, "attributes", {})
+					record = v2_add_common_references(record, source_app, bundle)
+					records = push(records, record)
+				}
+			}
+		}
+	}
+
+	return {
+		"ok": true,
+		"error": "",
+		"batch": {
+			"schema_version": WATCHDOG_TELEMETRY_V2,
+			"batch_id": "v1:" + source_app + ":" + source_trace_id,
+			"sent_at": observed_at,
+			"producer": {
+				"name": source_app,
+				"version": "unknown",
+				"adapter_id": "watchdog.v1-translator",
+				"adapter_version": WATCHDOG_INGESTION_ADAPTER_V1,
+				"original_schema": version
+			},
+			"records": records
+		}
+	}
+}
+
+export watchdog_telemetry_v2_version := WATCHDOG_TELEMETRY_V2
+export watchdog_ingestion_adapter_version := WATCHDOG_INGESTION_ADAPTER_V1
+export watchdog_telemetry_v2_is_hex_id := v2_is_hex_id
+export watchdog_telemetry_v2_canonical_id := v2_canonical_id
+export watchdog_telemetry_v2_status := v2_status
+export watchdog_telemetry_v2_span_kind := v2_span_kind
+export watchdog_telemetry_v2_translate_v1 := v2_translate_v1
