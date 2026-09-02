@@ -23,3 +23,18 @@
 
 No risk here justifies Kafka, Kubernetes, Postgres, Redis, Elasticsearch, or ClickHouse in the local gateway.
 
+## Open release risks (2026-09-01)
+
+- **R12 remains open:** the quick reference run sustained the 10 EPS case but
+  achieved only about 20–24 EPS for the nominal 50/200 cases. The 30-minute
+  qualification has not passed. The advertised envelope is therefore 10 EPS.
+- **R13 remains open and blocks production promotion:** Kujo's current POST
+  client buffers the complete upstream response. Streaming TTFT and nonstream
+  proxy overhead miss the target budgets; see the measured release decision.
+- **R15 is constrained, not implemented as in-database multitenancy:** Watchdog
+  supports one operator/auth trust boundary per database. Tenant/project filters
+  prevent accidental query mixing, but are not row-level authorization. Shared
+  untrusted tenants must use separate Watchdog instances.
+- The Agents SDK produces canonical v2 records, but a `kujo agent` shared-client
+  delivery/spool proof remains open. Pi and the JavaScript reference client have
+  independently verified bounded fail-open spools.
