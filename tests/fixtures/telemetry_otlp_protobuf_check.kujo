@@ -1,0 +1,12 @@
+from telemetry_otlp import watchdog_otlp_map
+from telemetry_otlp_protobuf import watchdog_otlp_protobuf_encode, watchdog_otlp_protobuf_rejected_spans
+
+batch := parse_json(read_file("tests/fixtures/telemetry-v2/canonical-model-batch.json"))
+payload := watchdog_otlp_map(batch["records"], "otel.genai.v1")
+encoded := watchdog_otlp_protobuf_encode(payload)
+assert(type(encoded) == "bytes", "OTLP protobuf encoder must return bytes")
+assert(len(encoded) > 100, "OTLP protobuf payload unexpectedly small")
+assert(watchdog_otlp_protobuf_rejected_spans(bytes([])) == 0, "empty success response must decode")
+assert(watchdog_otlp_protobuf_rejected_spans(bytes([10,2,8,3])) == 3, "partial success rejection count must decode")
+assert(watchdog_otlp_protobuf_rejected_spans(bytes([255])) == -1, "malformed protobuf response must fail closed")
+print(encode_base64(encoded))

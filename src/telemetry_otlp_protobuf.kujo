@@ -1,0 +1,223 @@
+# Minimal OTLP TraceService protobuf encoder. It intentionally covers only the
+# exact trace payload emitted by telemetry_otlp.kujo; it is not a generic
+# protobuf runtime.
+
+func pb_get(value, key, fallback_value) {
+	if type(value) != "dict" || has_key(value, key) == 0 { return fallback_value }
+	return value[key]
+}
+
+func pb_varint(value) {
+	n := value
+	if type(n) != "int" || n < 0 { n = 0 }
+	varint_bytes := []
+	while n >= 128 {
+		varint_bytes = push(varint_bytes, parse_int(to_string((n % 128) + 128)))
+		n = floor(n / 128)
+	}
+	return push(varint_bytes, parse_int(to_string(n)))
+}
+
+func pb_utf8(value) {
+	raw := decode_base64(encode_base64(to_string(value)))
+	utf8_bytes := []
+	i := 0
+	while i < len(raw) {
+		utf8_bytes = push(utf8_bytes, raw[i])
+		i = i + 1
+	}
+	return utf8_bytes
+}
+
+func pb_field_varint(field, value) {
+	return concat(pb_varint(field * 8), pb_varint(value))
+}
+
+func pb_field_fixed64(field, bytes_value) {
+	return concat(pb_varint((field * 8) + 1), bytes_value)
+}
+
+func pb_field_bytes(field, value) {
+	return concat(concat(pb_varint((field * 8) + 2), pb_varint(len(value))), value)
+}
+
+func pb_field_text(field, value) {
+	return pb_field_bytes(field, pb_utf8(value))
+}
+
+func pb_fixed64_integer(value) {
+	n := value
+	if type(n) != "int" || n < 0 { n = 0 }
+	fixed_bytes := []
+	i := 0
+	while i < 8 {
+		fixed_bytes = push(fixed_bytes, parse_int(to_string(n % 256)))
+		n = floor(n / 256)
+		i = i + 1
+	}
+	return fixed_bytes
+}
+
+func pb_double(value) {
+	n := value * 1.0
+	if n == 0.0 { return [0,0,0,0,0,0,0,0] }
+	sign := 0
+	if n < 0.0 { sign = 1; n = 0.0 - n }
+	exponent := floor(log(n) / log(2.0))
+	if exponent < -1022 || exponent > 1023 { return pb_fixed64_integer(0) }
+	mantissa := floor(((n / pow(2.0, exponent)) - 1.0) * 4503599627370496.0 + 0.5)
+	if mantissa >= 4503599627370496 { mantissa = 0; exponent = exponent + 1 }
+	biased := exponent + 1023
+	double_bytes := []
+	i := 0
+	while i < 6 {
+		double_bytes = push(double_bytes, parse_int(to_string(mantissa % 256)))
+		mantissa = floor(mantissa / 256)
+		i = i + 1
+	}
+	double_bytes = push(double_bytes, parse_int(to_string((mantissa % 16) + ((biased % 16) * 16))))
+	double_bytes = push(double_bytes, parse_int(to_string(floor(biased / 16) + (sign * 128))))
+	return double_bytes
+}
+
+func pb_hex(value) {
+	text := to_lower(to_string(value))
+	digits := "0123456789abcdef"
+	hex_bytes := []
+	i := 0
+	while i + 1 < len(text) {
+		hi := parse_int(to_string(index_of(digits, substring(text, i, i + 1))))
+		lo := parse_int(to_string(index_of(digits, substring(text, i + 1, i + 2))))
+		if hi < 0 || lo < 0 { return [] }
+		hex_bytes = push(hex_bytes, (hi * 16) + lo)
+		i = i + 2
+	}
+	return hex_bytes
+}
+
+func pb_any_value(value) {
+	if type(value) != "dict" { return pb_field_text(1, to_string(value)) }
+	if has_key(value, "stringValue") { return pb_field_text(1, value["stringValue"]) }
+	if has_key(value, "boolValue") {
+		bool_number := 0
+		if value["boolValue"] == true { bool_number = 1 }
+		return pb_field_varint(2, bool_number)
+	}
+	if has_key(value, "intValue") {
+		int_value := value["intValue"]
+		if type(int_value) == "int" && int_value >= 0 { return pb_field_varint(3, int_value) }
+		return pb_field_text(1, to_string(int_value))
+	}
+	if has_key(value, "doubleValue") { return pb_field_fixed64(4, pb_double(value["doubleValue"])) }
+	return pb_field_text(1, "")
+}
+
+func pb_key_value(value) {
+	kv_bytes := pb_field_text(1, pb_get(value, "key", ""))
+	return concat(kv_bytes, pb_field_bytes(2, pb_any_value(pb_get(value, "value", {}))))
+}
+
+func pb_attributes(values, field) {
+	attribute_bytes := []
+	if type(values) != "array" { return attribute_bytes }
+	for value in values { attribute_bytes = concat(attribute_bytes, pb_field_bytes(field, pb_key_value(value))) }
+	return attribute_bytes
+}
+
+func pb_resource(value) {
+	return pb_attributes(pb_get(value, "attributes", []), 1)
+}
+
+func pb_scope(value) {
+	scope_bytes := []
+	name := pb_get(value, "name", "")
+	version := pb_get(value, "version", "")
+	if name != "" { scope_bytes = concat(scope_bytes, pb_field_text(1, name)) }
+	if version != "" { scope_bytes = concat(scope_bytes, pb_field_text(2, version)) }
+	return concat(scope_bytes, pb_attributes(pb_get(value, "attributes", []), 3))
+}
+
+func pb_status(value) {
+	status_bytes := []
+	message := pb_get(value, "message", "")
+	if message != "" { status_bytes = concat(status_bytes, pb_field_text(2, message)) }
+	code := pb_get(value, "code", 0)
+	if code > 0 { status_bytes = concat(status_bytes, pb_field_varint(3, code)) }
+	return status_bytes
+}
+
+func pb_event(value) {
+	event_bytes := pb_field_fixed64(1, pb_fixed64_integer(parse_int(to_string(pb_get(value, "timeUnixNano", "0")))))
+	event_bytes = concat(event_bytes, pb_field_text(2, pb_get(value, "name", "event")))
+	return concat(event_bytes, pb_attributes(pb_get(value, "attributes", []), 3))
+}
+
+func pb_span(value) {
+	span_bytes := pb_field_bytes(1, pb_hex(pb_get(value, "traceId", "")))
+	span_bytes = concat(span_bytes, pb_field_bytes(2, pb_hex(pb_get(value, "spanId", ""))))
+	parent := pb_hex(pb_get(value, "parentSpanId", ""))
+	if len(parent) > 0 { span_bytes = concat(span_bytes, pb_field_bytes(4, parent)) }
+	span_bytes = concat(span_bytes, pb_field_text(5, pb_get(value, "name", "span")))
+	span_bytes = concat(span_bytes, pb_field_varint(6, pb_get(value, "kind", 0)))
+	span_bytes = concat(span_bytes, pb_field_fixed64(7, pb_fixed64_integer(parse_int(to_string(pb_get(value, "startTimeUnixNano", "0"))))))
+	span_bytes = concat(span_bytes, pb_field_fixed64(8, pb_fixed64_integer(parse_int(to_string(pb_get(value, "endTimeUnixNano", "0"))))))
+	span_bytes = concat(span_bytes, pb_attributes(pb_get(value, "attributes", []), 9))
+	for event in pb_get(value, "events", []) { span_bytes = concat(span_bytes, pb_field_bytes(11, pb_event(event))) }
+	status := pb_status(pb_get(value, "status", {}))
+	if len(status) > 0 { span_bytes = concat(span_bytes, pb_field_bytes(15, status)) }
+	return span_bytes
+}
+
+func pb_scope_spans(value) {
+	scope_spans_bytes := pb_field_bytes(1, pb_scope(pb_get(value, "scope", {})))
+	for span in pb_get(value, "spans", []) { scope_spans_bytes = concat(scope_spans_bytes, pb_field_bytes(2, pb_span(span))) }
+	return scope_spans_bytes
+}
+
+func pb_resource_spans(value) {
+	resource_spans_bytes := pb_field_bytes(1, pb_resource(pb_get(value, "resource", {})))
+	for scope_spans in pb_get(value, "scopeSpans", []) { resource_spans_bytes = concat(resource_spans_bytes, pb_field_bytes(2, pb_scope_spans(scope_spans))) }
+	return resource_spans_bytes
+}
+
+export watchdog_otlp_protobuf_encode := func(payload) {
+	request_bytes := []
+	for resource_spans in pb_get(payload, "resourceSpans", []) { request_bytes = concat(request_bytes, pb_field_bytes(1, pb_resource_spans(resource_spans))) }
+	return bytes(request_bytes)
+}
+
+func pb_decode_varint(data, offset) {
+	value := 0
+	multiplier := 1
+	i := offset
+	count := 0
+	while i < len(data) && count < 10 {
+		byte_value := data[i]
+		value = value + ((byte_value % 128) * multiplier)
+		i = i + 1
+		if byte_value < 128 { return {"ok": true, "value": value, "offset": i} }
+		multiplier = multiplier * 128
+		count = count + 1
+	}
+	return {"ok": false, "value": 0, "offset": i}
+}
+
+# Decodes only ExportTraceServiceResponse.partial_success.rejected_spans.
+# Malformed or unsupported responses are reported as -1 so the worker retries.
+export watchdog_otlp_protobuf_rejected_spans := func(data) {
+	if type(data) != "bytes" || len(data) == 0 { return 0 }
+	outer_key := pb_decode_varint(data, 0)
+	if outer_key["ok"] == false || outer_key["value"] != 10 { return -1 }
+	outer_length := pb_decode_varint(data, outer_key["offset"])
+	if outer_length["ok"] == false { return -1 }
+	start := outer_length["offset"]
+	end := start + outer_length["value"]
+	if end > len(data) { return -1 }
+	if start == end { return 0 }
+	inner_key := pb_decode_varint(data, start)
+	if inner_key["ok"] == false { return -1 }
+	if inner_key["value"] != 8 { return 0 }
+	rejected := pb_decode_varint(data, inner_key["offset"])
+	if rejected["ok"] == false { return -1 }
+	return rejected["value"]
+}

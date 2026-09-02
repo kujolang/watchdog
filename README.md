@@ -161,6 +161,9 @@ Environment variables:
 | `WDG_RATE_LIMIT_BUCKET_TTL_SECS` | `600` | TTL for idle rate-limit buckets before cleanup |
 | `WDG_IDENTIFIER_MAX_LEN` | `128` | Max stored length for session/user/tenant/project/workflow/task/correlation identifiers |
 | `WDG_EXPORT_MAX_ROWS` | `10000` | Default per-kind row cap for `/api/export` requests (override via query) |
+| `WDG_EXPORTERS_CONFIG_PATH` | `watchdog_exporters.json` | Versioned exporter-profile configuration; credentials are referenced by environment-variable name only |
+| `WDG_EXPORT_QUEUE_MAX_RECORDS` | `50000` | Pending/retry record bound per exporter profile |
+| `WDG_EXPORT_QUEUE_MAX_BYTES` | `67108864` | Pending/retry canonical-byte bound per exporter profile |
 | `WDG_BACKUP_ENABLED` | `true` | Seed automatic backup scheduling on first startup |
 | `WDG_BACKUP_INTERVAL_MINUTES` | `1440` | Initial backup frequency; later changes persist from the dashboard |
 | `WDG_BACKUP_DIR` | `data/backups` | Initial separate backup folder; absolute Dropbox/Google Drive paths are supported |
@@ -348,6 +351,14 @@ npm run build:charts
 - `WDG_REDACTION_MODE=basic` (default) redacts sensitive terms from any enabled summaries, tool-call payload fields, step metadata, and error messages before data is stored or exported.
 - `WDG_REDACTION_MODE=off` keeps original text for local debugging workflows.
 - Extend the matching vocabulary with `WDG_REDACT_TERMS` to include environment-specific secret markers.
+
+## OTLP export
+
+Copy `config/exporters.example.json` to the path selected by `WDG_EXPORTERS_CONFIG_PATH`, enable a profile, and run `kujo run --interpreter export_worker.kujo` once or with `--watch`. Profiles are isolated by durable queue/checkpoint state; optional destination failure never changes proxy success. Remote endpoints require HTTPS. Loopback HTTP is accepted for local collectors, while private-network HTTPS requires the profile's explicit `allow_private_network` opt-in.
+
+`encoding: "protobuf"` is the recommended OTLP/HTTP transport and sends `application/x-protobuf`; it requires Kujo 1.2.2 or newer for binary request/response bodies. `encoding: "json"` remains the compatibility default when the field is omitted. Mapping profiles are independently pinned as `otel.base.v1`, `otel.genai.v1`, or `openinference.v1`. Grafana/Tempo, Datadog, Honeycomb, Phoenix, Langfuse, and other compatible destinations should normally receive these profiles through their OTLP endpoint or an OpenTelemetry Collector, not a destination-specific Watchdog trace client.
+
+Exporter credentials never belong in the profile. Map a header to an environment-variable name with `headers_from_env`, for example `{"Authorization":"WATCHDOG_OTLP_AUTH"}`, then set that environment variable only in the worker process. The worker caps batches at 256 records and 512 KiB, retries bounded transient failures, pauses on authentication rejection, expires old queue entries, and retains bounded dead-letter metadata without raw export payloads.
 
 ## Rate limiting
 

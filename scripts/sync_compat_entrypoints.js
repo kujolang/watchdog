@@ -12,6 +12,7 @@ const ENTRYPOINTS = [
 	{ src: 'src/telemetry_repository.kujo', root: 'telemetry_repository.kujo' },
 	{ src: 'src/telemetry_delivery.kujo', root: 'telemetry_delivery.kujo' },
 	{ src: 'src/telemetry_otlp.kujo', root: 'telemetry_otlp.kujo' },
+	{ src: 'src/telemetry_otlp_protobuf.kujo', root: 'telemetry_otlp_protobuf.kujo' },
 	{ src: 'src/export_worker.kujo', root: 'export_worker.kujo' },
 	{ src: 'src/telemetry_otlp_ingest.kujo', root: 'telemetry_otlp_ingest.kujo' },
 	{ src: 'src/telemetry_native_adapter.kujo', root: 'telemetry_native_adapter.kujo' },

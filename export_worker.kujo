@@ -4,6 +4,7 @@
 from watchdog_shared import watchdog_ensure_schema
 from telemetry_delivery import watchdog_delivery_load_profiles
 from telemetry_otlp import watchdog_otlp_map
+from telemetry_otlp_protobuf import watchdog_otlp_protobuf_encode, watchdog_otlp_protobuf_rejected_spans
 
 func worker_env(key, fallback_value) {
 	value := env(key)
@@ -40,8 +41,8 @@ func worker_endpoint_allowed(endpoint) {
 	return false
 }
 
-func worker_profile_headers(profile) {
-	headers := {"Content-Type": "application/json", "User-Agent": "kujo-watchdog-exporter/1"}
+func worker_profile_headers(profile, content_type) {
+	headers := {"Content-Type": content_type, "User-Agent": "kujo-watchdog-exporter/1"}
 	header_env := worker_get(profile, "headers_from_env", {})
 	if type(header_env) != "dict" { return {"ok": true, "headers": headers, "error": ""} }
 	for header_name in keys(header_env) {
@@ -146,7 +147,14 @@ func worker_send_profile(db, profile) {
 		worker_mark_state(db, profile_id, "paused", false, "endpoint must use HTTPS or explicit loopback HTTP")
 		return {"profile": profile_id, "status": "paused", "records": 0}
 	}
-	header_result := worker_profile_headers(profile)
+	encoding := to_lower(trim(to_string(worker_get(profile, "encoding", "json"))))
+	if encoding != "json" && encoding != "protobuf" {
+		worker_mark_state(db, profile_id, "paused", false, "encoding must be json or protobuf")
+		return {"profile": profile_id, "status": "paused", "records": 0}
+	}
+	content_type := "application/json"
+	if encoding == "protobuf" { content_type = "application/x-protobuf" }
+	header_result := worker_profile_headers(profile, content_type)
 	if header_result["ok"] == false {
 		worker_mark_state(db, profile_id, "paused", false, header_result["error"])
 		return {"profile": profile_id, "status": "paused", "records": 0}
@@ -168,7 +176,9 @@ func worker_send_profile(db, profile) {
 		try { parsed = parse_json(row["canonical_json"]) } except err { parsed = null }
 		if type(parsed) == "dict" {
 			candidate := push(records, parsed)
-			candidate_payload := to_json(watchdog_otlp_map(candidate, to_string(worker_get(profile, "mapping_profile", "otel.genai.v1"))))
+			candidate_map := watchdog_otlp_map(candidate, to_string(worker_get(profile, "mapping_profile", "otel.genai.v1")))
+			candidate_payload := to_json(candidate_map)
+			if encoding == "protobuf" { candidate_payload = watchdog_otlp_protobuf_encode(candidate_map) }
 			if len(candidate_payload) <= 524288 {
 				records = candidate
 				delivery_rows = push(delivery_rows, row)
@@ -179,7 +189,13 @@ func worker_send_profile(db, profile) {
 		worker_mark_dead(db, [rows[0]], profile_id, 0, "mapped payload exceeds 512 KiB or record is malformed", "")
 		return {"profile": profile_id, "status": "dead", "records": 1}
 	}
-	payload := to_json(watchdog_otlp_map(records, to_string(worker_get(profile, "mapping_profile", "otel.genai.v1"))))
+	mapped_payload := watchdog_otlp_map(records, to_string(worker_get(profile, "mapping_profile", "otel.genai.v1")))
+	payload := to_json(mapped_payload)
+	if encoding == "protobuf" { payload = watchdog_otlp_protobuf_encode(mapped_payload) }
+	if encoding == "protobuf" && type(payload) != "bytes" {
+		worker_mark_dead(db, delivery_rows, profile_id, 0, "protobuf encoder did not return bytes", "")
+		return {"profile": profile_id, "status": "dead", "records": len(delivery_rows), "payload_type": type(payload)}
+	}
 	allow_private_network := worker_get(profile, "allow_private_network", false) == true
 	destination_policy := "deny_private"
 	pin_dns := true
@@ -196,11 +212,14 @@ func worker_send_profile(db, profile) {
 			headers := worker_get(response, "_headers", worker_get(response, "headers", {}))
 			if status >= 200 && status < 300 {
 				partial := false
-				try {
+				if encoding == "protobuf" {
+					response_bytes := worker_get(response, "_body_bytes", bytes([]))
+					partial = watchdog_otlp_protobuf_rejected_spans(response_bytes) != 0
+				} else { try {
 					parsed_body := parse_json(body)
 					partial_success := worker_get(parsed_body, "partialSuccess", {})
 					partial = worker_int(worker_get(partial_success, "rejectedSpans", 0), 0, 0, 1000000) > 0
-				} except err {}
+				} except err {} }
 				if partial {
 					worker_mark_retry(db, delivery_rows, profile_id, status, "OTLP partial success did not identify rejected records", "", max_attempts, false)
 					return {"profile": profile_id, "status": "retry", "records": len(delivery_rows)}
@@ -216,7 +235,9 @@ func worker_send_profile(db, profile) {
 				worker_mark_retry(db, delivery_rows, profile_id, status, "retryable destination response", worker_header(headers, "Retry-After"), max_attempts, false)
 				return {"profile": profile_id, "status": "retry", "records": len(delivery_rows)}
 			}
-			worker_mark_dead(db, delivery_rows, profile_id, status, "permanent destination rejection", sha256(payload))
+			payload_hash_input := payload
+			if type(payload) == "bytes" { payload_hash_input = encode_base64(payload) }
+			worker_mark_dead(db, delivery_rows, profile_id, status, "permanent destination rejection", sha256(payload_hash_input))
 			return {"profile": profile_id, "status": "dead", "records": len(delivery_rows)}
 		}
 		case Err(error): {

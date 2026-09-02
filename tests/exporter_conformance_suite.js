@@ -15,18 +15,20 @@ const configPath = path.join(tempDir, 'exporters.json');
 const watchdogPort = 17728;
 const successPort = 17729;
 const retryPort = 17730;
+const protobufPort = 17732;
 
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
-function createCollector(port, status) {
+function createCollector(port, status, protobuf = false) {
 	const received = [];
 	const server = http.createServer((req, res) => {
-		let body = '';
-		req.on('data', (chunk) => { body += chunk; });
+		const chunks = [];
+		req.on('data', (chunk) => { chunks.push(chunk); });
 		req.on('end', () => {
+			const body = Buffer.concat(chunks);
 			received.push({method: req.method, url: req.url, headers: req.headers, body});
-			res.writeHead(status, {'Content-Type': 'application/json', ...(status === 429 ? {'Retry-After': '1'} : {})});
-			res.end(status === 200 ? '{}' : JSON.stringify({error: 'rate limited'}));
+			res.writeHead(status, {'Content-Type': protobuf ? 'application/x-protobuf' : 'application/json', ...(status === 429 ? {'Retry-After': '1'} : {})});
+			res.end(status === 200 ? (protobuf ? Buffer.alloc(0) : '{}') : JSON.stringify({error: 'rate limited'}));
 		});
 	});
 	return new Promise((resolve, reject) => {
@@ -91,12 +93,15 @@ async function run() {
 	let watchdog;
 	let successCollector;
 	let retryCollector;
+	let protobufCollector;
 	try {
 		successCollector = await createCollector(successPort, 200);
 		retryCollector = await createCollector(retryPort, 429);
+		protobufCollector = await createCollector(protobufPort, 200, true);
 		fs.writeFileSync(configPath, JSON.stringify({schema_version: 'watchdog.exporters.v1', exporters: [
 			{id: 'success', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${successPort}/v1/traces`, mapping_profile: 'openinference.v1', headers_from_env: {Authorization: 'WDG_TEST_OTLP_AUTH'}, batch_records: 32, timeout_seconds: 3, max_attempts: 3},
 			{id: 'retry', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${retryPort}/v1/traces`, mapping_profile: 'otel.genai.v1', batch_records: 32, timeout_seconds: 3, max_attempts: 3},
+			{id: 'protobuf', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${protobufPort}/v1/traces`, mapping_profile: 'otel.genai.v1', encoding: 'protobuf', batch_records: 32, timeout_seconds: 3, max_attempts: 3},
 			{id: 'expired', type: 'otlp_http', enabled: true, endpoint: 'http://127.0.0.1:17731/v1/traces', mapping_profile: 'otel.genai.v1', batch_records: 32, timeout_seconds: 1, max_attempts: 3, max_queue_age_seconds: 60},
 		]}));
 		watchdog = await startWatchdog();
@@ -116,13 +121,19 @@ async function run() {
 		assert.match(workerOutput, /"profile":"expired"[^}]*"status":"idle"/);
 		assert.strictEqual(successCollector.received.length, 1, 'success collector delivery count drift');
 		assert.strictEqual(retryCollector.received.length, 1, 'retry collector delivery count drift');
+		assert.strictEqual(protobufCollector.received.length, 1, 'protobuf collector delivery count drift');
 		const delivered = successCollector.received[0];
 		assert.strictEqual(delivered.method, 'POST');
 		assert.strictEqual(delivered.url, '/v1/traces');
 		assert.strictEqual(delivered.headers.authorization, 'Bearer exporter-secret-canary');
-		assert.ok(JSON.parse(delivered.body).resourceSpans, 'OTLP request shape missing resourceSpans');
-		assert.ok(delivered.body.includes('openinference.span.kind'), 'OpenInference mapping profile was not applied');
-		assert.ok(!delivered.body.includes('export-content-canary'), 'exporter bypassed authoritative content policy');
+		assert.ok(JSON.parse(delivered.body.toString()).resourceSpans, 'OTLP request shape missing resourceSpans');
+		assert.ok(delivered.body.includes(Buffer.from('openinference.span.kind')), 'OpenInference mapping profile was not applied');
+		assert.ok(!delivered.body.includes(Buffer.from('export-content-canary')), 'exporter bypassed authoritative content policy');
+		const protobufDelivery = protobufCollector.received[0];
+		assert.strictEqual(protobufDelivery.headers['content-type'], 'application/x-protobuf');
+		assert.strictEqual(protobufDelivery.body[0], 0x0a, `protobuf request must start with resource_spans field; bytes=${protobufDelivery.body.length}; worker=${workerOutput}`);
+		assert.ok(protobufDelivery.body.includes(Buffer.from('gen_ai.usage.input_tokens')), 'protobuf GenAI mapping was not applied');
+		assert.ok(!protobufDelivery.body.includes(Buffer.from('export-content-canary')), 'protobuf exporter bypassed authoritative content policy');
 		assert.ok(!workerOutput.includes('exporter-secret-canary'), 'worker output leaked exporter credential');
 
 		const statusResponse = await request('GET', '/api/telemetry/v2/export-status');
@@ -130,6 +141,7 @@ async function run() {
 		const rows = JSON.parse(statusResponse.body).data.deliveries;
 		assert.ok(rows.some((row) => row.profile_id === 'success' && row.status === 'sent' && row.records === 1));
 		assert.ok(rows.some((row) => row.profile_id === 'retry' && row.status === 'retry' && row.records === 1));
+		assert.ok(rows.some((row) => row.profile_id === 'protobuf' && row.status === 'sent' && row.records === 1));
 		assert.ok(rows.some((row) => row.profile_id === 'expired' && row.status === 'dropped' && row.records === 1));
 	} catch (error) {
 		if (watchdog) error.stack += `\nWatchdog output:\n${watchdog.output().slice(-4000)}`;
@@ -142,6 +154,7 @@ async function run() {
 		}
 		await closeServer(successCollector && successCollector.server);
 		await closeServer(retryCollector && retryCollector.server);
+		await closeServer(protobufCollector && protobufCollector.server);
 		fs.rmSync(tempDir, {recursive: true, force: true});
 	}
 }
