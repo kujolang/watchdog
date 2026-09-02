@@ -123,7 +123,9 @@ func repo_semantic_error(record) {
 		"watchdog.fallback.dimension": ["provider", "model", "account_route", "region", "strategy", "unknown"],
 		"watchdog.fallback.reason_code": ["rate_limit", "timeout", "transport", "provider_error", "invalid_response", "capacity", "policy", "operator", "quality", "unknown"],
 		"watchdog.recovery.outcome": ["succeeded", "failed", "partial", "unknown"],
-		"watchdog.outcome.code": ["success", "error", "cancelled", "timeout", "denied", "partial", "unknown"]
+		"watchdog.outcome.code": ["success", "error", "cancelled", "timeout", "denied", "partial", "unknown"],
+		"watchdog.timing.source": ["producer_clock", "watchdog_proxy_clock", "provider_reported", "unavailable_buffered_transport", "unknown"],
+		"watchdog.first_output.unit": ["token", "content_delta", "byte", "chunk", "unknown"]
 	}
 	for key in keys(enums) {
 		if has_key(attributes, key) && repo_in_enum(attributes[key], enums[key]) == false { return "invalid enum for " + key }
@@ -131,6 +133,24 @@ func repo_semantic_error(record) {
 	if has_key(attributes, "watchdog.retry.reason_code") && repo_has_relation(references, "retries") == false { return "retry evidence requires a retries reference" }
 	if has_key(attributes, "watchdog.fallback.dimension") && repo_has_relation(references, "fallback_from") == false { return "fallback evidence requires a fallback_from reference" }
 	if repo_text(repo_get(record, "name", ""), 160) == "watchdog.operation.recovered" && repo_has_relation(references, "recovers") == false { return "recovery evidence requires a recovers reference" }
+	timing_fields := ["watchdog.time_to_first_output_ms", "watchdog.output_generation_duration_ms", "watchdog.output_tokens_per_second"]
+	for field in timing_fields {
+		if has_key(attributes, field) && type(attributes[field]) != "null" {
+			value := 0.0
+			try { value = parse_float(to_string(attributes[field])) } except err { return field + " must be a non-negative number or null" }
+			if value < 0.0 { return field + " must be a non-negative number or null" }
+		}
+	}
+	if repo_get(attributes, "watchdog.timing.source", "") == "unavailable_buffered_transport" {
+		for field in timing_fields { if has_key(attributes, field) && type(attributes[field]) != "null" { return "buffered transport timing metrics must be null" } }
+	}
+	if has_key(attributes, "watchdog.output_tokens_per_second") && type(attributes["watchdog.output_tokens_per_second"]) != "null" {
+		duration := repo_get(attributes, "watchdog.output_generation_duration_ms", null)
+		usage := repo_get(record, "usage", null)
+		output_tokens := null
+		if type(usage) == "dict" { output_tokens = repo_get(usage, "output_tokens", null) }
+		if type(duration) == "null" || type(output_tokens) == "null" || parse_float(to_string(duration)) <= 0.0 || parse_float(to_string(output_tokens)) <= 0.0 { return "throughput requires positive output tokens and generation duration" }
+	}
 	return ""
 }
 
@@ -304,7 +324,7 @@ func repo_insert_batch_rows(db, batch) {
 		source := repo_get(record, "source", {})
 		terminal_outcome := null
 		if repo_projection(record, "watchdog.outcome.terminal") == true { terminal_outcome = repo_nullable_text(repo_projection(record, "watchdog.outcome.code"), 20) }
-		db_execute(db, "INSERT INTO telemetry_records_v2 (batch_dbid, producer_name, record_id, record_type, trace_id, span_id, parent_span_id, observed_at, started_at, ended_at, kind, name, status, source_json, references_json, attributes_json, usage_json, costs_json, error_json, content_json, privacy_json, canonical_json, canonical_sha256, logical_request_id, attempt_number, retry_of_request_id, terminal_outcome, application_name, harness_name, instrumentation_name, instrumentation_version, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [batch_dbid, producer_name, record_id, repo_text(record["record_type"], 20), repo_text(record["trace_id"], 32), repo_nullable_text(repo_get(record, "span_id", null), 16), repo_nullable_text(repo_get(record, "parent_span_id", null), 16), repo_text(record["observed_at"], 80), repo_nullable_text(repo_get(record, "started_at", null), 80), repo_nullable_text(repo_get(record, "ended_at", null), 80), repo_nullable_text(repo_get(record, "kind", null), 40), repo_nullable_text(repo_get(record, "name", null), 160), repo_text(repo_get(record, "status", "unset"), 20), to_json(source), to_json(references), to_json(repo_get(record, "attributes", {})), repo_nullable_json(repo_get(record, "usage", null)), to_json(repo_get(record, "costs", [])), repo_nullable_json(repo_get(record, "error", null)), to_json(repo_get(record, "content", [])), to_json(repo_get(record, "privacy", {})), canonical_json, repo_record_hash(record), repo_nullable_text(repo_projection(record, "watchdog.logical_request_id"), 160), repo_projection(record, "watchdog.attempt.number"), repo_relation_id(references, "retries"), terminal_outcome, repo_nullable_text(repo_get(source, "application.name", null), 80), repo_nullable_text(repo_get(source, "harness.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.version", null), 40), received_at])
+		db_execute(db, "INSERT INTO telemetry_records_v2 (batch_dbid, producer_name, record_id, record_type, trace_id, span_id, parent_span_id, observed_at, started_at, ended_at, kind, name, status, source_json, references_json, attributes_json, usage_json, costs_json, error_json, content_json, privacy_json, canonical_json, canonical_sha256, logical_request_id, attempt_number, retry_of_request_id, terminal_outcome, time_to_first_output_ms, output_generation_duration_ms, output_tokens_per_second, application_name, harness_name, instrumentation_name, instrumentation_version, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [batch_dbid, producer_name, record_id, repo_text(record["record_type"], 20), repo_text(record["trace_id"], 32), repo_nullable_text(repo_get(record, "span_id", null), 16), repo_nullable_text(repo_get(record, "parent_span_id", null), 16), repo_text(record["observed_at"], 80), repo_nullable_text(repo_get(record, "started_at", null), 80), repo_nullable_text(repo_get(record, "ended_at", null), 80), repo_nullable_text(repo_get(record, "kind", null), 40), repo_nullable_text(repo_get(record, "name", null), 160), repo_text(repo_get(record, "status", "unset"), 20), to_json(source), to_json(references), to_json(repo_get(record, "attributes", {})), repo_nullable_json(repo_get(record, "usage", null)), to_json(repo_get(record, "costs", [])), repo_nullable_json(repo_get(record, "error", null)), to_json(repo_get(record, "content", [])), to_json(repo_get(record, "privacy", {})), canonical_json, repo_record_hash(record), repo_nullable_text(repo_projection(record, "watchdog.logical_request_id"), 160), repo_projection(record, "watchdog.attempt.number"), repo_relation_id(references, "retries"), terminal_outcome, repo_projection(record, "watchdog.time_to_first_output_ms"), repo_projection(record, "watchdog.output_generation_duration_ms"), repo_projection(record, "watchdog.output_tokens_per_second"), repo_nullable_text(repo_get(source, "application.name", null), 80), repo_nullable_text(repo_get(source, "harness.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.version", null), 40), received_at])
 		rows := db_query(db, "SELECT id FROM telemetry_records_v2 WHERE producer_name = ? AND record_id = ?", [producer_name, record_id])
 		if len(rows) > 0 {
 			record_dbid := rows[0]["id"]

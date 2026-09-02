@@ -480,6 +480,12 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.ok(retryAttempt?.references.some(ref => ref.id === 'provider-request-json-1' && ref.relation === 'fallback_from'), 'explicit fallback relation missing');
 		assert.strictEqual(retryAttempt.attributes['watchdog.fallback.dimension'], 'model');
 		assert.ok(canonicalRows.some(row => row.name === 'watchdog.operation.completed' && row.attributes?.['watchdog.outcome.terminal'] === true), 'explicit proxy terminal outcome missing');
+		const bufferedStream = canonicalRows.find(row => row.kind === 'model' && row.attributes?.['watchdog.timing.source'] === 'unavailable_buffered_transport');
+		assert.ok(bufferedStream, 'buffered SSE proxy timing unavailability was not explicit');
+		assert.strictEqual(bufferedStream.attributes['watchdog.response.streamed'], true);
+		assert.strictEqual(bufferedStream.attributes['watchdog.time_to_first_output_ms'], null, 'buffered proxy must not fabricate first-output timing');
+		assert.strictEqual(bufferedStream.attributes['watchdog.output_generation_duration_ms'], null);
+		assert.strictEqual(bufferedStream.attributes['watchdog.output_tokens_per_second'], null);
 		assert.ok(requests.some(row => row.project_id === 'project-not-source-app' && row.source_app === 'watchdog-proxy'), 'project identity must not overload legacy source_app');
 		console.log('proxy_integration_stub_suite: passthrough done');
 	} finally {

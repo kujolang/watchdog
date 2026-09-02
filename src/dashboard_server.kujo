@@ -1668,6 +1668,31 @@ func canonical_policy_attributes(value) {
 	return clean
 }
 
+func canonical_policy_timing(record, attributes) {
+	if type(attributes) != "dict" { return {} }
+	timing_source := to_string(safe_dict_get(attributes, "watchdog.timing.source", ""))
+	if timing_source == "unavailable_buffered_transport" {
+		attributes["watchdog.time_to_first_output_ms"] = null
+		attributes["watchdog.output_generation_duration_ms"] = null
+		attributes["watchdog.output_tokens_per_second"] = null
+		return attributes
+	}
+	duration := safe_dict_get(attributes, "watchdog.output_generation_duration_ms", null)
+	usage := safe_dict_get(record, "usage", null)
+	output_tokens := null
+	if type(usage) == "dict" { output_tokens = safe_dict_get(usage, "output_tokens", null) }
+	if type(duration) != "null" && type(output_tokens) != "null" {
+		duration_number := to_float_or_zero(duration)
+		output_number := to_float_or_zero(output_tokens)
+		if duration_number > 0.0 && output_number > 0.0 {
+			attributes["watchdog.output_tokens_per_second"] = output_number * 1000.0 / duration_number
+		} else {
+			attributes["watchdog.output_tokens_per_second"] = null
+		}
+	}
+	return attributes
+}
+
 func canonical_policy_references(value) {
 	clean := []
 	if type(value) != "array" { return clean }
@@ -1730,6 +1755,7 @@ func canonical_policy_error(value) {
 }
 
 func canonical_policy_record(record) {
+	clean_attributes := canonical_policy_timing(record, canonical_policy_attributes(safe_dict_get(record, "attributes", {})))
 	return {
 		"record_id": truncate_str(trim(to_string(safe_dict_get(record, "record_id", ""))), 160),
 		"record_type": truncate_str(trim(to_string(safe_dict_get(record, "record_type", ""))), 20),
@@ -1744,7 +1770,7 @@ func canonical_policy_record(record) {
 		"status": truncate_str(trim(to_string(safe_dict_get(record, "status", "unset"))), 20),
 		"source": canonical_policy_scalar_map(safe_dict_get(record, "source", {}), 16),
 		"references": canonical_policy_references(safe_dict_get(record, "references", [])),
-		"attributes": canonical_policy_attributes(safe_dict_get(record, "attributes", {})),
+		"attributes": clean_attributes,
 		"usage": canonical_policy_usage(safe_dict_get(record, "usage", null)),
 		"costs": canonical_policy_costs(safe_dict_get(record, "costs", [])),
 		"error": canonical_policy_error(safe_dict_get(record, "error", null)),
@@ -2045,7 +2071,8 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 	if fallback_from_request_id != "" { references = push(references, {"type": "request", "id": fallback_from_request_id, "namespace": "watchdog-proxy", "relation": "fallback_from"}) }
 	outcome_code := "error"
 	if status == "success" { outcome_code = "success" }
-	canonical_attributes := {"gen_ai.provider.name": provider, "gen_ai.request.model": model_name, "http.response.status_code": status_code, "watchdog.transport": "openai-compatible-proxy", "watchdog.duration_ms": duration_ms, "watchdog.logical_request_id": logical_request_id, "watchdog.attempt.number": safe_dict_get(observability, "attempt_number", 1)}
+	canonical_attributes := {"gen_ai.provider.name": provider, "gen_ai.request.model": model_name, "http.response.status_code": status_code, "watchdog.transport": "openai-compatible-proxy", "watchdog.duration_ms": duration_ms, "watchdog.logical_request_id": logical_request_id, "watchdog.attempt.number": safe_dict_get(observability, "attempt_number", 1), "watchdog.response.streamed": safe_dict_get(observability, "response_streamed", false), "watchdog.timing.source": safe_dict_get(observability, "timing_source", "unknown"), "watchdog.time_to_first_output_ms": null, "watchdog.output_generation_duration_ms": null, "watchdog.output_tokens_per_second": null}
+	if safe_dict_get(observability, "output_partial", false) == true { canonical_attributes["watchdog.output.partial"] = true }
 	retry_reason_code := to_string(safe_dict_get(observability, "retry_reason_code", ""))
 	if retry_reason_code != "" { canonical_attributes["watchdog.retry.reason_code"] = retry_reason_code }
 	retry_decision_source := to_string(safe_dict_get(observability, "retry_decision_source", ""))
@@ -2864,6 +2891,9 @@ func resolve_proxy_observability(req) {
 		"fallback_from_request_id": truncate_str(trim(get_header(headers, "X-Watchdog-Fallback-From-Request-Id")), 160),
 		"fallback_dimension": to_lower(truncate_str(trim(get_header(headers, "X-Watchdog-Fallback-Dimension")), 40)),
 		"fallback_reason_code": to_lower(truncate_str(trim(get_header(headers, "X-Watchdog-Fallback-Reason-Code")), 40)),
+		"response_streamed": false,
+		"timing_source": "unknown",
+		"output_partial": false,
 		"error": ""
 	}
 	attempt_text := trim(get_header(headers, "X-Watchdog-Attempt-Number"))
@@ -3318,7 +3348,10 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 			response_summary := ""
 			usage := {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
-			if decoder_kind == "chat_completions" && contains(to_lower(content_type), "text/event-stream") {
+			is_sse_response := decoder_kind == "chat_completions" && contains(to_lower(content_type), "text/event-stream")
+			if is_sse_response {
+				proxy_observability["response_streamed"] = true
+				proxy_observability["timing_source"] = "unavailable_buffered_transport"
 				events := parse_stream_events(body_text)
 				request_id := request_id_from_stream_events(events)
 				usage := usage_from_stream_events(events)
@@ -3349,6 +3382,7 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 
 			if status_code < 200 || status_code > 299 {
 				status_label := "error"
+				if is_sse_response && len(trim(body_text)) > 0 { proxy_observability["output_partial"] = true }
 				if error_code == "" {
 					error_code := "http_error"
 					error_message := "HTTP " + to_string(status_code)

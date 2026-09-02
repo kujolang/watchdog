@@ -34,4 +34,28 @@ invalid["records"] = [bad_record]
 invalid_result := watchdog_telemetry_repository_validate(invalid)
 assert(invalid_result["ok"] == false && invalid_result["error_code"] == "invalid_semantics", "invalid semantic enum was accepted")
 
+timing_batch := parse_json(read_file("tests/fixtures/telemetry-v2/timing-context-billing.json"))
+timing_validation := watchdog_telemetry_repository_validate(timing_batch)
+assert(timing_validation["ok"], "timing fixture invalid: " + timing_validation["error"])
+timing_insert := watchdog_telemetry_repository_insert(db, timing_batch)
+assert(timing_insert["ok"] && timing_insert["records"] == 4, "timing fixture did not persist")
+timing_rows := db_query(db, "SELECT record_id, time_to_first_output_ms, output_generation_duration_ms, output_tokens_per_second FROM telemetry_records_v2 WHERE producer_name = 'fixture-timing' ORDER BY record_id", [])
+assert(len(timing_rows) == 4, "timing projection count drift")
+valid_timing := db_query(db, "SELECT time_to_first_output_ms, output_generation_duration_ms, output_tokens_per_second FROM telemetry_records_v2 WHERE record_id = 'timing:producer:valid'", [])[0]
+assert(valid_timing["time_to_first_output_ms"] == 120 && valid_timing["output_generation_duration_ms"] == 2000 && valid_timing["output_tokens_per_second"] == 5.0, "producer timing projection drift")
+buffered_timing := db_query(db, "SELECT time_to_first_output_ms, output_generation_duration_ms, output_tokens_per_second FROM telemetry_records_v2 WHERE record_id = 'timing:proxy:buffered'", [])[0]
+assert(type(buffered_timing["time_to_first_output_ms"]) == "null" && type(buffered_timing["output_tokens_per_second"]) == "null", "buffered timing became a fabricated value")
+partial_record := db_query(db, "SELECT canonical_json FROM telemetry_records_v2 WHERE record_id = 'timing:producer:partial-error'", [])[0]
+assert(contains(partial_record["canonical_json"], "watchdog.output.partial") && contains(partial_record["canonical_json"], "StreamError"), "partial stream evidence was not preserved")
+
+negative := parse_json(to_json(timing_batch))
+negative["batch_id"] = "fixture:negative-timing"
+negative_record := negative["records"][0]
+negative_attributes := negative_record["attributes"]
+negative_attributes["watchdog.time_to_first_output_ms"] = -1
+negative_record["attributes"] = negative_attributes
+negative["records"] = [negative_record]
+negative_result := watchdog_telemetry_repository_validate(negative)
+assert(negative_result["ok"] == false && negative_result["error_code"] == "invalid_semantics", "negative timing was accepted")
+
 print("telemetry_observability_semantics_check: PASS")

@@ -1,0 +1,41 @@
+{
+  "schema_version": "watchdog.telemetry.v2",
+  "batch_id": "fixture:timing-context-billing:1",
+  "sent_at": "2026-09-02T13:00:00Z",
+  "producer": {"name": "fixture-timing", "version": "1.0.0", "adapter_id": "fixture", "adapter_version": "1.0.0", "original_schema": null},
+  "records": [
+    {
+      "record_id": "timing:producer:valid", "record_type": "span", "trace_id": "3323456789abcdef0123456789abcdef", "span_id": "3323456789abc001", "parent_span_id": null,
+      "observed_at": "2026-09-02T13:00:03Z", "started_at": "2026-09-02T13:00:00Z", "ended_at": "2026-09-02T13:00:03Z", "kind": "model", "name": "producer timed output", "status": "ok",
+      "source": {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": "timing-fixture", "instrumentation.name": "fixture-hooks", "instrumentation.version": "1.0.0"},
+      "references": [],
+      "attributes": {"watchdog.response.streamed": true, "watchdog.timing.source": "producer_clock", "watchdog.first_output.unit": "content_delta", "watchdog.time_to_first_output_ms": 120, "watchdog.output_generation_duration_ms": 2000, "watchdog.output_tokens_per_second": 5.0},
+      "usage": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "usage_source": "producer", "total_semantics": "input_plus_output", "provider_usage": {}},
+      "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+    },
+    {
+      "record_id": "timing:producer:zero-output", "record_type": "span", "trace_id": "3323456789abcdef0123456789abcdef", "span_id": "3323456789abc002", "parent_span_id": null,
+      "observed_at": "2026-09-02T13:00:04Z", "started_at": "2026-09-02T13:00:04Z", "ended_at": "2026-09-02T13:00:04Z", "kind": "model", "name": "zero output", "status": "ok",
+      "source": {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": "timing-fixture"}, "references": [],
+      "attributes": {"watchdog.response.streamed": true, "watchdog.timing.source": "producer_clock", "watchdog.first_output.unit": "token", "watchdog.time_to_first_output_ms": 0, "watchdog.output_generation_duration_ms": 0, "watchdog.output_tokens_per_second": null},
+      "usage": {"input_tokens": 20, "output_tokens": 0, "total_tokens": 20, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "usage_source": "producer", "total_semantics": "input_plus_output", "provider_usage": {}},
+      "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+    },
+    {
+      "record_id": "timing:proxy:buffered", "record_type": "span", "trace_id": "3323456789abcdef0123456789abcdef", "span_id": "3323456789abc003", "parent_span_id": null,
+      "observed_at": "2026-09-02T13:00:05Z", "started_at": "2026-09-02T13:00:04Z", "ended_at": "2026-09-02T13:00:05Z", "kind": "model", "name": "buffered output", "status": "ok",
+      "source": {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": "timing-fixture"}, "references": [],
+      "attributes": {"watchdog.response.streamed": true, "watchdog.timing.source": "unavailable_buffered_transport", "watchdog.time_to_first_output_ms": null, "watchdog.output_generation_duration_ms": null, "watchdog.output_tokens_per_second": null},
+      "usage": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "usage_source": "provider-response", "total_semantics": "input_plus_output", "provider_usage": {}},
+      "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+    },
+    {
+      "record_id": "timing:producer:partial-error", "record_type": "span", "trace_id": "3323456789abcdef0123456789abcdef", "span_id": "3323456789abc004", "parent_span_id": null,
+      "observed_at": "2026-09-02T13:00:06Z", "started_at": "2026-09-02T13:00:04Z", "ended_at": "2026-09-02T13:00:06Z", "kind": "model", "name": "partial output failure", "status": "error",
+      "source": {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": "timing-fixture"}, "references": [],
+      "attributes": {"watchdog.response.streamed": true, "watchdog.timing.source": "producer_clock", "watchdog.first_output.unit": "content_delta", "watchdog.time_to_first_output_ms": 200, "watchdog.output_generation_duration_ms": 1000, "watchdog.output_tokens_per_second": 4.0, "watchdog.output.partial": true},
+      "usage": {"input_tokens": 20, "output_tokens": 4, "total_tokens": 24, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "usage_source": "producer", "total_semantics": "input_plus_output", "provider_usage": {}},
+      "costs": [], "error": {"class": "StreamError", "category": "transport", "code": "disconnect", "retryable": true, "message": null}, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+    }
+  ]
+}
