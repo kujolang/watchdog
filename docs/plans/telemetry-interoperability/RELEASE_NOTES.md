@@ -6,6 +6,8 @@ The v2 interoperability layer is experimental. Local canonical intake, guarded
 AI-trace OTLP intake, JSONL v2, durable isolated export queues, OTLP/HTTP
 Protobuf export, OpenTelemetry GenAI/OpenInference mappings, Kujo/Pi/Agents SDK
 producers, the MCP helper, and the Claude Code hook adapter are implemented.
+Provider-neutral AI SDK, Dispatch, Relay, Eval, RunLedger correlation, and the
+canonical-v2 workflow proof are also implemented in their owning repositories.
 
 Production promotion is blocked by the measured proxy and ingest performance in
 `14-storage-performance-review.md`. In particular, streaming responses are

@@ -41,6 +41,7 @@
 - [x] One Agents SDK/`kujo agent` trace and one Pi trace use the v2 delivery/spool contract; `tests/agents_sdk_shared_client_integration.mjs` proves the shared client offline/flush path and Pi's native suite proves its bounded v2 spool.
 - [x] One external OpenInference/OTel framework trace ingests through the guarded receiver.
 - [x] One external host hook adapter passes content-off and lifecycle fixtures.
+- [x] AI SDK, MCP, Dispatch, Relay, Eval, and RunLedger expose bounded metadata-only projection/correlation contracts without database or exporter ownership; Kujo Workflows proves canonical v2 query/JSONL/export status.
 - [x] Clean checkout build/test, offline fixture suite, schema validation, docs/link checks, additive migration/rollback/restart test, and backup/restore all pass (verified 2026-09-01 with `scripts/verify_telemetry_interoperability.js`).
 - [x] Release notes state supported versions, experimental mappings, known semantic losses, bounds, privacy defaults, and rollback steps.
 

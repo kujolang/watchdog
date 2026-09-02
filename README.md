@@ -608,6 +608,7 @@ Keep root compatibility entrypoints synced from `src/`:
 
 ## Implementation backlog
 
+- Native producer integration contract: [docs/native-producers.md](docs/native-producers.md)
 - Primary execution checklist: [docs/ENTERPRISE_RELEASE_LOOP_CHECKLIST.md](docs/ENTERPRISE_RELEASE_LOOP_CHECKLIST.md)
 - Deployment and hardening runbook: [docs/DEPLOYMENT_HARDENING_RUNBOOK.md](docs/DEPLOYMENT_HARDENING_RUNBOOK.md)
 - Kennel integration guide: [docs/KENNEL_INTEGRATION_GUIDE.md](docs/KENNEL_INTEGRATION_GUIDE.md)
