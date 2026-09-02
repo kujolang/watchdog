@@ -1082,6 +1082,21 @@ func parse_stream_events(sse_text) {
 	return events
 }
 
+func stream_event_has_meaningful_output(event) {
+	if type(event) != "dict" { return false }
+	choices := safe_dict_get(event, "choices", [])
+	if type(choices) != "array" || len(choices) == 0 { return false }
+	choice := choices[0]
+	if type(choice) != "dict" { return false }
+	delta := safe_dict_get(choice, "delta", null)
+	if type(delta) != "dict" { return false }
+	content := safe_dict_get(delta, "content", null)
+	if type(content) == "string" && len(content) > 0 { return true }
+	tool_calls := safe_dict_get(delta, "tool_calls", [])
+	if type(tool_calls) == "array" && len(tool_calls) > 0 { return true }
+	return false
+}
+
 func usage_from_json_data(data) {
 	usage_map := safe_dict_get(data, "usage", {})
 	if type(usage_map) != "dict" {
@@ -2153,7 +2168,9 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 	if fallback_from_request_id != "" { references = push(references, {"type": "request", "id": fallback_from_request_id, "namespace": "watchdog-proxy", "relation": "fallback_from"}) }
 	outcome_code := "error"
 	if status == "success" { outcome_code = "success" }
-	canonical_attributes := {"gen_ai.provider.name": provider, "gen_ai.request.model": model_name, "http.response.status_code": status_code, "watchdog.transport": "openai-compatible-proxy", "watchdog.duration_ms": duration_ms, "watchdog.logical_request_id": logical_request_id, "watchdog.attempt.number": safe_dict_get(observability, "attempt_number", 1), "watchdog.response.streamed": safe_dict_get(observability, "response_streamed", false), "watchdog.timing.source": safe_dict_get(observability, "timing_source", "unknown"), "watchdog.time_to_first_output_ms": null, "watchdog.output_generation_duration_ms": null, "watchdog.output_tokens_per_second": null}
+	canonical_attributes := {"gen_ai.provider.name": provider, "gen_ai.request.model": model_name, "http.response.status_code": status_code, "watchdog.transport": "openai-compatible-proxy", "watchdog.duration_ms": duration_ms, "watchdog.logical_request_id": logical_request_id, "watchdog.attempt.number": safe_dict_get(observability, "attempt_number", 1), "watchdog.response.streamed": safe_dict_get(observability, "response_streamed", false), "watchdog.timing.source": safe_dict_get(observability, "timing_source", "unknown"), "watchdog.time_to_first_output_ms": safe_dict_get(observability, "time_to_first_output_ms", null), "watchdog.output_generation_duration_ms": safe_dict_get(observability, "output_generation_duration_ms", null), "watchdog.output_tokens_per_second": safe_dict_get(observability, "output_tokens_per_second", null)}
+	first_output_unit := trim(to_string(safe_dict_get(observability, "first_output_unit", "")))
+	if first_output_unit != "" { canonical_attributes["watchdog.first_output.unit"] = first_output_unit }
 	# The buffered proxy does not reinterpret response models through the current
 	# catalog. Producers that resolve a limit attach its version at observation time.
 	canonical_attributes["watchdog.context.window_tokens"] = null
@@ -2198,8 +2215,21 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 		"attributes": {"watchdog.outcome.terminal": true, "watchdog.outcome.code": outcome_code, "watchdog.logical_request_id": logical_request_id, "watchdog.attempt.number": safe_dict_get(observability, "attempt_number", 1), "http.response.status_code": status_code},
 		"usage": null, "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
 	}
+	canonical_records := [canonical_record]
+	first_output_ms := safe_dict_get(observability, "time_to_first_output_ms", null)
+	if type(first_output_ms) == "int" || type(first_output_ms) == "float" {
+		first_output_record := {
+			"record_id": "proxy:first-output:" + to_string(request_dbid), "record_type": "event", "trace_id": canonical_trace_id, "span_id": canonical_span_id, "parent_span_id": null,
+			"observed_at": watchdog_telemetry_v2_timestamp(started_at_ms + first_output_ms, ended_at_ms), "started_at": null, "ended_at": null, "kind": null,
+			"name": "watchdog.output.first", "status": "ok", "source": source, "references": references,
+			"attributes": {"watchdog.first_output.unit": safe_dict_get(observability, "first_output_unit", "content_delta"), "watchdog.time_to_first_output_ms": first_output_ms},
+			"usage": null, "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+		}
+		canonical_records = push(canonical_records, first_output_record)
+	}
+	canonical_records = push(canonical_records, terminal_record)
 	try {
-		canonical_write := persist_approved_canonical_batch({"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION, "batch_id": "proxy:" + to_string(request_dbid), "sent_at": canonical_record["observed_at"], "producer": {"name": "watchdog-proxy", "version": "v1", "adapter_id": "watchdog.openai-compatible-proxy", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "openai-compatible"}, "records": [canonical_record, terminal_record]})
+		canonical_write := persist_approved_canonical_batch({"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION, "batch_id": "proxy:" + to_string(request_dbid), "sent_at": canonical_record["observed_at"], "producer": {"name": "watchdog-proxy", "version": "v1", "adapter_id": "watchdog.openai-compatible-proxy", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "openai-compatible"}, "records": canonical_records})
 		if canonical_write["ok"] == false { print("Proxy canonical telemetry validation failed: " + canonical_write["error"]) }
 	} except canonical_err {
 		print("Proxy canonical telemetry write failed: " + to_string(canonical_err))
@@ -2982,6 +3012,10 @@ func resolve_proxy_observability(req) {
 		"fallback_reason_code": to_lower(truncate_str(trim(get_header(headers, "X-Watchdog-Fallback-Reason-Code")), 40)),
 		"response_streamed": false,
 		"timing_source": "unknown",
+		"first_output_unit": "",
+		"time_to_first_output_ms": null,
+		"output_generation_duration_ms": null,
+		"output_tokens_per_second": null,
 		"output_partial": false,
 		"error": ""
 	}
@@ -3353,9 +3387,11 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 
 	prompt_summary := ""
 	model_name := ""
+	stream_requested := false
 	if type(payload_obj) == "dict" {
 		model_name := string_dict_get(payload_obj, "model", "")
 		prompt_summary := safe_prompt_summary(safe_dict_get(payload_obj, "messages", []))
+		if decoder_kind == "chat_completions" && safe_dict_get(payload_obj, "stream", false) == true { stream_requested = true }
 	}
 
 	insert_agent_step_row(session_id, agent_id, "proxy_received", "Received proxy request for " + forwarded_path, {
@@ -3417,6 +3453,134 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		"method": method,
 		"auth_mode": cfg["auth_mode"]
 	})
+
+	if stream_requested {
+		request_options["response_stream"] = true
+		proxy_observability["response_streamed"] = true
+		proxy_observability["timing_source"] = "watchdog_proxy_clock"
+		stream_state := {
+			"buffer": decode_base64(""),
+			"request_id": "",
+			"model": model_name,
+			"finish_reason": "",
+			"response_summary": "",
+			"usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "provider_usage": {}},
+			"status_code": 0,
+			"first_output_at_ms": null,
+			"total_bytes": 0,
+			"finalized": false,
+			"parse_error": ""
+		}
+		stream_result := http_request(upstream_url, request_options, func(stream_event) {
+			event_type := to_string(safe_dict_get(stream_event, "type", ""))
+			observed_at_ms := to_int_or_zero(safe_dict_get(stream_event, "observed_at_ms", current_timestamp()))
+			if event_type == "headers" {
+				stream_state["status_code"] = to_int_or_zero(safe_dict_get(stream_event, "status", 0))
+				return true
+			}
+
+			if event_type == "chunk" {
+				chunk_bytes := safe_dict_get(stream_event, "bytes", decode_base64(""))
+				if type(chunk_bytes) != "bytes" { return false }
+				stream_state["total_bytes"] = to_int_or_zero(safe_dict_get(stream_event, "total_bytes", stream_state["total_bytes"]))
+				stream_state["buffer"] = concat(stream_state["buffer"], chunk_bytes)
+				newline_bytes := decode_base64("Cg==")
+				newline_at := index_of(stream_state["buffer"], newline_bytes)
+				while newline_at >= 0 {
+					line_bytes := slice(stream_state["buffer"], 0, newline_at)
+					stream_state["buffer"] = slice(stream_state["buffer"], newline_at + 1, len(stream_state["buffer"]))
+					line_text := ""
+					try { line_text = trim(decode_base64_utf8(encode_base64(line_bytes))) } except decode_err { stream_state["parse_error"] = "invalid UTF-8 SSE line" }
+					if starts_with(line_text, "data:") {
+						payload_text := trim(substring(line_text, len("data:"), len(line_text)))
+						if payload_text != "" && payload_text != "[DONE]" {
+							parsed := parse_json_safe(payload_text)
+							if parsed["ok"] && type(parsed["data"]) == "dict" {
+								provider_event := parsed["data"]
+								if type(stream_state["first_output_at_ms"]) == "null" && stream_event_has_meaningful_output(provider_event) {
+									stream_state["first_output_at_ms"] = observed_at_ms
+								}
+								next_request_id := request_id_from_stream_events([provider_event])
+								if next_request_id != "" { stream_state["request_id"] = next_request_id }
+								stream_state["model"] = model_from_stream_events([provider_event], stream_state["model"])
+								next_finish_reason := finish_reason_from_stream_events([provider_event])
+								if next_finish_reason != "" { stream_state["finish_reason"] = next_finish_reason }
+								next_usage := usage_from_stream_events([provider_event])
+								if next_usage["input_tokens"] > 0 || next_usage["output_tokens"] > 0 || next_usage["total_tokens"] > 0 { stream_state["usage"] = next_usage }
+								if CONTENT_CAPTURE_MODE == "summaries" {
+									stream_state["response_summary"] = truncate_str(stream_state["response_summary"] + response_summary_from_stream_events([provider_event]), 120)
+								}
+							}
+						}
+					}
+					newline_at = index_of(stream_state["buffer"], newline_bytes)
+				}
+				if len(stream_state["buffer"]) > 65536 { stream_state["parse_error"] = "SSE line exceeds 65536 bytes"; return false }
+				return true
+			}
+
+			if (event_type == "complete" || event_type == "error" || event_type == "cancelled") && stream_state["finalized"] == false {
+				stream_state["finalized"] = true
+				ended_ms := observed_at_ms
+				status_code := stream_state["status_code"]
+				status_label := "success"
+				error_code := ""
+				error_message := ""
+				if status_code < 200 || status_code > 299 { status_label = "error"; error_code = "http_error"; error_message = "HTTP " + to_string(status_code) }
+				if event_type != "complete" {
+					status_label = "error"
+					reason := to_string(safe_dict_get(stream_event, "reason", event_type))
+					error_code = "stream_error"
+					if reason == "downstream_disconnected" { error_code = "client_disconnect" }
+					if reason == "callback_cancelled" { error_code = "stream_cancelled" }
+					error_message = reason
+					if stream_state["total_bytes"] > 0 { proxy_observability["output_partial"] = true }
+				}
+				if stream_state["parse_error"] != "" {
+					status_label = "error"
+					error_code = "invalid_stream"
+					error_message = stream_state["parse_error"]
+					proxy_observability["output_partial"] = true
+				}
+				first_output_at_ms := stream_state["first_output_at_ms"]
+				if type(first_output_at_ms) == "int" || type(first_output_at_ms) == "float" {
+					ttfo_ms := first_output_at_ms - started_ms
+					if ttfo_ms < 0 { ttfo_ms = 0 }
+					generation_ms := ended_ms - first_output_at_ms
+					if generation_ms < 0 { generation_ms = 0 }
+					proxy_observability["first_output_unit"] = "content_delta"
+					proxy_observability["time_to_first_output_ms"] = ttfo_ms
+					proxy_observability["output_generation_duration_ms"] = generation_ms
+					output_tokens := to_int_or_zero(stream_state["usage"]["output_tokens"])
+					if generation_ms > 0 && output_tokens > 0 { proxy_observability["output_tokens_per_second"] = (output_tokens * 1000.0) / generation_ms }
+				}
+				latency_ms := ended_ms - started_ms
+				usage := stream_state["usage"]
+				final_model := stream_state["model"]
+				cost_usd := watchdog_estimate_cost(final_model, usage["input_tokens"] * 1.0, usage["output_tokens"] * 1.0)
+				request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, final_model, stream_state["request_id"], status_label, usage["input_tokens"], usage["output_tokens"], usage["total_tokens"], cost_usd, latency_ms, stream_state["finish_reason"], error_code, error_message, prompt_summary, stream_state["response_summary"])
+				insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, final_model, status_label, status_code, started_ms, ended_ms, usage, proxy_observability)
+				insert_tool_call_row(request_dbid, session_id, "proxy_forward", {"method": method, "path": forwarded_path, "upstream_profile": upstream_profile, "upstream_url": upstream_url}, {"status_code": status_code, "status": status_label, "error_code": error_code}, status_label, latency_ms)
+				insert_agent_step_row(session_id, agent_id, "proxy_completed", "Completed incremental proxy request.", {"status_code": status_code, "status": status_label, "model": final_model, "latency_ms": latency_ms, "decoder": decoder_kind, "request_body_bytes": request_body_bytes, "response_body_bytes": stream_state["total_bytes"], "path": forwarded_path})
+			}
+			return true
+		})
+		match stream_result {
+			case Ok(stream_response): {
+				stream_response := set_header(stream_response, "X-Watchdog-Proxy", "kujo-watchdog")
+				return apply_default_security_headers(stream_response)
+			}
+			case Err(stream_err): {
+				latency_ms := current_timestamp() - started_ms
+				request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "network_error", to_string(stream_err), prompt_summary, "")
+				insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 502, started_ms, current_timestamp(), {}, proxy_observability)
+				return api_error(502, "Upstream streaming request failed: " + to_string(stream_err))
+			}
+			case other_stream_result: {
+				return api_error(502, "Unexpected upstream streaming transport result: " + type(other_stream_result))
+			}
+		}
+	}
 
 	http_result := http_request(upstream_url, request_options)
 	match http_result {
