@@ -1,0 +1,37 @@
+from watchdog_shared import watchdog_ensure_schema
+from telemetry_repository import watchdog_telemetry_repository_insert
+from telemetry_repository import watchdog_telemetry_repository_validate
+
+db_path := env("WDG_TEST_DB_PATH")
+assert(type(db_path) == "string" && trim(db_path) != "", "WDG_TEST_DB_PATH is required")
+db := db_connect("sqlite", db_path)
+watchdog_ensure_schema(db)
+
+batch := parse_json(read_file("tests/fixtures/telemetry-v2/retry-fallback-recovery.json"))
+validation := watchdog_telemetry_repository_validate(batch)
+assert(validation["ok"], "observability fixture invalid: " + validation["error"])
+inserted := watchdog_telemetry_repository_insert(db, batch)
+assert(inserted["ok"] && inserted["records"] == 4, "observability fixture did not persist")
+
+attempts := db_query(db, "SELECT record_id, logical_request_id, attempt_number, retry_of_request_id, application_name, instrumentation_version FROM telemetry_records_v2 WHERE kind = 'model' ORDER BY attempt_number", [])
+assert(len(attempts) == 3, "attempt chain count drift")
+assert(attempts[0]["attempt_number"] == 1 && type(attempts[0]["retry_of_request_id"]) == "null", "first attempt semantics drift")
+assert(attempts[1]["retry_of_request_id"] == "attempt:req-1:1", "second attempt retry link drift")
+assert(attempts[2]["retry_of_request_id"] == "attempt:req-1:2", "third attempt retry link drift")
+assert(attempts[2]["application_name"] == "fixture-app" && attempts[2]["instrumentation_version"] == "1.0.0", "identity projections drift")
+fallback := db_query(db, "SELECT ref_id FROM telemetry_references_v2 WHERE relation = 'fallback_from'", [])
+recovery := db_query(db, "SELECT ref_id FROM telemetry_references_v2 WHERE relation = 'recovers'", [])
+assert(len(fallback) == 1 && fallback[0]["ref_id"] == "attempt:req-1:2", "fallback relation drift")
+assert(len(recovery) == 1 && recovery[0]["ref_id"] == "attempt:req-1:2", "recovery relation drift")
+
+invalid := parse_json(to_json(batch))
+invalid["batch_id"] = "fixture:invalid-semantics"
+bad_record := invalid["records"][1]
+bad_attributes := bad_record["attributes"]
+bad_attributes["watchdog.retry.reason_code"] = "made_up"
+bad_record["attributes"] = bad_attributes
+invalid["records"] = [bad_record]
+invalid_result := watchdog_telemetry_repository_validate(invalid)
+assert(invalid_result["ok"] == false && invalid_result["error_code"] == "invalid_semantics", "invalid semantic enum was accepted")
+
+print("telemetry_observability_semantics_check: PASS")

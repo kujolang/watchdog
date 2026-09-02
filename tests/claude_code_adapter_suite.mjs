@@ -32,6 +32,13 @@ assert.equal(terminal.name, 'watchdog.operation.completed');
 assert.equal(terminal.attributes['watchdog.outcome.terminal'], true);
 assert.equal(terminal.attributes['watchdog.outcome.code'], 'success');
 
+const modelSwitch = createClaudeHookBatch('PostModelSwitch', {...input, hook_event_name: 'PostModelSwitch', tool_use_id: null, from_model: 'model-a', to_model: 'model-b', reason: 'capacity', reason_code: 'capacity', fallback_from_request_id: 'attempt-1'}, now).records[0];
+assert.equal(modelSwitch.attributes['watchdog.fallback.dimension'], 'model');
+assert.equal(modelSwitch.attributes['watchdog.fallback.reason_code'], 'capacity');
+assert.ok(modelSwitch.references.some(ref => ref.relation === 'fallback_from' && ref.id === 'attempt-1'));
+const unevidencedSwitch = createClaudeHookBatch('PostModelSwitch', {...input, hook_event_name: 'PostModelSwitch', tool_use_id: null, from_model: 'model-a', to_model: 'model-b', reason: null}, now).records[0];
+assert.equal(unevidencedSwitch.attributes['watchdog.fallback.dimension'], undefined, 'model change alone must not be classified as fallback');
+
 const failure = createClaudeHookBatch('PostToolUseFailure', {...input, hook_event_name: 'PostToolUseFailure', error: secret}, now);
 assert.equal(JSON.stringify(failure).includes(secret), false);
 assert.equal(failure.records[0].status, 'error');

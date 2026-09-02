@@ -31,6 +31,15 @@ logical request header is absent, the proxy creates an identity for that one
 inbound request only. Project identity remains a typed grouping reference and
 never becomes application identity.
 
+Callers that own retry policy may also send `X-Watchdog-Attempt-Number`,
+`X-Watchdog-Retry-Of-Request-Id`, `X-Watchdog-Retry-Reason-Code`, and
+`X-Watchdog-Retry-Decision-Source`. Explicit fallbacks use
+`X-Watchdog-Fallback-From-Request-Id`, `X-Watchdog-Fallback-Dimension`, and
+`X-Watchdog-Fallback-Reason-Code`. Invalid values fail with
+`400 invalid_semantics` before upstream egress. These headers are stripped and
+Watchdog never creates retry or fallback links from session order or a model
+change alone.
+
 ## Timing, context, and cost
 
 First-output timing is stored only when a producer or transport observes it.

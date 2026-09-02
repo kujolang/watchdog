@@ -25,6 +25,11 @@ function byteSize(value) {
 	try { return Buffer.byteLength(JSON.stringify(value)); } catch { return null; }
 }
 
+function boundedEnum(value, allowed) {
+	const normalized = boundedString(value, 40)?.toLowerCase();
+	return normalized && allowed.has(normalized) ? normalized : null;
+}
+
 function eventName(argv) {
 	const index = argv.indexOf('--event');
 	const value = index >= 0 ? argv[index + 1] : null;
@@ -87,6 +92,22 @@ function mapEvent(event, input, now = new Date()) {
 	const sourceType = boundedString(input.source, 80);
 	if (sourceType) attributes['watchdog.source.lifecycle_source'] = sourceType;
 	if (agentId) attributes['watchdog.agent.type'] = boundedString(input.agent_type, 120);
+	const fallbackFrom = boundedString(input.fallback_from_request_id);
+	if (event === 'PostModelSwitch' && reason && fallbackFrom) {
+		attributes['watchdog.fallback.dimension'] = 'model';
+		attributes['watchdog.fallback.reason_code'] = boundedEnum(input.reason_code ?? input.reason, new Set(['rate_limit', 'timeout', 'transport', 'provider_error', 'invalid_response', 'capacity', 'policy', 'operator', 'quality', 'unknown'])) || 'unknown';
+		const fromModel = boundedString(input.from_model, 120);
+		const toModel = boundedString(input.to_model ?? input.model, 120);
+		if (fromModel) attributes['watchdog.fallback.from_model'] = fromModel;
+		if (toModel) attributes['watchdog.fallback.to_model'] = toModel;
+		references.push({type: 'request', id: fallbackFrom, namespace: 'claude-code', relation: 'fallback_from'});
+	}
+	const recoveryOutcome = boundedEnum(input.recovery_outcome, new Set(['succeeded', 'failed', 'partial', 'unknown']));
+	const recoveredRequest = boundedString(input.recovered_request_id);
+	if (recoveryOutcome && recoveredRequest) {
+		attributes['watchdog.recovery.outcome'] = recoveryOutcome;
+		references.push({type: 'request', id: recoveredRequest, namespace: 'claude-code', relation: 'recovers'});
+	}
 
 	const isTerminal = event === 'Stop' || event === 'SessionEnd';
 	if (isTerminal) {
@@ -113,7 +134,7 @@ function mapEvent(event, input, now = new Date()) {
 		observed_at: observedAt,
 		started_at: durationMs !== null ? new Date(now.getTime() - durationMs).toISOString() : null,
 		ended_at: isCompletedTool ? observedAt : null,
-		kind, name: isTerminal ? 'watchdog.operation.completed' : `claude_code.${event}`, status,
+		kind, name: recoveryOutcome && recoveredRequest ? 'watchdog.operation.recovered' : (isTerminal ? 'watchdog.operation.completed' : `claude_code.${event}`), status,
 		source,
 		references, attributes, usage: null, costs: [],
 		error: event === 'PostToolUseFailure' ? {class: null, category: 'tool', code: null, retryable: null, message: null} : null,

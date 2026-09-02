@@ -2039,8 +2039,21 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 	]
 	project_id := truncate_str(trim(to_string(safe_dict_get(observability, "project_id", ""))), 160)
 	if project_id != "" { references = push(references, {"type": "artifact", "id": project_id, "namespace": "watchdog-project", "relation": "groups"}) }
+	retry_of_request_id := truncate_str(trim(to_string(safe_dict_get(observability, "retry_of_request_id", ""))), 160)
+	if retry_of_request_id != "" { references = push(references, {"type": "request", "id": retry_of_request_id, "namespace": "watchdog-proxy", "relation": "retries"}) }
+	fallback_from_request_id := truncate_str(trim(to_string(safe_dict_get(observability, "fallback_from_request_id", ""))), 160)
+	if fallback_from_request_id != "" { references = push(references, {"type": "request", "id": fallback_from_request_id, "namespace": "watchdog-proxy", "relation": "fallback_from"}) }
 	outcome_code := "error"
 	if status == "success" { outcome_code = "success" }
+	canonical_attributes := {"gen_ai.provider.name": provider, "gen_ai.request.model": model_name, "http.response.status_code": status_code, "watchdog.transport": "openai-compatible-proxy", "watchdog.duration_ms": duration_ms, "watchdog.logical_request_id": logical_request_id, "watchdog.attempt.number": safe_dict_get(observability, "attempt_number", 1)}
+	retry_reason_code := to_string(safe_dict_get(observability, "retry_reason_code", ""))
+	if retry_reason_code != "" { canonical_attributes["watchdog.retry.reason_code"] = retry_reason_code }
+	retry_decision_source := to_string(safe_dict_get(observability, "retry_decision_source", ""))
+	if retry_decision_source != "" { canonical_attributes["watchdog.retry.decision_source"] = retry_decision_source }
+	fallback_dimension := to_string(safe_dict_get(observability, "fallback_dimension", ""))
+	if fallback_dimension != "" { canonical_attributes["watchdog.fallback.dimension"] = fallback_dimension }
+	fallback_reason_code := to_string(safe_dict_get(observability, "fallback_reason_code", ""))
+	if fallback_reason_code != "" { canonical_attributes["watchdog.fallback.reason_code"] = fallback_reason_code }
 	canonical_record := {
 		"record_id": "proxy:model:" + to_string(request_dbid),
 		"record_type": "span",
@@ -2055,7 +2068,7 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 		"status": watchdog_telemetry_v2_status(status),
 		"source": source,
 		"references": references,
-		"attributes": {"gen_ai.provider.name": provider, "gen_ai.request.model": model_name, "http.response.status_code": status_code, "watchdog.transport": "openai-compatible-proxy", "watchdog.duration_ms": duration_ms},
+		"attributes": canonical_attributes,
 		"usage": {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens, "cached_input_tokens": to_int_or_zero(safe_dict_get(usage, "cached_input_tokens", 0)), "cache_write_input_tokens": to_int_or_zero(safe_dict_get(usage, "cache_write_input_tokens", 0)), "reasoning_tokens": to_int_or_zero(safe_dict_get(usage, "reasoning_tokens", 0)), "usage_source": "provider-response", "total_semantics": "producer_reported", "provider_usage": safe_dict_get(usage, "provider_usage", {})},
 		"costs": [{"kind": cost_kind, "currency": "USD", "amount": cost_amount, "source": pricing["pricing_source"], "catalog_version": null, "calculated_at": watchdog_telemetry_v2_timestamp(ended_at_ms, ended_at_ms), "components": {"input": pricing["input_cost_usd"], "output": pricing["output_cost_usd"]}}],
 		"error": null,
@@ -2066,7 +2079,7 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 		"record_id": "proxy:completion:" + to_string(request_dbid), "record_type": "event", "trace_id": canonical_trace_id, "span_id": canonical_span_id, "parent_span_id": null,
 		"observed_at": watchdog_telemetry_v2_timestamp(ended_at_ms, ended_at_ms), "started_at": null, "ended_at": null, "kind": null,
 		"name": "watchdog.operation.completed", "status": watchdog_telemetry_v2_status(status), "source": source, "references": references,
-		"attributes": {"watchdog.outcome.terminal": true, "watchdog.outcome.code": outcome_code, "http.response.status_code": status_code},
+		"attributes": {"watchdog.outcome.terminal": true, "watchdog.outcome.code": outcome_code, "watchdog.logical_request_id": logical_request_id, "watchdog.attempt.number": safe_dict_get(observability, "attempt_number", 1), "http.response.status_code": status_code},
 		"usage": null, "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
 	}
 	try {
@@ -2672,6 +2685,12 @@ func api_error(status_code, message) {
 	return response
 }
 
+func api_error_code(status_code, error_code, detail) {
+	response := apply_default_security_headers(json_response(status_code, {"ok": false, "error": error_code, "detail": detail}))
+	response := set_header(response, "X-Watchdog-API-Version", API_CONTRACT_VERSION)
+	return response
+}
+
 func forward_response(status_code, body_text, content_type, upstream_headers) {
 	response := http_response(status_code, body_text)
 	if content_type != "" {
@@ -2832,13 +2851,39 @@ func resolve_project_id(req, parsed_payload) {
 
 func resolve_proxy_observability(req) {
 	headers := safe_dict_get(req, "headers", {})
-	return {
+	result := {
 		"application.name": truncate_str(trim(get_header(headers, "X-Watchdog-Application-Name")), 80),
 		"application.version": truncate_str(trim(get_header(headers, "X-Watchdog-Application-Version")), 40),
 		"harness.name": truncate_str(trim(get_header(headers, "X-Watchdog-Harness-Name")), 80),
 		"harness.version": truncate_str(trim(get_header(headers, "X-Watchdog-Harness-Version")), 40),
-		"logical_request_id": normalize_identifier(get_header(headers, "X-Watchdog-Logical-Request-Id"))
+		"logical_request_id": truncate_str(trim(get_header(headers, "X-Watchdog-Logical-Request-Id")), 160),
+		"attempt_number": 1,
+		"retry_of_request_id": truncate_str(trim(get_header(headers, "X-Watchdog-Retry-Of-Request-Id")), 160),
+		"retry_reason_code": to_lower(truncate_str(trim(get_header(headers, "X-Watchdog-Retry-Reason-Code")), 40)),
+		"retry_decision_source": to_lower(truncate_str(trim(get_header(headers, "X-Watchdog-Retry-Decision-Source")), 40)),
+		"fallback_from_request_id": truncate_str(trim(get_header(headers, "X-Watchdog-Fallback-From-Request-Id")), 160),
+		"fallback_dimension": to_lower(truncate_str(trim(get_header(headers, "X-Watchdog-Fallback-Dimension")), 40)),
+		"fallback_reason_code": to_lower(truncate_str(trim(get_header(headers, "X-Watchdog-Fallback-Reason-Code")), 40)),
+		"error": ""
 	}
+	attempt_text := trim(get_header(headers, "X-Watchdog-Attempt-Number"))
+	if attempt_text != "" {
+		try { result["attempt_number"] = parse_int(attempt_text) } except err { result["error"] = "X-Watchdog-Attempt-Number must be an integer" }
+	}
+	if result["attempt_number"] < 1 || result["attempt_number"] > 1000000 { result["error"] = "X-Watchdog-Attempt-Number must be from 1 to 1000000" }
+	retry_reasons := ["rate_limit", "timeout", "transport", "provider_error", "invalid_response", "capacity", "policy", "operator", "unknown"]
+	decision_sources := ["application", "framework", "watchdog", "provider", "operator", "unknown"]
+	fallback_dimensions := ["provider", "model", "account_route", "region", "strategy", "unknown"]
+	fallback_reasons := ["rate_limit", "timeout", "transport", "provider_error", "invalid_response", "capacity", "policy", "operator", "quality", "unknown"]
+	if result["retry_reason_code"] != "" && contains(retry_reasons, result["retry_reason_code"]) == false { result["error"] = "invalid retry reason code" }
+	if result["retry_decision_source"] != "" && contains(decision_sources, result["retry_decision_source"]) == false { result["error"] = "invalid retry decision source" }
+	if result["fallback_dimension"] != "" && contains(fallback_dimensions, result["fallback_dimension"]) == false { result["error"] = "invalid fallback dimension" }
+	if result["fallback_reason_code"] != "" && contains(fallback_reasons, result["fallback_reason_code"]) == false { result["error"] = "invalid fallback reason code" }
+	if result["retry_reason_code"] != "" && result["retry_of_request_id"] == "" { result["error"] = "retry reason requires X-Watchdog-Retry-Of-Request-Id" }
+	if result["retry_decision_source"] != "" && result["retry_of_request_id"] == "" { result["error"] = "retry decision source requires X-Watchdog-Retry-Of-Request-Id" }
+	if result["fallback_dimension"] != "" && result["fallback_from_request_id"] == "" { result["error"] = "fallback dimension requires X-Watchdog-Fallback-From-Request-Id" }
+	if result["fallback_reason_code"] != "" && result["fallback_dimension"] == "" { result["error"] = "fallback reason requires X-Watchdog-Fallback-Dimension" }
+	return result
 }
 
 func resolve_workflow_id(req, parsed_payload) {
@@ -3184,6 +3229,7 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 	parent_span_id := resolve_parent_span_id(req, payload_obj)
 	proxy_observability := resolve_proxy_observability(req)
 	proxy_observability["project_id"] = project_id
+	if proxy_observability["error"] != "" { return api_error_code(400, "invalid_semantics", proxy_observability["error"]) }
 	agent_id := "proxy:" + resource_clean
 
 	prompt_summary := ""
@@ -3664,6 +3710,7 @@ server := server.route("POST", "/telemetry/v2/batches", func(req) {
 	approved := canonical_policy_batch(body)
 	validation := watchdog_telemetry_repository_validate(approved)
 	if validation["ok"] == false {
+		if safe_dict_get(validation, "error_code", "") == "invalid_semantics" { return api_error_code(400, "invalid_semantics", validation["error"]) }
 		return api_error(400, validation["error"])
 	}
 	try {

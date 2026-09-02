@@ -297,6 +297,34 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.strictEqual(received[received.length - 1].authorization, 'Bearer named-profile-key', 'named profile should override Authorization');
 		console.log('proxy_integration_stub_suite: named profile ok');
 
+		const retryResp = await httpRequest(
+			watchdogPort,
+			'POST',
+			'/proxy/v1/chat/completions',
+			{
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer passthrough-token',
+				'X-Observe-Session-Id': 'sess_proxy_stub_pass',
+				'X-Watchdog-Logical-Request-Id': 'logical-json-1',
+				'X-Watchdog-Attempt-Number': '2',
+				'X-Watchdog-Retry-Of-Request-Id': 'provider-request-json-1',
+				'X-Watchdog-Retry-Reason-Code': 'rate_limit',
+				'X-Watchdog-Retry-Decision-Source': 'application',
+				'X-Watchdog-Fallback-From-Request-Id': 'provider-request-json-1',
+				'X-Watchdog-Fallback-Dimension': 'model',
+				'X-Watchdog-Fallback-Reason-Code': 'capacity',
+			},
+			JSON.stringify({model: 'fallback-model', messages: [{role: 'user', content: 'retry path'}]})
+		);
+		assert.strictEqual(retryResp.status, 200, 'explicit retry/fallback proxy call should succeed');
+		const beforeInvalidSemantics = received.length;
+		const invalidSemantics = await httpRequest(watchdogPort, 'POST', '/proxy/v1/chat/completions', {
+			'Content-Type': 'application/json', 'X-Watchdog-Attempt-Number': '0', 'X-Watchdog-Retry-Reason-Code': 'invented'
+		}, JSON.stringify({model: 'never-forwarded', messages: []}));
+		assert.strictEqual(invalidSemantics.status, 400, 'invalid proxy observability semantics must be rejected');
+		assert.strictEqual(JSON.parse(invalidSemantics.body).error, 'invalid_semantics');
+		assert.strictEqual(received.length, beforeInvalidSemantics, 'invalid semantic headers must fail before upstream egress');
+
 		const receivedBeforeUnknownProfile = received.length;
 		const unknownProfileResp = await httpRequest(
 			watchdogPort,
@@ -447,6 +475,10 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.ok(identified, 'proxy application identity did not reach canonical telemetry');
 		assert.strictEqual(identified.source['harness.version'], '1.3.0');
 		assert.ok(identified.references.some(ref => ref.type === 'request' && ref.id === 'logical-json-1' && ref.relation === 'attempt_of'), 'stable logical request identity missing');
+		const retryAttempt = canonicalRows.find(row => row.kind === 'model' && row.attributes?.['watchdog.attempt.number'] === 2);
+		assert.ok(retryAttempt?.references.some(ref => ref.id === 'provider-request-json-1' && ref.relation === 'retries'), 'explicit retry relation missing');
+		assert.ok(retryAttempt?.references.some(ref => ref.id === 'provider-request-json-1' && ref.relation === 'fallback_from'), 'explicit fallback relation missing');
+		assert.strictEqual(retryAttempt.attributes['watchdog.fallback.dimension'], 'model');
 		assert.ok(canonicalRows.some(row => row.name === 'watchdog.operation.completed' && row.attributes?.['watchdog.outcome.terminal'] === true), 'explicit proxy terminal outcome missing');
 		assert.ok(requests.some(row => row.project_id === 'project-not-source-app' && row.source_app === 'watchdog-proxy'), 'project identity must not overload legacy source_app');
 		console.log('proxy_integration_stub_suite: passthrough done');

@@ -1,0 +1,43 @@
+{
+  "schema_version": "watchdog.telemetry.v2",
+  "batch_id": "fixture:retry-fallback-recovery:1",
+  "sent_at": "2026-09-02T12:00:03Z",
+  "producer": {"name": "fixture-orchestrator", "version": "1.0.0", "adapter_id": "fixture", "adapter_version": "1.0.0", "original_schema": null},
+  "records": [
+    {
+      "record_id": "attempt:req-1:1", "record_type": "span", "trace_id": "2223456789abcdef0123456789abcdef", "span_id": "2223456789abc001", "parent_span_id": null,
+      "observed_at": "2026-09-02T12:00:01Z", "started_at": "2026-09-02T12:00:00Z", "ended_at": "2026-09-02T12:00:01Z", "kind": "model", "name": "model attempt", "status": "error",
+      "source": {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": "fixture-app", "harness.name": "fixture-harness", "instrumentation.name": "fixture-sdk", "instrumentation.version": "1.0.0"},
+      "references": [{"type": "request", "id": "logical-req-1", "namespace": "fixture-orchestrator", "relation": "attempt_of"}],
+      "attributes": {"watchdog.logical_request_id": "logical-req-1", "watchdog.attempt.number": 1, "gen_ai.provider.name": "provider-a", "gen_ai.request.model": "model-a"},
+      "usage": {"input_tokens": 10, "output_tokens": 0, "total_tokens": 10, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "usage_source": "fixture", "total_semantics": "input_plus_output", "provider_usage": {}},
+      "costs": [], "error": {"class": "RateLimit", "category": "provider", "code": "429", "retryable": true, "message": null}, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+    },
+    {
+      "record_id": "attempt:req-1:2", "record_type": "span", "trace_id": "2223456789abcdef0123456789abcdef", "span_id": "2223456789abc002", "parent_span_id": null,
+      "observed_at": "2026-09-02T12:00:02Z", "started_at": "2026-09-02T12:00:01Z", "ended_at": "2026-09-02T12:00:02Z", "kind": "model", "name": "model attempt", "status": "error",
+      "source": {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": "fixture-app", "harness.name": "fixture-harness", "instrumentation.name": "fixture-sdk", "instrumentation.version": "1.0.0"},
+      "references": [{"type": "request", "id": "logical-req-1", "namespace": "fixture-orchestrator", "relation": "attempt_of"}, {"type": "request", "id": "attempt:req-1:1", "namespace": "fixture-orchestrator", "relation": "retries"}],
+      "attributes": {"watchdog.logical_request_id": "logical-req-1", "watchdog.attempt.number": 2, "watchdog.retry.reason_code": "rate_limit", "watchdog.retry.decision_source": "framework", "gen_ai.provider.name": "provider-a", "gen_ai.request.model": "model-a"},
+      "usage": {"input_tokens": 10, "output_tokens": 1, "total_tokens": 11, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "usage_source": "fixture", "total_semantics": "input_plus_output", "provider_usage": {}},
+      "costs": [], "error": {"class": "Timeout", "category": "transport", "code": "deadline", "retryable": true, "message": null}, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+    },
+    {
+      "record_id": "attempt:req-1:3", "record_type": "span", "trace_id": "2223456789abcdef0123456789abcdef", "span_id": "2223456789abc003", "parent_span_id": null,
+      "observed_at": "2026-09-02T12:00:03Z", "started_at": "2026-09-02T12:00:02Z", "ended_at": "2026-09-02T12:00:03Z", "kind": "model", "name": "model attempt", "status": "ok",
+      "source": {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": "fixture-app", "harness.name": "fixture-harness", "instrumentation.name": "fixture-sdk", "instrumentation.version": "1.0.0"},
+      "references": [{"type": "request", "id": "logical-req-1", "namespace": "fixture-orchestrator", "relation": "attempt_of"}, {"type": "request", "id": "attempt:req-1:2", "namespace": "fixture-orchestrator", "relation": "retries"}, {"type": "request", "id": "attempt:req-1:2", "namespace": "fixture-orchestrator", "relation": "fallback_from"}],
+      "attributes": {"watchdog.logical_request_id": "logical-req-1", "watchdog.attempt.number": 3, "watchdog.retry.reason_code": "timeout", "watchdog.retry.decision_source": "framework", "watchdog.fallback.dimension": "provider", "watchdog.fallback.reason_code": "capacity", "gen_ai.provider.name": "provider-b", "gen_ai.request.model": "model-b"},
+      "usage": {"input_tokens": 10, "output_tokens": 8, "total_tokens": 18, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "usage_source": "fixture", "total_semantics": "input_plus_output", "provider_usage": {}},
+      "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+    },
+    {
+      "record_id": "recovery:req-1", "record_type": "event", "trace_id": "2223456789abcdef0123456789abcdef", "span_id": "2223456789abc003", "parent_span_id": null,
+      "observed_at": "2026-09-02T12:00:03Z", "started_at": null, "ended_at": null, "kind": null, "name": "watchdog.operation.recovered", "status": "ok",
+      "source": {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": "fixture-app", "harness.name": "fixture-harness", "instrumentation.name": "fixture-sdk", "instrumentation.version": "1.0.0"},
+      "references": [{"type": "request", "id": "attempt:req-1:2", "namespace": "fixture-orchestrator", "relation": "recovers"}],
+      "attributes": {"watchdog.recovery.outcome": "succeeded", "watchdog.outcome.terminal": true, "watchdog.outcome.code": "success", "watchdog.logical_request_id": "logical-req-1", "watchdog.attempt.number": 3},
+      "usage": null, "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+    }
+  ]
+}
