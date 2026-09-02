@@ -38,7 +38,11 @@ There is no honest universal “SQLite EPS limit” independent of hardware, jou
 - local retention: byte and age caps, not age alone;
 - overload: `429` for push intake; proxy forwarding continues with an explicit telemetry-drop counter.
 
-Before release, benchmark at 10, 50, and 200 events/s sustained for 30 minutes, plus 1k-event bursts, one dashboard reader, retention, queue outage/recovery, and content-on worst case. Publish the measured safe envelope for the clean-machine reference hardware.
+The executable harness is `tests/telemetry_envelope_benchmark.js`. Its default
+quick profile exercises 10/50/200-event batches, a 1,000-event burst, dashboard
+reads, a configured unavailable exporter, queue retention protection, and
+database growth. `WDG_ENVELOPE_SOAK=true` selects the 30-minute-per-rate soak;
+that profile is an explicit release qualification job, not a routine unit test.
 
 ## Performance budgets
 
@@ -53,7 +57,39 @@ Before release, benchmark at 10, 50, and 200 events/s sustained for 30 minutes, 
 | memory | steady-state RSS delta <=64 MiB with full default queues; no response-sized buffering |
 | startup | <=1 s incremental for migrations/worker initialization excluding integrity maintenance |
 
-Current fixture benchmarks report end-to-end local stub throughput and database growth, not proxy overhead against a direct provider. They are regression evidence only. Add a paired harness sending identical streaming/nonstream requests directly and through Watchdog, with p50/p95/p99, TTFT, CPU, RSS, and DB bytes/event.
+`tests/proxy_overhead_benchmark.js` sends identical streaming and nonstreaming
+requests directly and through Watchdog and reports p50/p95/p99, TTFT, process CPU
+time, RSS delta, and database bytes/event. Set `WDG_REQUIRE_PROXY_BUDGET=true`
+and `WDG_REQUIRE_STREAMING_BUDGET=true` to turn the published budgets into hard
+gates.
+
+## 2026-09-01 reference-machine result and release decision
+
+Reference machine: Intel Core i7-9750H, 16 GiB RAM, macOS 26.3.1. The paired
+quick run used a release Kujo interpreter and 12 samples per path. It measured
+nonstream overhead p50 76.73 ms, p95/p99 114.29 ms; streaming TTFT overhead p95
+158.05 ms; RSS delta 2.38 MiB; and 16.2 KiB/event database growth. The quick
+canonical run achieved 17.23, 20.52, and 24.27 accepted events/s for the nominal
+10/50/200 cases; the 1,000-record burst completed in 51.82 s; dashboard reads
+remained <=63 ms; and database growth was 1,596 bytes/event.
+
+These results do **not** meet the original latency or 50/200 events/s targets.
+The causes are broader than exporter work: the current Kujo HTTP client buffers
+POST responses, and the interpreted HTTP/persistence path has substantial
+per-request cost. Therefore:
+
+- metadata interoperability is supported as experimental and bounded to a
+  measured 10 events/s sustained envelope on this reference machine;
+- 50/200 events/s, the 1,000-event burst, and streaming are stress observations,
+  not supported production envelopes;
+- exporter delivery remains off the application request path, but production
+  enablement is blocked until a streaming POST transport exists and the paired
+  nonstream p95 meets a deliberately re-approved budget;
+- CI records budgets by default and uses strict environment flags only on a
+  release-qualification runner. A release must not claim the original budgets
+  from fixture-only data.
+
+This is a release decision, not a waiver: the original table remains the target.
 
 ## Sampling
 
