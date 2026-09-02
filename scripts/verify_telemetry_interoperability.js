@@ -22,6 +22,7 @@ const checks = [
   'tests/docs_link_check.js',
   'tests/backup_script_check.js',
 ];
+if (process.env.AGENTS_SDK_PATH && fs.existsSync(process.env.AGENTS_SDK_PATH)) checks.splice(checks.length - 3, 0, 'tests/agents_sdk_shared_client_integration.mjs');
 for (const test of checks) {
   const result = spawnSync(process.execPath, [test], {cwd: ROOT, env: {...process.env, KUJO_BIN: kujo}, encoding: 'utf8', stdio: 'inherit'});
   if (result.status !== 0) process.exit(result.status || 1);

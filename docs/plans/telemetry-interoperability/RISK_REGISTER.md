@@ -35,6 +35,7 @@ No risk here justifies Kafka, Kubernetes, Postgres, Redis, Elasticsearch, or Cli
   supports one operator/auth trust boundary per database. Tenant/project filters
   prevent accidental query mixing, but are not row-level authorization. Shared
   untrusted tenants must use separate Watchdog instances.
-- The Agents SDK produces canonical v2 records, but a `kujo agent` shared-client
-  delivery/spool proof remains open. Pi and the JavaScript reference client have
-  independently verified bounded fail-open spools.
+- Agents SDK canonical records now pass through the shared JavaScript client's
+  offline/flush proof; Pi independently verifies its native bounded fail-open v2
+  spool. Packaging the client directly into future `kujo agent` distributions is
+  a distribution task, not a schema or delivery-contract gap.

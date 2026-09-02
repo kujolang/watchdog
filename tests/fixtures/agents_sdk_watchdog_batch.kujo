@@ -1,0 +1,16 @@
+from src.agents.tracing.watchdog import watchdog_telemetry_batch
+
+mapped := watchdog_telemetry_batch([{
+	"trace_id": "agents-sdk-shared-client-trace",
+	"session_id": "agents-session-1",
+	"run_id": "agents-run-1",
+	"agent_id": "agent-1",
+	"event_id": "agent-event-1",
+	"event_kind": "tool_completed",
+	"timestamp": "2026-09-01T12:00:00Z",
+	"sequence": 1,
+	"payload": {"tool_name": "fixture-tool", "status": "ok", "input": "content-canary-must-not-appear"}
+}], "agents-sdk-shared-client-1", "0.1.0")
+
+assert(mapped["ok"], mapped["error"])
+print(to_json(mapped["batch"]))

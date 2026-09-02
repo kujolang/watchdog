@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
+import {mkdtemp, readFile, readdir, rm} from 'node:fs/promises';
+import http from 'node:http';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {createWatchdogTelemetryClient} from '../clients/javascript/watchdog-telemetry.mjs';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const agentsSdk = path.resolve(process.env.AGENTS_SDK_PATH || path.join(root, '../agents-sdk'));
+const kujo = process.env.KUJO_BIN || path.resolve(root, '../kujo/target/debug/kujo');
+const fixture = path.join(root, 'tests/fixtures/agents_sdk_watchdog_batch.kujo');
+const mapped = spawnSync(kujo, ['run', '--interpreter', fixture], {cwd: agentsSdk, encoding: 'utf8'});
+assert.equal(mapped.status, 0, mapped.stderr || mapped.stdout);
+const batch = JSON.parse(mapped.stdout.trim().split('\n').pop());
+assert.equal(batch.schema_version, 'watchdog.telemetry.v2');
+assert.equal(batch.records[0].source.producer, 'kujo-agents-sdk');
+assert.equal(batch.records[0].privacy.content_mode, 'off');
+assert.doesNotMatch(JSON.stringify(batch), /content-canary-must-not-appear/);
+
+const port = 17739;
+const spool = await mkdtemp(path.join(tmpdir(), 'watchdog-agents-client-'));
+const client = createWatchdogTelemetryClient({baseUrl: `http://127.0.0.1:${port}`, spoolDirectory: spool, timeoutMs: 150});
+const offline = await client.submit(batch);
+assert.equal(offline.spooled, true);
+const queuedDirectory = path.join(spool, (await readdir(spool))[0]);
+const queuedFile = path.join(queuedDirectory, (await readdir(queuedDirectory)).find(name => name.endsWith('.json')));
+assert.doesNotMatch(await readFile(queuedFile, 'utf8'), /content-canary-must-not-appear/);
+
+const received = [];
+const server = http.createServer((req, res) => { let body = ''; req.on('data', chunk => { body += chunk; }); req.on('end', () => { received.push(body); res.writeHead(200, {'content-type': 'application/json'}); res.end('{"ok":true}'); }); });
+await new Promise(resolve => server.listen(port, '127.0.0.1', resolve));
+const flushed = await client.flush();
+assert.equal(flushed.sent, 1);
+assert.equal(received.length, 1);
+assert.match(received[0], /kujo-agents-sdk/);
+server.closeAllConnections?.();
+await new Promise(resolve => server.close(resolve));
+await rm(spool, {recursive: true, force: true});
+console.log('agents_sdk_shared_client_integration: PASS');

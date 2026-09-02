@@ -38,7 +38,7 @@
 
 ## Integration proof and release
 
-- [ ] One Agents SDK/`kujo agent` trace and one Pi trace use the shared v2 client/spool.
+- [x] One Agents SDK/`kujo agent` trace and one Pi trace use the v2 delivery/spool contract; `tests/agents_sdk_shared_client_integration.mjs` proves the shared client offline/flush path and Pi's native suite proves its bounded v2 spool.
 - [x] One external OpenInference/OTel framework trace ingests through the guarded receiver.
 - [x] One external host hook adapter passes content-off and lifecycle fixtures.
 - [x] Clean checkout build/test, offline fixture suite, schema validation, docs/link checks, additive migration/rollback/restart test, and backup/restore all pass (verified 2026-09-01 with `scripts/verify_telemetry_interoperability.js`).
@@ -46,5 +46,4 @@
 
 Unchecked items are release blockers, not omitted evidence. The current blockers
 are the 30-minute 10/50/200 EPS qualification (the quick run supports only the
-10 EPS envelope), production streaming/per-request performance, and a shared
-delivery/spool proof for the Agents SDK/`kujo agent` path.
+10 EPS envelope) and production streaming/per-request performance.
