@@ -1,0 +1,22 @@
+from telemetry_native_adapter import watchdog_native_batch_normalize
+from telemetry_repository import watchdog_telemetry_repository_validate
+
+events := [
+	{"schema_version": "watchdog.native-event.v1", "event_id": "run-1", "event_kind": "agent", "trace_id": "source-trace", "span_id": "agent-root", "name": "root agent", "status": "completed", "started_at_ms": 1000, "ended_at_ms": 2000, "references": [{"type": "run", "id": "runledger-1"}, {"type": "session", "id": "session-1"}], "attributes": {"agent.id": "root"}},
+	{"schema_version": "watchdog.native-event.v1", "event_id": "handoff-1", "event_kind": "handoff", "trace_id": "source-trace", "span_id": "handoff", "parent_span_id": "agent-root", "name": "handoff to specialist", "status": "completed", "started_at_ms": 1200, "ended_at_ms": 1300, "references": [{"type": "agent", "id": "specialist"}], "attributes": {}},
+	{"schema_version": "watchdog.native-event.v1", "event_id": "mcp-tool-1", "event_kind": "tool", "trace_id": "source-trace", "span_id": "mcp-tool", "parent_span_id": "handoff", "name": "mcp weather.lookup", "status": "completed", "started_at_ms": 1300, "ended_at_ms": 1500, "references": [{"type": "tool_call", "id": "call-1"}], "attributes": {"rpc.system": "mcp", "mcp.server.name": "weather", "mcp.tool.name": "lookup", "watchdog.tool.input_bytes": 20, "watchdog.tool.output_bytes": 120}},
+	{"schema_version": "watchdog.native-event.v1", "event_id": "eval-1", "event_kind": "evaluation", "trace_id": "source-trace", "span_id": "eval", "parent_span_id": "agent-root", "name": "quality score", "status": "completed", "started_at_ms": 2000, "ended_at_ms": 2000, "references": [{"type": "evaluation", "id": "eval-result-1"}], "attributes": {"evaluation.score": 0.9}}
+]
+
+normalized := watchdog_native_batch_normalize("kujo-agents-sdk", "1.0.0", "native-fixture-1", events)
+assert(normalized["ok"] == true, "native adapter rejected valid lifecycle events")
+batch := normalized["batch"]
+assert(len(batch["records"]) == 4, "native lifecycle record count drift")
+validation := watchdog_telemetry_repository_validate(batch)
+assert(validation["ok"] == true, "native adapter produced invalid canonical telemetry: " + validation["error"])
+encoded := to_json(batch)
+assert(contains(encoded, "rpc.system"), "MCP transport identity missing")
+assert(contains(encoded, "runledger-1"), "RunLedger correlation missing")
+assert(contains(encoded, "eval-result-1"), "evaluation correlation missing")
+assert(contains(encoded, "tool_args") == 0 && contains(encoded, "tool_result") == 0, "native adapter captured tool content")
+print("telemetry_native_adapter_check: PASS")

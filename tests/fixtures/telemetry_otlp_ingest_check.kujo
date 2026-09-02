@@ -1,0 +1,14 @@
+from telemetry_otlp_ingest import watchdog_otlp_ingest_map
+
+payload := parse_json(read_file("tests/fixtures/telemetry-v2/otlp-ai-traces.json"))
+mapped := watchdog_otlp_ingest_map(payload)
+assert(mapped["ok"] == true, "AI-relevant OTLP payload was rejected")
+assert(mapped["producer"] == "fixture-otel-agent", "OTLP service provenance drift")
+assert(mapped["rejected"] == 1, "generic OTLP span was not rejected")
+assert(len(mapped["records"]) == 2, "model span and span event were not normalized")
+encoded := to_json(mapped)
+assert(contains(encoded, "otlp-raw-prompt-canary") == 0, "OTLP content bypassed privacy boundary")
+assert(contains(encoded, "source_content_dropped_by_watchdog_policy"), "OTLP content drop provenance missing")
+assert(contains(encoded, "session-otel-1"), "OTLP session correlation missing")
+assert(contains(encoded, "gen_ai.usage.input_tokens"), "OTLP usage attributes missing")
+print("telemetry_otlp_ingest_check: PASS")

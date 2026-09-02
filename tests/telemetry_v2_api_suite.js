@@ -132,6 +132,13 @@ async function run() {
 		modelBatch.batch_id = 'fixture:model:api';
 		const modelIntake = await request('POST', '/telemetry/v2/batches', modelBatch);
 		assert.strictEqual(modelIntake.status, 200, modelIntake.body);
+		const otlpPayload = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/telemetry-v2/otlp-ai-traces.json'), 'utf8'));
+		const otlpIntake = await request('POST', '/telemetry/v2/otlp/v1/traces', otlpPayload);
+		assert.strictEqual(otlpIntake.status, 200, otlpIntake.body);
+		assert.strictEqual(JSON.parse(otlpIntake.body).partialSuccess.rejectedSpans, 1, 'generic OTLP span was not partially rejected');
+		const otlpRecords = JSON.parse((await request('GET', '/api/telemetry/v2/records?producer=fixture-otel-agent')).body).data.records;
+		assert.strictEqual(otlpRecords.length, 2, 'guarded OTLP records were not persisted');
+		assert.ok(!JSON.stringify(otlpRecords).includes('otlp-raw-prompt-canary'), 'OTLP prompt content leaked into storage');
 	} catch (error) {
 		if (server) error.message += `\nServer output:\n${server.output().slice(-4000)}`;
 		throw error;

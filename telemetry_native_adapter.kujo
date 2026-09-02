@@ -1,0 +1,120 @@
+# Reference normalization for watchdog.native-event.v1 producers.
+
+from telemetry_v2 import watchdog_telemetry_v2_canonical_id
+from telemetry_v2 import watchdog_telemetry_v2_status
+from telemetry_v2 import watchdog_telemetry_v2_timestamp
+
+func native_get(value, key, fallback_value) {
+	if type(value) == "dict" { if has_key(value, key) { return value[key] } }
+	return fallback_value
+}
+
+func native_text(value, max_len) {
+	if type(value) == "null" { return "" }
+	text := trim(to_string(value))
+	if len(text) <= max_len { return text }
+	return substring(text, 0, max_len)
+}
+
+func native_kind(value) {
+	text := to_lower(native_text(value, 40))
+	if text == "model" || text == "agent" || text == "tool" || text == "handoff" || text == "retrieval" || text == "workflow" || text == "approval" || text == "execution" || text == "evaluation" || text == "internal" { return text }
+	if text == "artifact" || text == "session" || text == "turn" || text == "error" { return "internal" }
+	return "internal"
+}
+
+func native_scalar_attributes(value) {
+	clean := {}
+	if type(value) != "dict" { return clean }
+	for key in keys(value) {
+		if len(keys(clean)) < 128 {
+			next := value[key]
+			if type(next) == "string" || type(next) == "integer" || type(next) == "float" || type(next) == "boolean" || type(next) == "null" { clean[native_text(key, 160)] = next }
+		}
+	}
+	return clean
+}
+
+func native_references(value, producer) {
+	clean := []
+	if type(value) != "array" { return clean }
+	allowed := ["session", "run", "turn", "workflow", "task", "agent", "tool_call", "request", "artifact", "evaluation", "external"]
+	for reference in value {
+		if len(clean) < 24 && type(reference) == "dict" {
+			ref_type := native_text(native_get(reference, "type", "external"), 40)
+			if contains(allowed, ref_type) {
+				ref_id := native_text(native_get(reference, "id", ""), 160)
+				if ref_id != "" { clean = push(clean, {"type": ref_type, "id": ref_id, "namespace": native_text(native_get(reference, "namespace", producer), 80), "relation": native_text(native_get(reference, "relation", "groups"), 40)}) }
+			}
+		}
+	}
+	return clean
+}
+
+func native_normalize_event(event, producer) {
+	if type(event) != "dict" { return {"ok": false, "error": "native event must be an object", "record": null} }
+	version := native_text(native_get(event, "schema_version", "watchdog.native-event.v1"), 80)
+	if version != "watchdog.native-event.v1" { return {"ok": false, "error": "unsupported native event schema", "record": null} }
+	event_id := native_text(native_get(event, "event_id", ""), 160)
+	source_trace_id := native_text(native_get(event, "trace_id", ""), 160)
+	if event_id == "" || source_trace_id == "" { return {"ok": false, "error": "event_id and trace_id are required", "record": null} }
+	trace_id := watchdog_telemetry_v2_canonical_id(source_trace_id, producer, 32)
+	instantaneous := native_get(event, "instantaneous", false) == true
+	record_type := "span"
+	span_id := null
+	if instantaneous { record_type = "event" } else {
+		source_span_id := native_text(native_get(event, "span_id", event_id), 160)
+		span_id = watchdog_telemetry_v2_canonical_id(source_span_id, producer + ":" + source_trace_id, 16)
+	}
+	parent_span_id := null
+	source_parent_id := native_text(native_get(event, "parent_span_id", ""), 160)
+	if source_parent_id != "" { parent_span_id = watchdog_telemetry_v2_canonical_id(source_parent_id, producer + ":" + source_trace_id, 16) }
+	started_ms := native_get(event, "started_at_ms", current_timestamp())
+	ended_ms := native_get(event, "ended_at_ms", started_ms)
+	attributes := native_scalar_attributes(native_get(event, "attributes", {}))
+	event_kind := native_text(native_get(event, "event_kind", "internal"), 40)
+	attributes["watchdog.native.event_kind"] = event_kind
+	started_at := null
+	ended_at := null
+	kind := null
+	if instantaneous == false {
+		started_at = watchdog_telemetry_v2_timestamp(started_ms, current_timestamp())
+		ended_at = watchdog_telemetry_v2_timestamp(ended_ms, current_timestamp())
+		kind = native_kind(event_kind)
+	}
+	return {"ok": true, "error": "", "record": {
+		"record_id": "native:" + producer + ":" + event_id,
+		"record_type": record_type,
+		"trace_id": trace_id,
+		"span_id": span_id,
+		"parent_span_id": parent_span_id,
+		"observed_at": watchdog_telemetry_v2_timestamp(current_timestamp(), current_timestamp()),
+		"started_at": started_at,
+		"ended_at": ended_at,
+		"kind": kind,
+		"name": native_text(native_get(event, "name", event_kind), 160),
+		"status": watchdog_telemetry_v2_status(native_get(event, "status", "unset")),
+		"source": {"producer": producer, "adapter_id": "watchdog.native-event-adapter", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": version, "source_event_id": event_id, "source_trace_id": source_trace_id},
+		"references": native_references(native_get(event, "references", []), producer),
+		"attributes": attributes,
+		"usage": native_get(event, "usage", null),
+		"costs": native_get(event, "costs", []),
+		"error": native_get(event, "error", null),
+		"content": [],
+		"privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+	}}
+}
+
+func native_normalize_batch(producer, producer_version, batch_id, events) {
+	if type(events) != "array" || len(events) == 0 || len(events) > 100 { return {"ok": false, "error": "native batch requires 1-100 events", "batch": null} }
+	records := []
+	for event in events {
+		normalized := native_normalize_event(event, producer)
+		if normalized["ok"] == false { return {"ok": false, "error": normalized["error"], "batch": null} }
+		records = push(records, normalized["record"])
+	}
+	return {"ok": true, "error": "", "batch": {"schema_version": "watchdog.telemetry.v2", "batch_id": native_text(batch_id, 160), "sent_at": watchdog_telemetry_v2_timestamp(current_timestamp(), current_timestamp()), "producer": {"name": native_text(producer, 80), "version": native_text(producer_version, 40), "adapter_id": "watchdog.native-event-adapter", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "watchdog.native-event.v1"}, "records": records}}
+}
+
+export watchdog_native_event_normalize := native_normalize_event
+export watchdog_native_batch_normalize := native_normalize_batch

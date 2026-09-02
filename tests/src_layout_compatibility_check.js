@@ -13,6 +13,8 @@ const EXPECTED_PAIRS = [
 	['src/telemetry_delivery.kujo', 'telemetry_delivery.kujo'],
 	['src/telemetry_otlp.kujo', 'telemetry_otlp.kujo'],
 	['src/export_worker.kujo', 'export_worker.kujo'],
+	['src/telemetry_otlp_ingest.kujo', 'telemetry_otlp_ingest.kujo'],
+	['src/telemetry_native_adapter.kujo', 'telemetry_native_adapter.kujo'],
 	['src/watchdog.kujo', 'watchdog.kujo'],
 	['src/dashboard.html', 'dashboard.html'],
 ];

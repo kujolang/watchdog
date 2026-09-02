@@ -1,0 +1,43 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "fixture-otel-agent"}}]},
+      "scopeSpans": [
+        {
+          "scope": {"name": "fixture.instrumentation", "version": "1.0.0"},
+          "spans": [
+            {
+              "traceId": "1123456789abcdef0123456789abcdef",
+              "spanId": "1123456789abcdef",
+              "name": "chat fixture-model",
+              "kind": 3,
+              "startTimeUnixNano": "1788264000000000000",
+              "endTimeUnixNano": "1788264001000000000",
+              "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                {"key": "gen_ai.provider.name", "value": {"stringValue": "fixture"}},
+                {"key": "gen_ai.request.model", "value": {"stringValue": "fixture-model"}},
+                {"key": "gen_ai.usage.input_tokens", "value": {"intValue": "12"}},
+                {"key": "gen_ai.usage.output_tokens", "value": {"intValue": "3"}},
+                {"key": "gen_ai.conversation.id", "value": {"stringValue": "session-otel-1"}},
+                {"key": "gen_ai.input.value", "value": {"stringValue": "otlp-raw-prompt-canary"}}
+              ],
+              "events": [{"timeUnixNano": "1788264000500000000", "name": "first_token", "attributes": [{"key": "watchdog.stream.first_byte_ms", "value": {"intValue": "50"}}]}],
+              "status": {"code": 1}
+            },
+            {
+              "traceId": "2123456789abcdef0123456789abcdef",
+              "spanId": "2123456789abcdef",
+              "name": "generic database query",
+              "kind": 3,
+              "startTimeUnixNano": "1788264000000000000",
+              "endTimeUnixNano": "1788264000100000000",
+              "attributes": [{"key": "db.system", "value": {"stringValue": "sqlite"}}],
+              "status": {"code": 1}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

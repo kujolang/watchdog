@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kujolang.dev/schemas/watchdog-exporter-v1.schema.json",
+  "title": "Watchdog exporter profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "type", "endpoint", "mapping_profile"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 80},
+    "type": {"const": "otlp_http"},
+    "enabled": {"type": "boolean"},
+    "endpoint": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "mapping_profile": {"enum": ["otel.base.v1", "otel.genai.v1", "openinference.v1"]},
+    "headers_from_env": {"type": "object", "maxProperties": 16, "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 120}},
+    "batch_records": {"type": "integer", "minimum": 1, "maximum": 256},
+    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 30},
+    "max_attempts": {"type": "integer", "minimum": 1, "maximum": 20}
+  }
+}

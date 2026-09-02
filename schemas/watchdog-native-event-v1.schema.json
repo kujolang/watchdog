@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kujolang.dev/schemas/watchdog-native-event-v1.schema.json",
+  "title": "Watchdog native lifecycle event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "event_kind", "trace_id", "started_at_ms"],
+  "properties": {
+    "schema_version": {"const": "watchdog.native-event.v1"},
+    "event_id": {"type": "string", "minLength": 1, "maxLength": 160},
+    "event_kind": {"enum": ["session", "turn", "model", "agent", "tool", "handoff", "retrieval", "workflow", "approval", "execution", "error", "artifact", "evaluation", "internal"]},
+    "instantaneous": {"type": "boolean"},
+    "trace_id": {"type": "string", "minLength": 1, "maxLength": 160},
+    "span_id": {"type": ["string", "null"], "maxLength": 160},
+    "parent_span_id": {"type": ["string", "null"], "maxLength": 160},
+    "name": {"type": ["string", "null"], "maxLength": 160},
+    "status": {"type": ["string", "null"], "maxLength": 40},
+    "started_at_ms": {"type": "integer", "minimum": 0},
+    "ended_at_ms": {"type": ["integer", "null"], "minimum": 0},
+    "references": {"type": "array", "maxItems": 24},
+    "attributes": {"type": "object", "maxProperties": 128},
+    "usage": {"type": ["object", "null"]},
+    "costs": {"type": "array", "maxItems": 8},
+    "error": {"type": ["object", "null"]}
+  }
+}
