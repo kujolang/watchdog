@@ -164,6 +164,9 @@ Environment variables:
 | `WDG_EXPORTERS_CONFIG_PATH` | `watchdog_exporters.json` | Versioned exporter-profile configuration; credentials are referenced by environment-variable name only |
 | `WDG_EXPORT_QUEUE_MAX_RECORDS` | `50000` | Pending/retry record bound per exporter profile |
 | `WDG_EXPORT_QUEUE_MAX_BYTES` | `67108864` | Pending/retry canonical-byte bound per exporter profile |
+| `WDG_CONTEXT_LIMIT_CATALOG_PATH` | `config/context_limit_catalog.json` | Separate, versioned model context-limit catalog; never inferred from pricing |
+| `WDG_CONTEXT_WARNING_RATIO` | `0.80` | Global canonical context warning threshold |
+| `WDG_CONTEXT_CRITICAL_RATIO` | `0.95` | Global canonical context critical threshold (clamped to warning or higher) |
 | `WDG_BACKUP_ENABLED` | `true` | Seed automatic backup scheduling on first startup |
 | `WDG_BACKUP_INTERVAL_MINUTES` | `1440` | Initial backup frequency; later changes persist from the dashboard |
 | `WDG_BACKUP_DIR` | `data/backups` | Initial separate backup folder; absolute Dropbox/Google Drive paths are supported |

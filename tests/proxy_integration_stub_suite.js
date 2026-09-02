@@ -275,7 +275,7 @@ async function runPassthroughScenario(stubPort, received) {
 			},
 			JSON.stringify({ model: 'gpt-4.1-mini', messages: [{ role: 'user', content: 'json path' }] })
 		);
-		assert.strictEqual(jsonResp.status, 200, 'passthrough JSON proxy call should succeed');
+		assert.strictEqual(jsonResp.status, 200, `passthrough JSON proxy call should succeed: ${jsonResp.body}\n${wd.outputRef()}`);
 		assert.strictEqual(received[received.length - 1].traceparent, '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01');
 		assert.strictEqual(received[received.length - 1].tracestate, 'vendor=value');
 		assert.strictEqual(received[received.length - 1]['x-watchdog-application-name'], undefined, 'Watchdog metadata headers must be stripped before upstream forwarding');

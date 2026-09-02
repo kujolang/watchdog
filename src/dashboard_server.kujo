@@ -74,6 +74,9 @@ DEFAULT_OPENSSL_BIN := "openssl"
 DEFAULT_EXPORTERS_CONFIG_PATH := "watchdog_exporters.json"
 DEFAULT_EXPORT_QUEUE_MAX_RECORDS := 50000
 DEFAULT_EXPORT_QUEUE_MAX_BYTES := 67108864
+DEFAULT_CONTEXT_LIMIT_CATALOG_PATH := "config/context_limit_catalog.json"
+DEFAULT_CONTEXT_WARNING_RATIO := "0.80"
+DEFAULT_CONTEXT_CRITICAL_RATIO := "0.95"
 MIN_BACKUP_INTERVAL_MINUTES := 15
 MAX_BACKUP_INTERVAL_MINUTES := 43200
 API_CONTRACT_VERSION := "v1"
@@ -121,6 +124,37 @@ func parse_int_env_many(keys, fallback_value) {
 	} except err {
 		return fallback_value
 	}
+}
+
+func parse_ratio_env(keys, fallback_value) {
+	raw := env_or_many(keys, "")
+	if raw == "" { return fallback_value }
+	try {
+		parsed := parse_float(raw)
+		if parsed >= 0.0 { return parsed }
+	} except err {}
+	return fallback_value
+}
+
+func load_context_limit_catalog(path_value) {
+	try {
+		parsed := parse_json(read_file(path_value))
+		if type(parsed) == "dict" && type(safe_dict_get(parsed, "models", null)) == "dict" { return parsed }
+	} except err {}
+	return {"schema_version": 1, "catalog_id": "missing-context-limit-catalog", "models": {}, "aliases": {}}
+}
+
+func context_limit_catalog_record(catalog, requested_model) {
+	model_key := to_lower(trim(to_string(requested_model)))
+	models := safe_dict_get(catalog, "models", {})
+	aliases := safe_dict_get(catalog, "aliases", {})
+	if type(aliases) == "dict" && has_key(aliases, model_key) { model_key = to_lower(trim(to_string(aliases[model_key]))) }
+	if type(models) != "dict" || !has_key(models, model_key) { return {} }
+	record := models[model_key]
+	if type(record) != "dict" { return {} }
+	window_tokens := to_int_or_zero(safe_dict_get(record, "window_tokens", 0))
+	if window_tokens <= 0 { return {} }
+	return {"window_tokens": window_tokens, "catalog_version": to_string(safe_dict_get(catalog, "catalog_id", "")), "resolved_model": model_key}
 }
 
 func positive_int_or_fallback(raw_value, fallback_value) {
@@ -282,6 +316,14 @@ func to_int_or_zero(value) {
 		return parse_int(to_string(value))
 	} except err {
 		return 0
+	}
+}
+
+func to_float_or_zero(value) {
+	try {
+		return parse_float(to_string(value))
+	} except err {
+		return 0.0
 	}
 }
 
@@ -1417,6 +1459,11 @@ EXPORT_QUEUE_MAX_RECORDS := positive_int_or_fallback(parse_int_env_many(["WDG_EX
 if EXPORT_QUEUE_MAX_RECORDS > 200000 { EXPORT_QUEUE_MAX_RECORDS = 200000 }
 EXPORT_QUEUE_MAX_BYTES := positive_int_or_fallback(parse_int_env_many(["WDG_EXPORT_QUEUE_MAX_BYTES"], DEFAULT_EXPORT_QUEUE_MAX_BYTES), DEFAULT_EXPORT_QUEUE_MAX_BYTES)
 if EXPORT_QUEUE_MAX_BYTES > 1073741824 { EXPORT_QUEUE_MAX_BYTES = 1073741824 }
+CONTEXT_LIMIT_CATALOG_PATH := env_or_many(["WDG_CONTEXT_LIMIT_CATALOG_PATH"], DEFAULT_CONTEXT_LIMIT_CATALOG_PATH)
+CONTEXT_LIMIT_CATALOG := load_context_limit_catalog(CONTEXT_LIMIT_CATALOG_PATH)
+CONTEXT_WARNING_RATIO := parse_ratio_env(["WDG_CONTEXT_WARNING_RATIO"], parse_float(DEFAULT_CONTEXT_WARNING_RATIO))
+CONTEXT_CRITICAL_RATIO := parse_ratio_env(["WDG_CONTEXT_CRITICAL_RATIO"], parse_float(DEFAULT_CONTEXT_CRITICAL_RATIO))
+if CONTEXT_CRITICAL_RATIO < CONTEXT_WARNING_RATIO { CONTEXT_CRITICAL_RATIO = CONTEXT_WARNING_RATIO }
 EXPORTER_PROFILES := watchdog_delivery_load_profiles(EXPORTERS_CONFIG_PATH)
 EXPORTER_PROFILE_IDS := watchdog_delivery_profile_ids(EXPORTER_PROFILES)
 
@@ -1455,6 +1502,9 @@ kv("Export max rows", EXPORT_MAX_ROWS)
 kv("Exporter profiles", len(EXPORTER_PROFILE_IDS))
 kv("Export queue max records per profile", EXPORT_QUEUE_MAX_RECORDS)
 kv("Export queue max bytes per profile", EXPORT_QUEUE_MAX_BYTES)
+kv("Context limit catalog", CONTEXT_LIMIT_CATALOG_PATH)
+kv("Context warning ratio", CONTEXT_WARNING_RATIO)
+kv("Context critical ratio", CONTEXT_CRITICAL_RATIO)
 kv("Backup default enabled", BACKUP_DEFAULT_ENABLED)
 kv("Backup default interval minutes", BACKUP_DEFAULT_INTERVAL_MINUTES)
 kv("Backup default directory", BACKUP_DEFAULT_DIR)
@@ -1625,7 +1675,7 @@ func canonical_policy_privacy(record) {
 
 func canonical_policy_scalar(value) {
 	if type(value) == "string" { return redact_sensitive_text(value) }
-	if type(value) == "integer" || type(value) == "float" || type(value) == "boolean" || type(value) == "null" { return value }
+	if type(value) == "integer" || type(value) == "float" || type(value) == "bool" || type(value) == "boolean" || type(value) == "null" { return value }
 	return null
 }
 
@@ -1693,6 +1743,36 @@ func canonical_policy_timing(record, attributes) {
 	return attributes
 }
 
+func canonical_policy_context(record, attributes) {
+	if type(attributes) != "dict" { return {} }
+	window_tokens := safe_dict_get(attributes, "watchdog.context.window_tokens", null)
+	usage := safe_dict_get(record, "usage", null)
+	total_tokens := null
+	total_semantics := ""
+	if type(usage) == "dict" {
+		total_tokens = safe_dict_get(usage, "total_tokens", null)
+		total_semantics = to_string(safe_dict_get(usage, "total_semantics", ""))
+	}
+	if type(window_tokens) == "null" || type(total_tokens) == "null" || total_semantics != "input_plus_output" {
+		attributes["watchdog.context.utilization_ratio"] = null
+		attributes["watchdog.context.pressure"] = "unknown"
+		return attributes
+	}
+	window_number := to_float_or_zero(window_tokens)
+	total_number := to_float_or_zero(total_tokens)
+	if window_number <= 0.0 || total_number < 0.0 {
+		attributes["watchdog.context.utilization_ratio"] = null
+		attributes["watchdog.context.pressure"] = "unknown"
+		return attributes
+	}
+	ratio := total_number / window_number
+	pressure := "normal"
+	if ratio > 1.0 { pressure = "overflow" } else if ratio >= CONTEXT_CRITICAL_RATIO { pressure = "critical" } else if ratio >= CONTEXT_WARNING_RATIO { pressure = "warning" }
+	attributes["watchdog.context.utilization_ratio"] = ratio
+	attributes["watchdog.context.pressure"] = pressure
+	return attributes
+}
+
 func canonical_policy_references(value) {
 	clean := []
 	if type(value) != "array" { return clean }
@@ -1755,7 +1835,7 @@ func canonical_policy_error(value) {
 }
 
 func canonical_policy_record(record) {
-	clean_attributes := canonical_policy_timing(record, canonical_policy_attributes(safe_dict_get(record, "attributes", {})))
+	clean_attributes := canonical_policy_context(record, canonical_policy_timing(record, canonical_policy_attributes(safe_dict_get(record, "attributes", {}))))
 	return {
 		"record_id": truncate_str(trim(to_string(safe_dict_get(record, "record_id", ""))), 160),
 		"record_type": truncate_str(trim(to_string(safe_dict_get(record, "record_type", ""))), 20),
@@ -2048,6 +2128,8 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 	input_tokens := to_int_or_zero(safe_dict_get(usage, "input_tokens", 0))
 	output_tokens := to_int_or_zero(safe_dict_get(usage, "output_tokens", 0))
 	total_tokens := to_int_or_zero(safe_dict_get(usage, "total_tokens", input_tokens + output_tokens))
+	total_semantics := "producer_reported"
+	if total_tokens == input_tokens + output_tokens { total_semantics = "input_plus_output" }
 	pricing := watchdog_cost_breakdown(model_name, input_tokens * 1.0, output_tokens * 1.0, 0.0, 0.0)
 	cost_kind := "catalog_estimated"
 	if pricing["pricing_kind"] == "unknown" { cost_kind = "unknown" }
@@ -2072,6 +2154,13 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 	outcome_code := "error"
 	if status == "success" { outcome_code = "success" }
 	canonical_attributes := {"gen_ai.provider.name": provider, "gen_ai.request.model": model_name, "http.response.status_code": status_code, "watchdog.transport": "openai-compatible-proxy", "watchdog.duration_ms": duration_ms, "watchdog.logical_request_id": logical_request_id, "watchdog.attempt.number": safe_dict_get(observability, "attempt_number", 1), "watchdog.response.streamed": safe_dict_get(observability, "response_streamed", false), "watchdog.timing.source": safe_dict_get(observability, "timing_source", "unknown"), "watchdog.time_to_first_output_ms": null, "watchdog.output_generation_duration_ms": null, "watchdog.output_tokens_per_second": null}
+	# The buffered proxy does not reinterpret response models through the current
+	# catalog. Producers that resolve a limit attach its version at observation time.
+	canonical_attributes["watchdog.context.window_tokens"] = null
+	canonical_attributes["watchdog.context.limit_source"] = "unknown"
+	canonical_attributes["watchdog.cost.evidence"] = "catalog"
+	canonical_attributes["watchdog.pricing.catalog_version"] = pricing["pricing_source"]
+	canonical_attributes["watchdog.pricing.calculated_at"] = watchdog_telemetry_v2_timestamp(ended_at_ms, ended_at_ms)
 	if safe_dict_get(observability, "output_partial", false) == true { canonical_attributes["watchdog.output.partial"] = true }
 	retry_reason_code := to_string(safe_dict_get(observability, "retry_reason_code", ""))
 	if retry_reason_code != "" { canonical_attributes["watchdog.retry.reason_code"] = retry_reason_code }
@@ -2096,7 +2185,7 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 		"source": source,
 		"references": references,
 		"attributes": canonical_attributes,
-		"usage": {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens, "cached_input_tokens": to_int_or_zero(safe_dict_get(usage, "cached_input_tokens", 0)), "cache_write_input_tokens": to_int_or_zero(safe_dict_get(usage, "cache_write_input_tokens", 0)), "reasoning_tokens": to_int_or_zero(safe_dict_get(usage, "reasoning_tokens", 0)), "usage_source": "provider-response", "total_semantics": "producer_reported", "provider_usage": safe_dict_get(usage, "provider_usage", {})},
+		"usage": {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens, "cached_input_tokens": to_int_or_zero(safe_dict_get(usage, "cached_input_tokens", 0)), "cache_write_input_tokens": to_int_or_zero(safe_dict_get(usage, "cache_write_input_tokens", 0)), "reasoning_tokens": to_int_or_zero(safe_dict_get(usage, "reasoning_tokens", 0)), "usage_source": "provider-response", "total_semantics": total_semantics, "provider_usage": safe_dict_get(usage, "provider_usage", {})},
 		"costs": [{"kind": cost_kind, "currency": "USD", "amount": cost_amount, "source": pricing["pricing_source"], "catalog_version": null, "calculated_at": watchdog_telemetry_v2_timestamp(ended_at_ms, ended_at_ms), "components": {"input": pricing["input_cost_usd"], "output": pricing["output_cost_usd"]}}],
 		"error": null,
 		"content": [],

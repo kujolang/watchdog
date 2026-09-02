@@ -9,9 +9,9 @@
       "observed_at": "2026-09-02T13:00:03Z", "started_at": "2026-09-02T13:00:00Z", "ended_at": "2026-09-02T13:00:03Z", "kind": "model", "name": "producer timed output", "status": "ok",
       "source": {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": "timing-fixture", "instrumentation.name": "fixture-hooks", "instrumentation.version": "1.0.0"},
       "references": [],
-      "attributes": {"watchdog.response.streamed": true, "watchdog.timing.source": "producer_clock", "watchdog.first_output.unit": "content_delta", "watchdog.time_to_first_output_ms": 120, "watchdog.output_generation_duration_ms": 2000, "watchdog.output_tokens_per_second": 5.0},
-      "usage": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "usage_source": "producer", "total_semantics": "input_plus_output", "provider_usage": {}},
-      "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+      "attributes": {"watchdog.response.streamed": true, "watchdog.timing.source": "producer_clock", "watchdog.first_output.unit": "content_delta", "watchdog.time_to_first_output_ms": 120, "watchdog.output_generation_duration_ms": 2000, "watchdog.output_tokens_per_second": 5.0, "watchdog.context.window_tokens": 100, "watchdog.context.limit_source": "versioned_catalog", "watchdog.context.catalog_version": "fixture-context:1", "watchdog.context.utilization_ratio": 0.3, "watchdog.context.pressure": "normal", "watchdog.cost.evidence": "response_usage", "watchdog.billing.provider": "fixture-provider", "watchdog.billing.account_alias": "team-alpha"},
+      "usage": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30, "cached_input_tokens": 7, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "usage_source": "producer", "total_semantics": "input_plus_output", "provider_usage": {}},
+      "costs": [{"kind": "provider_reported", "currency": "USD", "amount": 0.03, "source": "provider-response", "catalog_version": null, "calculated_at": "2026-09-02T13:00:03Z", "components": {}}], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
     },
     {
       "record_id": "timing:producer:zero-output", "record_type": "span", "trace_id": "3323456789abcdef0123456789abcdef", "span_id": "3323456789abc002", "parent_span_id": null,
@@ -36,6 +36,38 @@
       "attributes": {"watchdog.response.streamed": true, "watchdog.timing.source": "producer_clock", "watchdog.first_output.unit": "content_delta", "watchdog.time_to_first_output_ms": 200, "watchdog.output_generation_duration_ms": 1000, "watchdog.output_tokens_per_second": 4.0, "watchdog.output.partial": true},
       "usage": {"input_tokens": 20, "output_tokens": 4, "total_tokens": 24, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "usage_source": "producer", "total_semantics": "input_plus_output", "provider_usage": {}},
       "costs": [], "error": {"class": "StreamError", "category": "transport", "code": "disconnect", "retryable": true, "message": null}, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+    },
+    {
+      "record_id": "context:cached-warning", "record_type": "span", "trace_id": "4423456789abcdef0123456789abcdef", "span_id": "4423456789abc001", "parent_span_id": null,
+      "observed_at": "2026-09-02T13:01:00Z", "started_at": "2026-09-02T13:00:59Z", "ended_at": "2026-09-02T13:01:00Z", "kind": "model", "name": "cached context", "status": "ok",
+      "source": {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": "context-fixture"}, "references": [],
+      "attributes": {"watchdog.context.window_tokens": 100, "watchdog.context.limit_source": "versioned_catalog", "watchdog.context.catalog_version": "fixture-context:1", "watchdog.context.utilization_ratio": 0.9, "watchdog.context.pressure": "warning", "watchdog.context.truncated": false, "watchdog.cost.evidence": "invoice", "watchdog.billing.provider": "fixture-provider", "watchdog.billing.account_ref_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "usage": {"input_tokens": 80, "output_tokens": 10, "total_tokens": 90, "cached_input_tokens": 40, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "usage_source": "provider", "total_semantics": "input_plus_output", "provider_usage": {}},
+      "costs": [{"kind": "provider_reported", "currency": "USD", "amount": 0.09, "source": "invoice-api", "catalog_version": null, "calculated_at": "2026-09-02T13:01:00Z", "components": {}}], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+    },
+    {
+      "record_id": "context:overflow-catalog", "record_type": "span", "trace_id": "4423456789abcdef0123456789abcdef", "span_id": "4423456789abc002", "parent_span_id": null,
+      "observed_at": "2026-09-02T13:02:00Z", "started_at": "2026-09-02T13:01:59Z", "ended_at": "2026-09-02T13:02:00Z", "kind": "model", "name": "overflow context", "status": "error",
+      "source": {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": "context-fixture"}, "references": [],
+      "attributes": {"watchdog.context.window_tokens": 100, "watchdog.context.limit_source": "operator_config", "watchdog.context.utilization_ratio": 1.1, "watchdog.context.pressure": "overflow", "watchdog.context.truncated": true, "watchdog.context.truncation_reason": "provider_limit", "watchdog.cost.evidence": "catalog", "watchdog.pricing.catalog_version": "fixture-pricing:1", "watchdog.pricing.calculated_at": "2026-09-02T13:02:00Z"},
+      "usage": {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110, "cached_input_tokens": 25, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "usage_source": "producer", "total_semantics": "input_plus_output", "provider_usage": {}},
+      "costs": [{"kind": "catalog_estimated", "currency": "USD", "amount": 0.11, "source": "fixture-pricing:1", "catalog_version": "fixture-pricing:1", "calculated_at": "2026-09-02T13:02:00Z", "components": {"input": 0.1, "output": 0.01}}], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+    },
+    {
+      "record_id": "context:unknown", "record_type": "span", "trace_id": "4423456789abcdef0123456789abcdef", "span_id": "4423456789abc003", "parent_span_id": null,
+      "observed_at": "2026-09-02T13:03:00Z", "started_at": "2026-09-02T13:02:59Z", "ended_at": "2026-09-02T13:03:00Z", "kind": "model", "name": "unknown context", "status": "ok",
+      "source": {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": "context-fixture"}, "references": [],
+      "attributes": {"watchdog.context.window_tokens": null, "watchdog.context.limit_source": "unknown", "watchdog.context.utilization_ratio": null, "watchdog.context.pressure": "unknown", "watchdog.cost.evidence": "unknown"},
+      "usage": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30, "cached_input_tokens": 5, "cache_write_input_tokens": 0, "reasoning_tokens": 0, "usage_source": "provider", "total_semantics": "producer_reported", "provider_usage": {}},
+      "costs": [{"kind": "unknown", "currency": "USD", "amount": null, "source": "unknown", "catalog_version": null, "calculated_at": null, "components": {}}], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+    },
+    {
+      "record_id": "cost:subscription-value", "record_type": "event", "trace_id": "4423456789abcdef0123456789abcdef", "span_id": null, "parent_span_id": null,
+      "observed_at": "2026-09-02T13:04:00Z", "started_at": null, "ended_at": null, "kind": null, "name": "subscription equivalent", "status": "unset",
+      "source": {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": "context-fixture"}, "references": [],
+      "attributes": {"watchdog.context.window_tokens": null, "watchdog.context.limit_source": "unknown", "watchdog.context.utilization_ratio": null, "watchdog.context.pressure": "unknown", "watchdog.cost.evidence": "subscription_equivalent"},
+      "usage": null,
+      "costs": [{"kind": "subscription_value_estimate", "currency": "USD", "amount": 0.05, "source": "operator-equivalent-catalog", "catalog_version": "equivalent:1", "calculated_at": "2026-09-02T13:04:00Z", "components": {}}], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
     }
   ]
 }

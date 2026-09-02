@@ -29,7 +29,7 @@ func native_scalar_attributes(value) {
 	for key in keys(value) {
 		if len(keys(clean)) < 128 {
 			next := value[key]
-			if type(next) == "string" || type(next) == "integer" || type(next) == "float" || type(next) == "boolean" || type(next) == "null" { clean[native_text(key, 160)] = next }
+			if type(next) == "string" || type(next) == "integer" || type(next) == "float" || type(next) == "bool" || type(next) == "boolean" || type(next) == "null" { clean[native_text(key, 160)] = next }
 		}
 	}
 	return clean

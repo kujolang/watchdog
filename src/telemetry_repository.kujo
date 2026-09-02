@@ -125,7 +125,10 @@ func repo_semantic_error(record) {
 		"watchdog.recovery.outcome": ["succeeded", "failed", "partial", "unknown"],
 		"watchdog.outcome.code": ["success", "error", "cancelled", "timeout", "denied", "partial", "unknown"],
 		"watchdog.timing.source": ["producer_clock", "watchdog_proxy_clock", "provider_reported", "unavailable_buffered_transport", "unknown"],
-		"watchdog.first_output.unit": ["token", "content_delta", "byte", "chunk", "unknown"]
+		"watchdog.first_output.unit": ["token", "content_delta", "byte", "chunk", "unknown"],
+		"watchdog.context.limit_source": ["provider_reported", "versioned_catalog", "operator_config", "unknown"],
+		"watchdog.context.pressure": ["normal", "warning", "critical", "overflow", "unknown"],
+		"watchdog.cost.evidence": ["response_usage", "billing_api", "invoice", "catalog", "subscription_equivalent", "producer_assertion", "unknown"]
 	}
 	for key in keys(enums) {
 		if has_key(attributes, key) && repo_in_enum(attributes[key], enums[key]) == false { return "invalid enum for " + key }
@@ -151,6 +154,24 @@ func repo_semantic_error(record) {
 		if type(usage) == "dict" { output_tokens = repo_get(usage, "output_tokens", null) }
 		if type(duration) == "null" || type(output_tokens) == "null" || parse_float(to_string(duration)) <= 0.0 || parse_float(to_string(output_tokens)) <= 0.0 { return "throughput requires positive output tokens and generation duration" }
 	}
+	context_window := repo_get(attributes, "watchdog.context.window_tokens", null)
+	if type(context_window) != "null" {
+		window_number := 0
+		try { window_number = parse_int(to_string(context_window)) } except err { return "watchdog.context.window_tokens must be a positive integer or null" }
+		if window_number <= 0 { return "watchdog.context.window_tokens must be a positive integer or null" }
+	}
+	context_ratio := repo_get(attributes, "watchdog.context.utilization_ratio", null)
+	if type(context_ratio) != "null" {
+		ratio_number := 0.0
+		try { ratio_number = parse_float(to_string(context_ratio)) } except err { return "watchdog.context.utilization_ratio must be non-negative or null" }
+		if ratio_number < 0.0 || type(context_window) == "null" { return "context utilization requires a known positive window" }
+	}
+	if repo_get(attributes, "watchdog.context.limit_source", "") == "versioned_catalog" && repo_text(repo_get(attributes, "watchdog.context.catalog_version", ""), 80) == "" { return "catalog-derived context limit requires watchdog.context.catalog_version" }
+	if has_key(attributes, "watchdog.context.truncated") && type(attributes["watchdog.context.truncated"]) != "null" && type(attributes["watchdog.context.truncated"]) != "bool" && type(attributes["watchdog.context.truncated"]) != "boolean" { return "watchdog.context.truncated must be boolean or null" }
+	account_alias := repo_text(repo_get(attributes, "watchdog.billing.account_alias", ""), 160)
+	if account_alias != "" && (contains(account_alias, "@") || contains(account_alias, " ")) { return "billing account alias must be an operator-defined opaque alias" }
+	account_hash := repo_text(repo_get(attributes, "watchdog.billing.account_ref_hash", ""), 64)
+	if account_hash != "" && watchdog_telemetry_v2_is_hex_id(to_lower(account_hash), 64) == false { return "billing account reference must be a 64-character keyed pseudonym" }
 	return ""
 }
 
@@ -324,7 +345,7 @@ func repo_insert_batch_rows(db, batch) {
 		source := repo_get(record, "source", {})
 		terminal_outcome := null
 		if repo_projection(record, "watchdog.outcome.terminal") == true { terminal_outcome = repo_nullable_text(repo_projection(record, "watchdog.outcome.code"), 20) }
-		db_execute(db, "INSERT INTO telemetry_records_v2 (batch_dbid, producer_name, record_id, record_type, trace_id, span_id, parent_span_id, observed_at, started_at, ended_at, kind, name, status, source_json, references_json, attributes_json, usage_json, costs_json, error_json, content_json, privacy_json, canonical_json, canonical_sha256, logical_request_id, attempt_number, retry_of_request_id, terminal_outcome, time_to_first_output_ms, output_generation_duration_ms, output_tokens_per_second, application_name, harness_name, instrumentation_name, instrumentation_version, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [batch_dbid, producer_name, record_id, repo_text(record["record_type"], 20), repo_text(record["trace_id"], 32), repo_nullable_text(repo_get(record, "span_id", null), 16), repo_nullable_text(repo_get(record, "parent_span_id", null), 16), repo_text(record["observed_at"], 80), repo_nullable_text(repo_get(record, "started_at", null), 80), repo_nullable_text(repo_get(record, "ended_at", null), 80), repo_nullable_text(repo_get(record, "kind", null), 40), repo_nullable_text(repo_get(record, "name", null), 160), repo_text(repo_get(record, "status", "unset"), 20), to_json(source), to_json(references), to_json(repo_get(record, "attributes", {})), repo_nullable_json(repo_get(record, "usage", null)), to_json(repo_get(record, "costs", [])), repo_nullable_json(repo_get(record, "error", null)), to_json(repo_get(record, "content", [])), to_json(repo_get(record, "privacy", {})), canonical_json, repo_record_hash(record), repo_nullable_text(repo_projection(record, "watchdog.logical_request_id"), 160), repo_projection(record, "watchdog.attempt.number"), repo_relation_id(references, "retries"), terminal_outcome, repo_projection(record, "watchdog.time_to_first_output_ms"), repo_projection(record, "watchdog.output_generation_duration_ms"), repo_projection(record, "watchdog.output_tokens_per_second"), repo_nullable_text(repo_get(source, "application.name", null), 80), repo_nullable_text(repo_get(source, "harness.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.version", null), 40), received_at])
+		db_execute(db, "INSERT INTO telemetry_records_v2 (batch_dbid, producer_name, record_id, record_type, trace_id, span_id, parent_span_id, observed_at, started_at, ended_at, kind, name, status, source_json, references_json, attributes_json, usage_json, costs_json, error_json, content_json, privacy_json, canonical_json, canonical_sha256, logical_request_id, attempt_number, retry_of_request_id, terminal_outcome, time_to_first_output_ms, output_generation_duration_ms, output_tokens_per_second, context_window_tokens, context_utilization_ratio, application_name, harness_name, instrumentation_name, instrumentation_version, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [batch_dbid, producer_name, record_id, repo_text(record["record_type"], 20), repo_text(record["trace_id"], 32), repo_nullable_text(repo_get(record, "span_id", null), 16), repo_nullable_text(repo_get(record, "parent_span_id", null), 16), repo_text(record["observed_at"], 80), repo_nullable_text(repo_get(record, "started_at", null), 80), repo_nullable_text(repo_get(record, "ended_at", null), 80), repo_nullable_text(repo_get(record, "kind", null), 40), repo_nullable_text(repo_get(record, "name", null), 160), repo_text(repo_get(record, "status", "unset"), 20), to_json(source), to_json(references), to_json(repo_get(record, "attributes", {})), repo_nullable_json(repo_get(record, "usage", null)), to_json(repo_get(record, "costs", [])), repo_nullable_json(repo_get(record, "error", null)), to_json(repo_get(record, "content", [])), to_json(repo_get(record, "privacy", {})), canonical_json, repo_record_hash(record), repo_nullable_text(repo_projection(record, "watchdog.logical_request_id"), 160), repo_projection(record, "watchdog.attempt.number"), repo_relation_id(references, "retries"), terminal_outcome, repo_projection(record, "watchdog.time_to_first_output_ms"), repo_projection(record, "watchdog.output_generation_duration_ms"), repo_projection(record, "watchdog.output_tokens_per_second"), repo_projection(record, "watchdog.context.window_tokens"), repo_projection(record, "watchdog.context.utilization_ratio"), repo_nullable_text(repo_get(source, "application.name", null), 80), repo_nullable_text(repo_get(source, "harness.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.version", null), 40), received_at])
 		rows := db_query(db, "SELECT id FROM telemetry_records_v2 WHERE producer_name = ? AND record_id = ?", [producer_name, record_id])
 		if len(rows) > 0 {
 			record_dbid := rows[0]["id"]

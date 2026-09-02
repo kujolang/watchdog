@@ -49,13 +49,24 @@ duration and zero output tokens also produce null throughput.
 
 Context utilization requires an unambiguous usage numerator and a known limit
 with provenance. Default pressure thresholds are warning at 0.80, critical at
-0.95, and overflow above 1.0. Unknown limits remain null.
+0.95, and overflow above 1.0. `WDG_CONTEXT_WARNING_RATIO` and
+`WDG_CONTEXT_CRITICAL_RATIO` configure one global policy. Unknown limits or
+ambiguous `usage.total_semantics` remain null and `unknown`; cached input is
+never added to an already reported total. Catalog-derived values record the
+catalog version and calculation time from the independent
+`config/context_limit_catalog.json`, so later catalog changes do not reinterpret
+historical records.
 
 Cost kinds remain separate: provider-reported, catalog-estimated,
 subscription-value estimate, and unknown. Provider-reported does not mean
 invoice-backed unless `watchdog.cost.evidence` explicitly says `billing_api` or
 `invoice`. Account grouping may use an operator alias or keyed pseudonym only;
 credentials, emails, and raw billing identifiers are forbidden.
+
+Canonical cost arrays are immutable evidence. Repricing adds a separate
+`catalog_estimated` entry and never overwrites provider, billing API, invoice,
+subscription-equivalent, or unknown evidence. Stable account pseudonyms require
+an operator-held HMAC key; Watchdog does not derive them from raw identifiers.
 
 ## Replay and privacy
 

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "catalog_id": "watchdog-context-limits:2026-09-02",
+  "ownership": "Watchdog maintainers; update only from provider documentation and preserve historical versions in canonical records",
+  "models": {
+    "gpt-5.6-sol": {"window_tokens": 1050000, "source": "openai-model-documentation:2026-09-02"},
+    "gpt-5.6-terra": {"window_tokens": 1050000, "source": "openai-model-documentation:2026-09-02"},
+    "gpt-5.6-luna": {"window_tokens": 1050000, "source": "openai-model-documentation:2026-09-02"},
+    "fixture-context-100": {"window_tokens": 100, "source": "offline-test-fixture"}
+  },
+  "aliases": {
+    "gpt-daybreak-blue-latest": "gpt-5.6-sol"
+  }
+}

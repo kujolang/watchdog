@@ -38,8 +38,8 @@ timing_batch := parse_json(read_file("tests/fixtures/telemetry-v2/timing-context
 timing_validation := watchdog_telemetry_repository_validate(timing_batch)
 assert(timing_validation["ok"], "timing fixture invalid: " + timing_validation["error"])
 timing_insert := watchdog_telemetry_repository_insert(db, timing_batch)
-assert(timing_insert["ok"] && timing_insert["records"] == 4, "timing fixture did not persist")
-timing_rows := db_query(db, "SELECT record_id, time_to_first_output_ms, output_generation_duration_ms, output_tokens_per_second FROM telemetry_records_v2 WHERE producer_name = 'fixture-timing' ORDER BY record_id", [])
+assert(timing_insert["ok"] && timing_insert["records"] == 8, "timing/context/billing fixture did not persist")
+timing_rows := db_query(db, "SELECT record_id, time_to_first_output_ms, output_generation_duration_ms, output_tokens_per_second FROM telemetry_records_v2 WHERE producer_name = 'fixture-timing' AND record_id LIKE 'timing:%' ORDER BY record_id", [])
 assert(len(timing_rows) == 4, "timing projection count drift")
 valid_timing := db_query(db, "SELECT time_to_first_output_ms, output_generation_duration_ms, output_tokens_per_second FROM telemetry_records_v2 WHERE record_id = 'timing:producer:valid'", [])[0]
 assert(valid_timing["time_to_first_output_ms"] == 120 && valid_timing["output_generation_duration_ms"] == 2000 && valid_timing["output_tokens_per_second"] == 5.0, "producer timing projection drift")
@@ -47,6 +47,20 @@ buffered_timing := db_query(db, "SELECT time_to_first_output_ms, output_generati
 assert(type(buffered_timing["time_to_first_output_ms"]) == "null" && type(buffered_timing["output_tokens_per_second"]) == "null", "buffered timing became a fabricated value")
 partial_record := db_query(db, "SELECT canonical_json FROM telemetry_records_v2 WHERE record_id = 'timing:producer:partial-error'", [])[0]
 assert(contains(partial_record["canonical_json"], "watchdog.output.partial") && contains(partial_record["canonical_json"], "StreamError"), "partial stream evidence was not preserved")
+context_rows := db_query(db, "SELECT record_id, context_window_tokens, context_utilization_ratio, canonical_json FROM telemetry_records_v2 WHERE producer_name = 'fixture-timing' AND record_id LIKE 'context:%' ORDER BY record_id", [])
+assert(len(context_rows) == 3, "context fixture count drift")
+cached_context := db_query(db, "SELECT context_window_tokens, context_utilization_ratio, canonical_json FROM telemetry_records_v2 WHERE record_id = 'context:cached-warning'", [])[0]
+assert(cached_context["context_window_tokens"] == 100 && cached_context["context_utilization_ratio"] == 0.9, "cached tokens were double counted in context utilization")
+assert(contains(cached_context["canonical_json"], "\"watchdog.context.pressure\":\"warning\"") && contains(cached_context["canonical_json"], "\"watchdog.cost.evidence\":\"invoice\""), "context/cost provenance drift")
+unknown_context := db_query(db, "SELECT context_window_tokens, context_utilization_ratio, canonical_json FROM telemetry_records_v2 WHERE record_id = 'context:unknown'", [])[0]
+assert(type(unknown_context["context_window_tokens"]) == "null" && type(unknown_context["context_utilization_ratio"]) == "null" && contains(unknown_context["canonical_json"], "\"amount\":null"), "unknown context or cost became zero")
+overflow_context := db_query(db, "SELECT context_utilization_ratio, canonical_json FROM telemetry_records_v2 WHERE record_id = 'context:overflow-catalog'", [])[0]
+assert(overflow_context["context_utilization_ratio"] == 1.1 && contains(overflow_context["canonical_json"], "\"watchdog.context.pressure\":\"overflow\""), "overflow context drift")
+provider_cost := db_query(db, "SELECT canonical_json FROM telemetry_records_v2 WHERE record_id = 'context:cached-warning'", [])[0]["canonical_json"]
+catalog_cost := db_query(db, "SELECT canonical_json FROM telemetry_records_v2 WHERE record_id = 'context:overflow-catalog'", [])[0]["canonical_json"]
+subscription_cost := db_query(db, "SELECT canonical_json FROM telemetry_records_v2 WHERE record_id = 'cost:subscription-value'", [])[0]["canonical_json"]
+unknown_cost := db_query(db, "SELECT canonical_json FROM telemetry_records_v2 WHERE record_id = 'context:unknown'", [])[0]["canonical_json"]
+assert(contains(provider_cost, "provider_reported") && contains(catalog_cost, "catalog_estimated") && contains(subscription_cost, "subscription_value_estimate") && contains(unknown_cost, "unknown"), "cost evidence kinds were merged")
 
 negative := parse_json(to_json(timing_batch))
 negative["batch_id"] = "fixture:negative-timing"
@@ -57,5 +71,15 @@ negative_record["attributes"] = negative_attributes
 negative["records"] = [negative_record]
 negative_result := watchdog_telemetry_repository_validate(negative)
 assert(negative_result["ok"] == false && negative_result["error_code"] == "invalid_semantics", "negative timing was accepted")
+
+bad_account := parse_json(to_json(timing_batch))
+bad_account["batch_id"] = "fixture:bad-account"
+bad_account_record := bad_account["records"][4]
+bad_account_attributes := bad_account_record["attributes"]
+bad_account_attributes["watchdog.billing.account_alias"] = "person@example.com"
+bad_account_record["attributes"] = bad_account_attributes
+bad_account["records"] = [bad_account_record]
+bad_account_result := watchdog_telemetry_repository_validate(bad_account)
+assert(bad_account_result["ok"] == false && bad_account_result["error_code"] == "invalid_semantics", "raw billing identity was accepted")
 
 print("telemetry_observability_semantics_check: PASS")
