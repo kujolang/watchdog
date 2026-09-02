@@ -66,6 +66,8 @@ function startUpstreamStub(port) {
 				path: req.url || '',
 				authorization: req.headers.authorization || '',
 				contentType: req.headers['content-type'] || '',
+				traceparent: req.headers.traceparent || '',
+				tracestate: req.headers.tracestate || '',
 				body,
 			});
 
@@ -262,10 +264,14 @@ async function runPassthroughScenario(stubPort, received) {
 				'X-Observe-Correlation-Id': 'trace-pi-proxy',
 				'X-Observe-Trace-Id': 'trace-pi-proxy',
 				'X-Observe-Parent-Span-Id': 'turn-1',
+				traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+				tracestate: 'vendor=value',
 			},
 			JSON.stringify({ model: 'gpt-4.1-mini', messages: [{ role: 'user', content: 'json path' }] })
 		);
 		assert.strictEqual(jsonResp.status, 200, 'passthrough JSON proxy call should succeed');
+		assert.strictEqual(received[received.length - 1].traceparent, '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01');
+		assert.strictEqual(received[received.length - 1].tracestate, 'vendor=value');
 		console.log('proxy_integration_stub_suite: json passthrough ok');
 
 		const namedProfileResp = await httpRequest(
@@ -421,9 +427,9 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_completed'));
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_failed'));
 		const correlatedTraces = await getApiData(watchdogPort, '/api/traces?session_id=sess_proxy_stub_pass&page_size=50');
-		assert.ok(correlatedTraces.some(trace => String(trace.trace_id) === 'trace-pi-proxy'), 'proxy request should create or update the producer trace');
-		const correlatedSpans = await getApiData(watchdogPort, '/api/trace-spans?trace_id=trace-pi-proxy&page_size=50');
-		assert.ok(correlatedSpans.some(span => String(span.span_kind) === 'model' && String(span.parent_span_id) === 'turn-1'), 'proxy model span should attach to the producer turn span');
+		assert.ok(correlatedTraces.some(trace => String(trace.trace_id) === '0123456789abcdef0123456789abcdef'), 'valid W3C trace context should take precedence over compatibility IDs');
+		const correlatedSpans = await getApiData(watchdogPort, '/api/trace-spans?trace_id=0123456789abcdef0123456789abcdef&page_size=50');
+		assert.ok(correlatedSpans.some(span => String(span.span_kind) === 'model' && String(span.parent_span_id) === '0123456789abcdef'), 'proxy model span should attach to the W3C parent span');
 		const canonical = await getApiData(watchdogPort, '/api/telemetry/v2/records?limit=100');
 		const canonicalRows = Array.isArray(canonical.records) ? canonical.records.map(row => row.record) : [];
 		const normalizedUsage = canonicalRows.map(row => row.usage).find(usage => usage && usage.cached_input_tokens === 2);

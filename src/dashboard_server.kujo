@@ -25,6 +25,7 @@ from telemetry_v2 import watchdog_telemetry_v2_version
 from telemetry_v2 import watchdog_telemetry_v2_canonical_id
 from telemetry_v2 import watchdog_telemetry_v2_status
 from telemetry_v2 import watchdog_telemetry_v2_timestamp
+from telemetry_v2 import watchdog_telemetry_v2_is_hex_id
 from telemetry_delivery import watchdog_delivery_enqueue_batch
 from telemetry_delivery import watchdog_delivery_load_profiles
 from telemetry_delivery import watchdog_delivery_profile_ids
@@ -2853,8 +2854,33 @@ func resolve_correlation_id(req, parsed_payload) {
 	return ""
 }
 
+func valid_traceparent(raw_value) {
+	text := to_lower(trim(to_string(raw_value)))
+	parts := split(text, "-")
+	if len(parts) != 4 { return false }
+	if len(parts[0]) != 2 || parts[0] == "ff" { return false }
+	if watchdog_telemetry_v2_is_hex_id(parts[1], 32) == false { return false }
+	if watchdog_telemetry_v2_is_hex_id(parts[2], 16) == false { return false }
+	if len(parts[3]) != 2 { return false }
+	i := 0
+	while i < 2 {
+		if contains("0123456789abcdef", substring(parts[3], i, i + 1)) == 0 { return false }
+		i = i + 1
+	}
+	return true
+}
+
+func traceparent_parts(req) {
+	headers := safe_dict_get(req, "headers", {})
+	value := to_lower(trim(get_header(headers, "traceparent")))
+	if valid_traceparent(value) == false { return [] }
+	return split(value, "-")
+}
+
 func resolve_trace_id(req, parsed_payload) {
 	headers := safe_dict_get(req, "headers", {})
+	trace_parts := traceparent_parts(req)
+	if len(trace_parts) == 4 { return trace_parts[1] }
 	trace_id := get_header(headers, "x-observe-trace-id")
 	if trace_id != "" {
 		return normalize_identifier(trace_id)
@@ -2872,6 +2898,8 @@ func resolve_trace_id(req, parsed_payload) {
 
 func resolve_parent_span_id(req, parsed_payload) {
 	headers := safe_dict_get(req, "headers", {})
+	trace_parts := traceparent_parts(req)
+	if len(trace_parts) == 4 { return trace_parts[2] }
 	span_id := get_header(headers, "x-observe-parent-span-id")
 	if span_id != "" {
 		return normalize_identifier(span_id)
@@ -3161,6 +3189,12 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 	x_title := get_header(headers_in, "X-Title")
 	if x_title != "" {
 		headers_out["X-Title"] := x_title
+	}
+	traceparent := to_lower(trim(get_header(headers_in, "traceparent")))
+	if valid_traceparent(traceparent) { headers_out["traceparent"] := traceparent }
+	tracestate := trim(get_header(headers_in, "tracestate"))
+	if valid_traceparent(traceparent) && tracestate != "" && len(tracestate) <= 512 && contains(tracestate, "\n") == 0 && contains(tracestate, "\r") == 0 {
+		headers_out["tracestate"] := tracestate
 	}
 
 	request_options := {
