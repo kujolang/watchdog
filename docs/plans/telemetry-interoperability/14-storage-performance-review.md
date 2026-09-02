@@ -66,7 +66,7 @@ gates.
 ## 2026-09-01 reference-machine result and release decision
 
 Reference machine: Intel Core i7-9750H, 16 GiB RAM, macOS 26.3.1. The paired
-quick run used a release Kujo interpreter and 12 samples per path. It measured
+quick run used the available release Kujo 1.2.1 interpreter and 12 samples per path. It measured
 nonstream overhead p50 76.73 ms, p95/p99 114.29 ms; streaming TTFT overhead p95
 158.05 ms; RSS delta 2.38 MiB; and 16.2 KiB/event database growth. The quick
 canonical run achieved 17.23, 20.52, and 24.27 accepted events/s for the nominal

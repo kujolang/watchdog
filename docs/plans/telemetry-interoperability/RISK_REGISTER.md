@@ -31,6 +31,9 @@ No risk here justifies Kafka, Kubernetes, Postgres, Redis, Elasticsearch, or Cli
 - **R13 remains open and blocks production promotion:** Kujo's current POST
   client buffers the complete upstream response. Streaming TTFT and nonstream
   proxy overhead miss the target budgets; see the measured release decision.
+- **R5 remains performance-open:** destination failure never changes model
+  success and network delivery stays off-path, but quick runs have not
+  consistently held the <=2 ms proxy p95 delta when queueing is enabled.
 - **R15 is constrained, not implemented as in-database multitenancy:** Watchdog
   supports one operator/auth trust boundary per database. Tenant/project filters
   prevent accidental query mixing, but are not row-level authorization. Shared

@@ -34,7 +34,7 @@
 - [x] Paired direct/proxy harness measures nonstream and stream p50/p95/p99, TTFT, CPU, RSS, and DB bytes/event.
 - [x] Reference-machine results meet budgets in `14-storage-performance-review.md` or a documented release decision explicitly revises them.
 - [ ] 10/50/200 events/s sustained and 1k burst tests prove the supported SQLite envelope, including dashboard reads, exporter outage/recovery, and retention.
-- [x] Optional exporter outage changes proxy p95 by <=2 ms relative to exporter disabled and never changes model request success in the quick paired harness. Strict release gating is available through `WDG_REQUIRE_EXPORTER_ISOLATION_BUDGET=true`.
+- [ ] Optional exporter outage changes proxy p95 by <=2 ms relative to exporter disabled and never changes model request success. Model success isolation passes, but repeated quick runs do not yet hold the 2 ms p95 delta; strict gating is available through `WDG_REQUIRE_EXPORTER_ISOLATION_BUDGET=true`.
 
 ## Integration proof and release
 
@@ -46,4 +46,5 @@
 
 Unchecked items are release blockers, not omitted evidence. The current blockers
 are the 30-minute 10/50/200 EPS qualification (the quick run supports only the
-10 EPS envelope) and production streaming/per-request performance.
+10 EPS envelope), production streaming/per-request performance, and the strict
+2 ms exporter-enabled p95 delta.
