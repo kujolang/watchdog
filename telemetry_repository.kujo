@@ -32,6 +32,29 @@ func repo_nullable_json(value) {
 	return to_json(value)
 }
 
+# RFC 8785-style stable object ordering for the bounded canonical record shape.
+# Arrays retain producer order; scalars use the runtime JSON encoder for escaping.
+func repo_canonical_json(value) {
+	value_type := type(value)
+	if value_type == "dict" {
+		parts := []
+		for key in sort(keys(value)) {
+			parts = push(parts, to_json(to_string(key)) + ":" + repo_canonical_json(value[key]))
+		}
+		return "{" + join(parts, ",") + "}"
+	}
+	if value_type == "array" {
+		parts := []
+		for item in value { parts = push(parts, repo_canonical_json(item)) }
+		return "[" + join(parts, ",") + "]"
+	}
+	return to_json(value)
+}
+
+func repo_record_hash(record) {
+	return sha256(repo_canonical_json(record))
+}
+
 func repo_valid_timestamp(value) {
 	text := repo_text(value, 80)
 	if len(text) < 20 || contains(text, "T") == 0 { return false }
@@ -170,8 +193,41 @@ func repo_insert_batch_rows(db, batch) {
 	batch_id := repo_text(batch["batch_id"], 160)
 	records := batch["records"]
 	existing := db_query(db, "SELECT id, record_count FROM telemetry_batches_v2 WHERE producer_name = ? AND batch_id = ?", [producer_name, batch_id])
+	conflicts := []
+	identical := {}
+	for record in records {
+		record_id := repo_text(record["record_id"], 160)
+		incoming_sha256 := repo_record_hash(record)
+		prior := db_query(db, "SELECT id, canonical_json, canonical_sha256 FROM telemetry_records_v2 WHERE producer_name = ? AND record_id = ?", [producer_name, record_id])
+		if len(prior) > 0 {
+			parsed_prior := parse_json(prior[0]["canonical_json"])
+			existing_sha256 := repo_text(repo_get(prior[0], "canonical_sha256", ""), 64)
+			if existing_sha256 == "" {
+				existing_sha256 = repo_record_hash(parsed_prior)
+				db_execute(db, "UPDATE telemetry_records_v2 SET canonical_sha256 = ? WHERE id = ? AND (canonical_sha256 IS NULL OR canonical_sha256 = '')", [existing_sha256, prior[0]["id"]])
+			}
+			if existing_sha256 == incoming_sha256 {
+				identical[record_id] = true
+			} else {
+				conflicts = push(conflicts, {"record_id": record_id, "existing_sha256": existing_sha256, "incoming_sha256": incoming_sha256})
+			}
+		}
+	}
+	if len(conflicts) > 0 || (len(existing) > 0 && (existing[0]["record_count"] != len(records) || len(keys(identical)) != len(records))) {
+		if len(conflicts) == 0 {
+			conflicts = push(conflicts, {"record_id": "batch:" + batch_id, "existing_sha256": sha256("existing:" + to_string(existing[0]["record_count"])), "incoming_sha256": sha256("incoming:" + to_string(len(records)))})
+		}
+		created_at := to_string(current_timestamp())
+		for conflict in conflicts {
+			db_execute(db, "INSERT INTO telemetry_record_conflicts_v2 (producer_name, record_id, batch_id, existing_sha256, incoming_sha256, result, created_at) VALUES (?,?,?,?,?,'rejected',?)", [producer_name, conflict["record_id"], batch_id, conflict["existing_sha256"], conflict["incoming_sha256"], created_at])
+		}
+		return {"ok": false, "error": "record_identity_conflict", "error_code": "record_identity_conflict", "records": 0, "deduplicated": false, "conflicts": len(conflicts)}
+	}
 	if len(existing) > 0 {
 		return {"ok": true, "error": "", "batch_dbid": existing[0]["id"], "records": existing[0]["record_count"], "deduplicated": true}
+	}
+	if len(keys(identical)) == len(records) {
+		return {"ok": true, "error": "", "batch_dbid": 0, "records": 0, "deduplicated": true}
 	}
 
 	received_at := to_string(current_timestamp())
@@ -181,8 +237,10 @@ func repo_insert_batch_rows(db, batch) {
 	inserted := 0
 	for record in records {
 		record_id := repo_text(record["record_id"], 160)
+		if has_key(identical, record_id) { continue }
 		references := repo_get(record, "references", [])
-		db_execute(db, "INSERT INTO telemetry_records_v2 (batch_dbid, producer_name, record_id, record_type, trace_id, span_id, parent_span_id, observed_at, started_at, ended_at, kind, name, status, source_json, references_json, attributes_json, usage_json, costs_json, error_json, content_json, privacy_json, canonical_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(producer_name, record_id) DO UPDATE SET batch_dbid = excluded.batch_dbid, parent_span_id = COALESCE(excluded.parent_span_id, telemetry_records_v2.parent_span_id), observed_at = excluded.observed_at, started_at = COALESCE(excluded.started_at, telemetry_records_v2.started_at), ended_at = COALESCE(excluded.ended_at, telemetry_records_v2.ended_at), kind = COALESCE(excluded.kind, telemetry_records_v2.kind), name = COALESCE(excluded.name, telemetry_records_v2.name), status = excluded.status, source_json = excluded.source_json, references_json = excluded.references_json, attributes_json = excluded.attributes_json, usage_json = COALESCE(excluded.usage_json, telemetry_records_v2.usage_json), costs_json = excluded.costs_json, error_json = excluded.error_json, content_json = excluded.content_json, privacy_json = excluded.privacy_json, canonical_json = excluded.canonical_json", [batch_dbid, producer_name, record_id, repo_text(record["record_type"], 20), repo_text(record["trace_id"], 32), repo_nullable_text(repo_get(record, "span_id", null), 16), repo_nullable_text(repo_get(record, "parent_span_id", null), 16), repo_text(record["observed_at"], 80), repo_nullable_text(repo_get(record, "started_at", null), 80), repo_nullable_text(repo_get(record, "ended_at", null), 80), repo_nullable_text(repo_get(record, "kind", null), 40), repo_nullable_text(repo_get(record, "name", null), 160), repo_text(repo_get(record, "status", "unset"), 20), to_json(repo_get(record, "source", {})), to_json(references), to_json(repo_get(record, "attributes", {})), repo_nullable_json(repo_get(record, "usage", null)), to_json(repo_get(record, "costs", [])), repo_nullable_json(repo_get(record, "error", null)), to_json(repo_get(record, "content", [])), to_json(repo_get(record, "privacy", {})), to_json(record), received_at])
+		canonical_json := repo_canonical_json(record)
+		db_execute(db, "INSERT INTO telemetry_records_v2 (batch_dbid, producer_name, record_id, record_type, trace_id, span_id, parent_span_id, observed_at, started_at, ended_at, kind, name, status, source_json, references_json, attributes_json, usage_json, costs_json, error_json, content_json, privacy_json, canonical_json, canonical_sha256, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [batch_dbid, producer_name, record_id, repo_text(record["record_type"], 20), repo_text(record["trace_id"], 32), repo_nullable_text(repo_get(record, "span_id", null), 16), repo_nullable_text(repo_get(record, "parent_span_id", null), 16), repo_text(record["observed_at"], 80), repo_nullable_text(repo_get(record, "started_at", null), 80), repo_nullable_text(repo_get(record, "ended_at", null), 80), repo_nullable_text(repo_get(record, "kind", null), 40), repo_nullable_text(repo_get(record, "name", null), 160), repo_text(repo_get(record, "status", "unset"), 20), to_json(repo_get(record, "source", {})), to_json(references), to_json(repo_get(record, "attributes", {})), repo_nullable_json(repo_get(record, "usage", null)), to_json(repo_get(record, "costs", [])), repo_nullable_json(repo_get(record, "error", null)), to_json(repo_get(record, "content", [])), to_json(repo_get(record, "privacy", {})), canonical_json, repo_record_hash(record), received_at])
 		rows := db_query(db, "SELECT id FROM telemetry_records_v2 WHERE producer_name = ? AND record_id = ?", [producer_name, record_id])
 		if len(rows) > 0 {
 			record_dbid := rows[0]["id"]
@@ -218,3 +276,5 @@ func repo_insert_batch_fast(db, batch) {
 export watchdog_telemetry_repository_validate := repo_validate_batch
 export watchdog_telemetry_repository_insert := repo_insert_batch
 export watchdog_telemetry_repository_insert_fast := repo_insert_batch_fast
+export watchdog_telemetry_repository_canonical_json := repo_canonical_json
+export watchdog_telemetry_repository_record_hash := repo_record_hash

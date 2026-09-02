@@ -1,0 +1,59 @@
+from watchdog_shared import watchdog_ensure_schema
+from telemetry_repository import watchdog_telemetry_repository_canonical_json
+from telemetry_repository import watchdog_telemetry_repository_insert
+from telemetry_repository import watchdog_telemetry_repository_record_hash
+
+db_path := env("WDG_TEST_DB_PATH")
+assert(type(db_path) == "string" && trim(db_path) != "", "WDG_TEST_DB_PATH is required")
+db := db_connect("sqlite", db_path)
+watchdog_ensure_schema(db)
+
+batch := parse_json(read_file("tests/fixtures/telemetry-v2/canonical-minimal.json"))
+first := watchdog_telemetry_repository_insert(db, batch)
+assert(first["ok"] == true && first["deduplicated"] == false, "initial insert failed")
+
+same_record_batch := parse_json(to_json(batch))
+same_record_batch["batch_id"] = "fixture:identity:same-record-new-batch"
+same := watchdog_telemetry_repository_insert(db, same_record_batch)
+assert(same["ok"] == true && same["deduplicated"] == true, "identical record in a new batch did not deduplicate")
+
+before := db_query(db, "SELECT canonical_json, canonical_sha256, references_json FROM telemetry_records_v2 WHERE producer_name = 'fixture' AND record_id = 'trace:fixture:1'", [])[0]
+conflicting := parse_json(to_json(batch))
+conflicting["batch_id"] = "fixture:identity:conflict"
+conflicting_record := conflicting["records"][0]
+conflicting_record["name"] = "mutated evidence"
+conflicting["records"] = [conflicting_record]
+conflict := watchdog_telemetry_repository_insert(db, conflicting)
+assert(conflict["ok"] == false && conflict["error_code"] == "record_identity_conflict", "conflicting identity was not rejected")
+after := db_query(db, "SELECT canonical_json, canonical_sha256, references_json FROM telemetry_records_v2 WHERE producer_name = 'fixture' AND record_id = 'trace:fixture:1'", [])[0]
+assert(before["canonical_json"] == after["canonical_json"], "conflict mutated canonical JSON")
+assert(before["canonical_sha256"] == after["canonical_sha256"], "conflict mutated canonical hash")
+assert(before["references_json"] == after["references_json"], "conflict mutated references")
+
+mixed := parse_json(to_json(conflicting))
+mixed["batch_id"] = "fixture:identity:atomic"
+new_record := parse_json(to_json(batch["records"][0]))
+new_record["record_id"] = "trace:fixture:atomic-new"
+new_record["trace_id"] = "1123456789abcdef0123456789abcdef"
+mixed["records"] = [new_record, conflicting_record]
+mixed_result := watchdog_telemetry_repository_insert(db, mixed)
+assert(mixed_result["ok"] == false, "mixed conflicting batch was accepted")
+assert(len(db_query(db, "SELECT id FROM telemetry_records_v2 WHERE record_id = 'trace:fixture:atomic-new'", [])) == 0, "conflicting batch partially persisted")
+
+ordered_a := {"z": [null, 0, false], "a": {"second": 2, "first": 1}}
+ordered_b := {"a": {"first": 1, "second": 2}, "z": [null, 0, false]}
+assert(watchdog_telemetry_repository_canonical_json(ordered_a) == watchdog_telemetry_repository_canonical_json(ordered_b), "canonical JSON depends on object key order")
+assert(watchdog_telemetry_repository_record_hash(ordered_a) == watchdog_telemetry_repository_record_hash(ordered_b), "canonical hash depends on object key order")
+assert(watchdog_telemetry_repository_record_hash({"value": null}) != watchdog_telemetry_repository_record_hash({"value": 0}), "null and zero hashes collapsed")
+assert(watchdog_telemetry_repository_record_hash({}) != watchdog_telemetry_repository_record_hash({"value": null}), "absent and null hashes collapsed")
+
+conflicts := db_query(db, "SELECT producer_name, record_id, batch_id, existing_sha256, incoming_sha256, result FROM telemetry_record_conflicts_v2 ORDER BY id", [])
+assert(len(conflicts) == 2, "conflict journal count drift")
+assert(conflicts[0]["result"] == "rejected" && len(conflicts[0]["existing_sha256"]) == 64 && len(conflicts[0]["incoming_sha256"]) == 64, "conflict journal evidence invalid")
+columns := db_query(db, "PRAGMA table_info(telemetry_record_conflicts_v2)", [])
+for column in columns {
+	name := to_lower(to_string(column["name"]))
+	assert(contains(name, "json") <= 0 && contains(name, "payload") <= 0 && contains(name, "content") <= 0 && contains(name, "attributes") <= 0, "conflict journal exposes payload column")
+}
+
+print("telemetry_v2_identity_conflict_check: PASS")

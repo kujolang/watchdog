@@ -114,7 +114,8 @@ async function run() {
 		assert.strictEqual(after.body, '', 'cursor resume repeated records');
 		const replayFirst = await request('POST', '/telemetry/v2/jsonl/replay', jsonl.body);
 		assert.strictEqual(replayFirst.status, 200, replayFirst.body);
-		assert.strictEqual(JSON.parse(replayFirst.body).data.accepted, 1);
+		assert.strictEqual(JSON.parse(replayFirst.body).data.accepted, 0);
+		assert.strictEqual(JSON.parse(replayFirst.body).data.deduplicated, 1, 'lossless JSONL replay should deduplicate an existing canonical record');
 		const replaySecond = await request('POST', '/telemetry/v2/jsonl/replay', jsonl.body);
 		assert.strictEqual(JSON.parse(replaySecond.body).data.deduplicated, 1, 'JSONL replay was not idempotent');
 

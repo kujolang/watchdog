@@ -1,0 +1,53 @@
+# Canonical observability semantics
+
+Watchdog keeps the `watchdog.telemetry.v2` envelope and opts new records into
+the stricter `watchdog.observability.v1` profile with
+`source["watchdog.semantic_profile"]`. Records without the profile remain valid.
+Canonical JSON after Watchdog privacy policy is authoritative and immutable for
+each `(producer.name, record_id)` identity.
+
+## Identity and causal vocabulary
+
+`producer.name` and `producer.version` identify the delivery integration. The
+bounded record source may identify `application`, `harness`, `runtime`, and
+`instrumentation` names and versions, plus adapter and original-schema
+provenance. Missing versions are absent; they are not written as `unknown`.
+
+Each model attempt is a separate span. A stable logical request uses a
+`request` reference with relation `attempt_of`. Explicit `retries`,
+`fallback_from`, and `recovers` relations identify the prior request. Watchdog
+never infers those relations from session order, model changes, or timestamps.
+Attempt numbers begin at 1.
+
+Terminal decisions use `watchdog.operation.completed`,
+`watchdog.operation.recovered`, or `watchdog.operation.cancelled` events. A
+successful span is not by itself evidence of terminal completion.
+
+## Timing, context, and cost
+
+First-output timing is stored only when a producer or transport observes it.
+Buffered proxy responses use timing source `unavailable_buffered_transport` and
+leave first-output and generation metrics null. Zero or negative generation
+duration and zero output tokens also produce null throughput.
+
+Context utilization requires an unambiguous usage numerator and a known limit
+with provenance. Default pressure thresholds are warning at 0.80, critical at
+0.95, and overflow above 1.0. Unknown limits remain null.
+
+Cost kinds remain separate: provider-reported, catalog-estimated,
+subscription-value estimate, and unknown. Provider-reported does not mean
+invoice-backed unless `watchdog.cost.evidence` explicitly says `billing_api` or
+`invoice`. Account grouping may use an operator alias or keyed pseudonym only;
+credentials, emails, and raw billing identifiers are forbidden.
+
+## Replay and privacy
+
+Exact batch replay and semantically identical records in later batches
+deduplicate. A different post-policy canonical hash for an existing record ID
+returns `409 record_identity_conflict`; the original record, references, and
+export delivery remain unchanged. The conflict journal contains bounded IDs,
+hashes, outcome, and time only—never record payloads.
+
+Content capture stays off by default. All new fields are bounded metadata and
+pass through the same authoritative redaction/policy boundary before hashing,
+persistence, JSONL, or OTLP export.

@@ -925,11 +925,11 @@ func redaction_enabled() {
 }
 
 func string_has_sensitive_term(value) {
-	text := to_lower(to_string(value))
+	sensitive_scan_text := to_lower(to_string(value))
 	i := 0
 	while i < len(REDACT_TERMS) {
 		term := to_string(REDACT_TERMS[i])
-		if term != "" && contains(text, term) {
+		if term != "" && contains(sensitive_scan_text, term) {
 			return true
 		}
 		i := i + 1
@@ -3628,6 +3628,10 @@ server := server.route("POST", "/telemetry/v2/batches", func(req) {
 	}
 	try {
 		result := persist_canonical_batch(body)
+		if result["ok"] == false && safe_dict_get(result, "error_code", "") == "record_identity_conflict" {
+			insert_audit_event("canonical_telemetry_intake", resolve_audit_actor_key(req, "api"), "conflict", {"batch_id": external_text(body, "batch_id", "", 160), "producer": external_text(safe_dict_get(body, "producer", {}), "name", "external", 80), "error_code": "record_identity_conflict"})
+			return api_error(409, "record_identity_conflict")
+		}
 		insert_audit_event("canonical_telemetry_intake", resolve_audit_actor_key(req, "api"), "success", {
 			"batch_id": external_text(body, "batch_id", "", 160),
 			"producer": external_text(safe_dict_get(body, "producer", {}), "name", "external", 80),
@@ -3718,7 +3722,10 @@ server := server.route("POST", "/telemetry/v2/jsonl/replay", func(req) {
 				"records": [record]
 			}
 			result := persist_canonical_batch(batch)
-			if result["ok"] == false { return api_error(400, result["error"]) }
+			if result["ok"] == false {
+				if safe_dict_get(result, "error_code", "") == "record_identity_conflict" { return api_error(409, "record_identity_conflict") }
+				return api_error(400, result["error"])
+			}
 			if result["deduplicated"] { deduplicated = deduplicated + 1 } else { accepted = accepted + 1 }
 		}
 	}
@@ -4732,6 +4739,7 @@ server := server.route("POST", "/api/admin/prune", func(req) {
 	canonical_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_records_v2 WHERE " + canonical_prune_filter, [before_ms])
 	export_delivery_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_export_deliveries WHERE status IN ('sent','dead','dropped') AND updated_at_ms < ?", [before_ms])
 	dead_letter_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_export_dead_letters WHERE created_at_ms < ?", [before_ms])
+	conflict_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_record_conflicts_v2 WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
 
 	counts := {
 		"requests": request_rows[0]["n"],
@@ -4742,10 +4750,12 @@ server := server.route("POST", "/api/admin/prune", func(req) {
 		"trace_events": event_rows[0]["n"],
 		"canonical_records": canonical_rows[0]["n"],
 		"export_deliveries": export_delivery_rows[0]["n"],
-		"export_dead_letters": dead_letter_rows[0]["n"]
+		"export_dead_letters": dead_letter_rows[0]["n"],
+		"record_conflicts": conflict_rows[0]["n"]
 	}
 
 	if !dry_run {
+		db_execute(db, "DELETE FROM telemetry_record_conflicts_v2 WHERE CAST(created_at AS INTEGER) < ?", [before_ms])
 		db_execute(db, "DELETE FROM telemetry_export_dead_letters WHERE created_at_ms < ?", [before_ms])
 		db_execute(db, "DELETE FROM telemetry_export_deliveries WHERE status IN ('sent','dead','dropped') AND updated_at_ms < ?", [before_ms])
 		db_execute(db, "DELETE FROM telemetry_export_dead_letters WHERE record_dbid IN (SELECT id FROM telemetry_records_v2 WHERE " + canonical_prune_filter + ")", [before_ms])

@@ -175,7 +175,7 @@ func ingest_resource_service(resource) {
 	return "otlp-producer"
 }
 
-func ingest_map_span(span, service_name, scope_name, ordinal) {
+func ingest_map_span(span, service_name, scope_name, scope_version, ordinal) {
 	parsed_attributes := ingest_attributes(ingest_get(span, "attributes", []))
 	attributes := parsed_attributes["attributes"]
 	if ingest_ai_relevant(attributes) == false { return {"ok": false, "error": "span is not AI-relevant", "records": []} }
@@ -199,7 +199,7 @@ func ingest_map_span(span, service_name, scope_name, ordinal) {
 		"kind": ingest_kind(attributes),
 		"name": ingest_text(ingest_get(span, "name", "otlp.span"), 160),
 		"status": ingest_status(ingest_get(span, "status", {})),
-		"source": {"producer": service_name, "adapter_id": "watchdog.otlp-json-ingest", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "otlp-json", "scope_name": scope_name},
+		"source": {"producer": service_name, "adapter_id": "watchdog.otlp-json-ingest", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "otlp-json", "instrumentation.name": scope_name, "instrumentation.version": scope_version},
 		"references": ingest_references(attributes, service_name),
 		"attributes": attributes,
 		"usage": ingest_usage(attributes),
@@ -211,12 +211,18 @@ func ingest_map_span(span, service_name, scope_name, ordinal) {
 	span_records := [record]
 	events := ingest_get(span, "events", [])
 	if type(events) == "array" {
-		event_ordinal := 0
+		event_occurrences := {}
 		for event in events {
 			if len(span_records) < 16 && type(event) == "dict" {
 				event_attrs := ingest_attributes(ingest_get(event, "attributes", []))
-				span_records = push(span_records, {"record_id": "otlp:event:" + trace_id + ":" + span_id + ":" + to_string(event_ordinal), "record_type": "event", "trace_id": trace_id, "span_id": span_id, "parent_span_id": null, "observed_at": ingest_nano_timestamp(ingest_get(event, "timeUnixNano", ingest_get(span, "endTimeUnixNano", "0"))), "started_at": null, "ended_at": null, "kind": null, "name": ingest_text(ingest_get(event, "name", "event"), 160), "status": "unset", "source": {"producer": service_name, "adapter_id": "watchdog.otlp-json-ingest", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "otlp-json"}, "references": [], "attributes": event_attrs["attributes"], "usage": null, "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}})
-				event_ordinal = event_ordinal + 1
+				event_time := ingest_text(ingest_get(event, "timeUnixNano", ingest_get(span, "endTimeUnixNano", "0")), 40)
+				event_name := ingest_text(ingest_get(event, "name", "event"), 160)
+				duplicate_key := event_time + ":" + event_name
+				occurrence := 0
+				if has_key(event_occurrences, duplicate_key) { occurrence = event_occurrences[duplicate_key] }
+				event_occurrences[duplicate_key] = occurrence + 1
+				event_digest := substring(sha256(service_name + ":" + trace_id + ":" + span_id + ":" + event_time + ":" + event_name + ":" + to_string(occurrence)), 0, 32)
+				span_records = push(span_records, {"record_id": "otlp:event:" + event_digest, "record_type": "event", "trace_id": trace_id, "span_id": span_id, "parent_span_id": null, "observed_at": ingest_nano_timestamp(event_time), "started_at": null, "ended_at": null, "kind": null, "name": event_name, "status": "unset", "source": {"producer": service_name, "adapter_id": "watchdog.otlp-json-ingest", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "otlp-json", "instrumentation.name": scope_name, "instrumentation.version": scope_version}, "references": [], "attributes": event_attrs["attributes"], "usage": null, "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}})
 			}
 		}
 	}
@@ -239,11 +245,12 @@ func ingest_map(payload) {
 				for scope_span in scope_spans {
 					scope := ingest_get(scope_span, "scope", {})
 					scope_name := ingest_text(ingest_get(scope, "name", "unknown"), 80)
+					scope_version := ingest_text(ingest_get(scope, "version", ""), 40)
 					spans := ingest_get(scope_span, "spans", [])
 					if type(spans) == "array" {
 						for span in spans {
 							if len(records) < 100 {
-								mapped := ingest_map_span(span, service_name, scope_name, ordinal)
+								mapped := ingest_map_span(span, service_name, scope_name, scope_version, ordinal)
 								if mapped["ok"] == true {
 									mapped_records := mapped["records"]
 									for mapped_record in mapped_records { if len(records) < 100 { records = push(records, mapped_record) } }

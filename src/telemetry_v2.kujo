@@ -209,19 +209,21 @@ func v2_translate_v1(bundle, observed_at_ms) {
 	records := []
 	trace := v2_get(bundle, "trace", {})
 	if type(trace) != "dict" { trace = {} }
-	trace_source := v2_source(source_app, version, source_trace_id)
-	trace_record := v2_base_record("trace:" + source_trace_id, "trace", trace_id, null, null, observed_at, trace_source)
-	trace_record["name"] = v2_text(v2_get(trace, "name", "trace"), 160)
-	trace_record["status"] = v2_status(v2_get(trace, "status", "unset"))
-	trace_record["started_at"] = v2_rfc3339_from_ms(v2_get(trace, "started_at_ms", observed_at_ms), observed_at_ms)
-	trace_record["ended_at"] = v2_rfc3339_from_ms(v2_get(trace, "ended_at_ms", v2_get(trace, "started_at_ms", observed_at_ms)), observed_at_ms)
-	trace_record["usage"] = v2_usage_from_v1(trace)
-	trace_record["attributes"] = v2_get(trace, "attributes", {})
-	trace_source_fields := trace_record["source"]
-	trace_source_fields["source_trace_id"] = source_trace_id
-	trace_record["source"] = trace_source_fields
-	trace_record = v2_add_common_references(trace_record, source_app, bundle)
-	records = push(records, trace_record)
+	if has_key(bundle, "trace") && type(bundle["trace"]) == "dict" {
+		trace_source := v2_source(source_app, version, source_trace_id)
+		trace_record := v2_base_record("trace:" + source_trace_id, "trace", trace_id, null, null, observed_at, trace_source)
+		trace_record["name"] = v2_text(v2_get(trace, "name", "trace"), 160)
+		trace_record["status"] = v2_status(v2_get(trace, "status", "unset"))
+		trace_record["started_at"] = v2_rfc3339_from_ms(v2_get(trace, "started_at_ms", observed_at_ms), observed_at_ms)
+		trace_record["ended_at"] = v2_rfc3339_from_ms(v2_get(trace, "ended_at_ms", v2_get(trace, "started_at_ms", observed_at_ms)), observed_at_ms)
+		trace_record["usage"] = v2_usage_from_v1(trace)
+		trace_record["attributes"] = v2_get(trace, "attributes", {})
+		trace_source_fields := trace_record["source"]
+		trace_source_fields["source_trace_id"] = source_trace_id
+		trace_record["source"] = trace_source_fields
+		trace_record = v2_add_common_references(trace_record, source_app, bundle)
+		records = push(records, trace_record)
+	}
 
 	spans := v2_get(bundle, "spans", [])
 	if type(spans) == "array" {
