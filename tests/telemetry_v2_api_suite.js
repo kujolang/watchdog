@@ -139,6 +139,16 @@ async function run() {
 		const otlpRecords = JSON.parse((await request('GET', '/api/telemetry/v2/records?producer=fixture-otel-agent')).body).data.records;
 		assert.strictEqual(otlpRecords.length, 2, 'guarded OTLP records were not persisted');
 		assert.ok(!JSON.stringify(otlpRecords).includes('otlp-raw-prompt-canary'), 'OTLP prompt content leaked into storage');
+		const frameworkPayload = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/telemetry-v2/otlp-framework-traces.json'), 'utf8'));
+		const frameworkIntake = await request('POST', '/telemetry/v2/otlp/v1/traces', frameworkPayload);
+		assert.strictEqual(frameworkIntake.status, 200, frameworkIntake.body);
+		assert.strictEqual(JSON.parse(frameworkIntake.body).partialSuccess.rejectedSpans, 0);
+		const frameworkRecords = JSON.parse((await request('GET', '/api/telemetry/v2/records?producer=framework-interop-fixture&limit=20')).body).data.records;
+		assert.strictEqual(frameworkRecords.length, 7, 'framework OTLP fixture should accept all AI spans');
+		const frameworkText = JSON.stringify(frameworkRecords);
+		for (const scope of ['opentelemetry.instrumentation.langchain', 'openinference.instrumentation.llama_index', 'crewai.telemetry', 'autogen.telemetry', 'pydantic-ai', 'microsoft.semantic_kernel', 'openinference.instrumentation']) assert.ok(frameworkText.includes(scope), `missing framework scope ${scope}`);
+		assert.ok(frameworkText.includes('llm.token_count.prompt'), 'OpenInference token provenance was not preserved');
+		assert.ok(!frameworkText.includes('sensitive-document-canary'), 'OTLP retrieval content leaked into storage');
 	} catch (error) {
 		if (server) error.message += `\nServer output:\n${server.output().slice(-4000)}`;
 		throw error;

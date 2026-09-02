@@ -17,3 +17,8 @@ Watchdog strips OpenInference/GenAI prompt, response, tool argument/result, and 
 The receiver currently supports OTLP/HTTP JSON (`application/json`). Protobuf requests receive HTTP 415 with an `Accept-Post` hint. Deploy an OpenTelemetry Collector to translate OTLP protobuf to OTLP JSON when needed. This deliberate boundary avoids embedding a general collector/protobuf runtime in the local proxy.
 
 Frameworks that already emit AI-relevant OpenTelemetry or OpenInference should target this receiver instead of gaining a Watchdog-specific callback adapter. Generic infrastructure telemetry should go directly to the operator's collector.
+
+Offline conformance fixtures cover standard/OpenInference output shaped for
+LangChain, LlamaIndex, CrewAI, AutoGen, PydanticAI, and Semantic Kernel.
+OpenInference `llm.token_count.*` values map to canonical usage while remaining
+preserved as source usage provenance.

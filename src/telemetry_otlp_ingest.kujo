@@ -91,16 +91,19 @@ func ingest_nano_timestamp(value) {
 }
 
 func ingest_usage(attributes) {
+	input_tokens := ingest_get(attributes, "gen_ai.usage.input_tokens", ingest_get(attributes, "llm.token_count.prompt", null))
+	output_tokens := ingest_get(attributes, "gen_ai.usage.output_tokens", ingest_get(attributes, "llm.token_count.completion", null))
+	total_tokens := ingest_get(attributes, "watchdog.usage.total_tokens", ingest_get(attributes, "llm.token_count.total", null))
 	return {
-		"input_tokens": ingest_get(attributes, "gen_ai.usage.input_tokens", null),
-		"output_tokens": ingest_get(attributes, "gen_ai.usage.output_tokens", null),
-		"total_tokens": ingest_get(attributes, "watchdog.usage.total_tokens", null),
+		"input_tokens": input_tokens,
+		"output_tokens": output_tokens,
+		"total_tokens": total_tokens,
 		"cached_input_tokens": ingest_get(attributes, "watchdog.usage.cached_input_tokens", null),
 		"cache_write_input_tokens": ingest_get(attributes, "watchdog.usage.cache_write_input_tokens", null),
 		"reasoning_tokens": ingest_get(attributes, "watchdog.usage.reasoning_tokens", null),
 		"usage_source": "otlp",
 		"total_semantics": "source_preserved",
-		"provider_usage": null
+		"provider_usage": {"gen_ai.usage.input_tokens": ingest_get(attributes, "gen_ai.usage.input_tokens", null), "gen_ai.usage.output_tokens": ingest_get(attributes, "gen_ai.usage.output_tokens", null), "llm.token_count.prompt": ingest_get(attributes, "llm.token_count.prompt", null), "llm.token_count.completion": ingest_get(attributes, "llm.token_count.completion", null), "llm.token_count.total": ingest_get(attributes, "llm.token_count.total", null)}
 	}
 }
 
