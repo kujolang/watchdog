@@ -55,14 +55,26 @@ async function run() {
 		const direct = await timedRequest(upstreamPort, '/v1/chat/completions');
 		const proxied = await timedRequest(watchdogPort, '/proxy/v1/chat/completions');
 		assert.ok(direct.firstByteMs < 180, `direct first chunk was unexpectedly late: ${direct.firstByteMs}ms`);
-		assert.ok(proxied.firstByteMs >= 300, `proxy unexpectedly exposed an incremental chunk: ${proxied.firstByteMs}ms`);
-		assert.ok(proxied.firstByteMs - direct.firstByteMs >= 180, 'proxy did not demonstrate full-body buffering');
-		const records = (await getJson('/api/telemetry/v2/records?producer=watchdog-proxy&limit=20')).json.data.records.map(item => item.record);
-		const model = records.find(record => record.kind === 'model');
-		assert.equal(model.attributes['watchdog.timing.source'], 'unavailable_buffered_transport');
-		assert.equal(model.attributes['watchdog.time_to_first_output_ms'], null);
-		assert.equal(model.attributes['watchdog.output_generation_duration_ms'], null);
-		assert.equal(model.attributes['watchdog.output_tokens_per_second'], null);
+		assert.ok(proxied.firstByteMs < proxied.totalMs - 100, `proxy did not expose a chunk before completion: first=${proxied.firstByteMs}ms total=${proxied.totalMs}ms`);
+		let records = [];
+		let model;
+		for (let i = 0; i < 30; i++) {
+			records = (await getJson('/api/telemetry/v2/records?producer=watchdog-proxy&limit=20')).json.data.records.map(item => item.record);
+			model = records.find(record => record.kind === 'model');
+			if (model) break;
+			await delay(50);
+		}
+		const requests = await getJson('/api/requests?limit=20');
+		const proxyLogs = output.split('\n').filter(line => line.includes('Proxy canonical')).join('\n');
+		assert.ok(model, `proxy model telemetry was not persisted after stream completion: proxied=${JSON.stringify(proxied)} records=${JSON.stringify(records)} requests=${JSON.stringify(requests.json)} logs=${proxyLogs}`);
+		assert.equal(model.attributes['watchdog.timing.source'], 'watchdog_proxy_clock');
+		assert.equal(model.attributes['watchdog.first_output.unit'], 'content_delta');
+		assert.ok(Number.isFinite(model.attributes['watchdog.time_to_first_output_ms']));
+		assert.ok(model.attributes['watchdog.time_to_first_output_ms'] >= 60, 'heartbeat must not count as meaningful first output');
+		assert.ok(Number.isFinite(model.attributes['watchdog.output_generation_duration_ms']));
+		assert.ok(model.attributes['watchdog.output_generation_duration_ms'] >= 150);
+		assert.ok(Number.isFinite(model.attributes['watchdog.output_tokens_per_second']));
+		assert.ok(records.some(record => record.name === 'watchdog.output.first'), 'first-output lifecycle event should be persisted');
 		console.log('proxy_stream_timing_suite: PASS');
 	} finally {
 		if (watchdog && watchdog.exitCode == null) { watchdog.kill('SIGTERM'); await delay(200); if (watchdog.exitCode == null) watchdog.kill('SIGKILL'); }

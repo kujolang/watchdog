@@ -480,12 +480,12 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.ok(retryAttempt?.references.some(ref => ref.id === 'provider-request-json-1' && ref.relation === 'fallback_from'), 'explicit fallback relation missing');
 		assert.strictEqual(retryAttempt.attributes['watchdog.fallback.dimension'], 'model');
 		assert.ok(canonicalRows.some(row => row.name === 'watchdog.operation.completed' && row.attributes?.['watchdog.outcome.terminal'] === true), 'explicit proxy terminal outcome missing');
-		const bufferedStream = canonicalRows.find(row => row.kind === 'model' && row.attributes?.['watchdog.timing.source'] === 'unavailable_buffered_transport');
-		assert.ok(bufferedStream, 'buffered SSE proxy timing unavailability was not explicit');
-		assert.strictEqual(bufferedStream.attributes['watchdog.response.streamed'], true);
-		assert.strictEqual(bufferedStream.attributes['watchdog.time_to_first_output_ms'], null, 'buffered proxy must not fabricate first-output timing');
-		assert.strictEqual(bufferedStream.attributes['watchdog.output_generation_duration_ms'], null);
-		assert.strictEqual(bufferedStream.attributes['watchdog.output_tokens_per_second'], null);
+		const incrementalStream = canonicalRows.find(row => row.kind === 'model' && row.attributes?.['watchdog.timing.source'] === 'watchdog_proxy_clock');
+		assert.ok(incrementalStream, 'incremental SSE proxy timing source was not preserved');
+		assert.strictEqual(incrementalStream.attributes['watchdog.response.streamed'], true);
+		assert.ok(Number.isFinite(incrementalStream.attributes['watchdog.time_to_first_output_ms']), 'incremental proxy should measure meaningful first output');
+		assert.ok(Number.isFinite(incrementalStream.attributes['watchdog.output_generation_duration_ms']));
+		assert.ok(canonicalRows.some(row => row.name === 'watchdog.output.first'), 'proxy first-output lifecycle event missing');
 		const filteredCanonical = await getApiData(watchdogPort, '/api/telemetry/v2/records?limit=100&logical_request_id=logical-json-1&application=fixture-chat&outcome=success&after_time=2020-01-01T00%3A00%3A00Z&before_time=2030-01-01T00%3A00%3A00Z');
 		assert.ok(filteredCanonical.records.length >= 1, 'canonical bounded filters should find the terminal record');
 		assert.ok(filteredCanonical.records.every(row => row.record.attributes?.['watchdog.logical_request_id'] === 'logical-json-1'));
