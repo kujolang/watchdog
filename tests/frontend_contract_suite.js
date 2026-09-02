@@ -76,6 +76,7 @@ function createHarness() {
 		'reqSearch', 'reqTenantFilter', 'reqProjectFilter', 'reqStatusFilter', 'reqProviderFilter', 'reqBody', 'reqEmpty',
 		'tcSearch', 'tcStatusFilter', 'tcBody', 'tcEmpty',
 		'traceContainer', 'errorGrid', 'sessBody', 'sessEmpty', 'insightsContainer',
+		'canonicalContainer', 'canonicalDiagnostics', 'badgeCanonical',
 		'badgeTraces', 'detailDialog', 'detailTitle', 'detailBody', 'statRequestsSub',
 		'backupDir', 'backupInterval', 'backupRetention', 'backupEnabled', 'backupEncryption', 'backupEncryptionHelp',
 		'backupScheduleSummary', 'badgeBackups', 'backupActiveTabCount', 'backupArchivedTabCount',
@@ -406,6 +407,27 @@ function testToolChartUsesAggregatedCallCounts() {
 	);
 }
 
+function testCanonicalEvidenceUsesExplicitNullAndKinds() {
+	const { context, elements } = createHarness();
+	context.state.canonical = {
+		diagnostics: {unresolved_parents: 1, cross_trace_conflicts: 0, identity_conflicts: 2},
+		operations: [{
+			logical_request_id: '<logical>', terminal_outcome: null, lifecycle_events: [],
+			attempts: [{status: 'ok', source: {'application.name': '<app>', 'instrumentation.version': '1.2.3'}, references: [], usage: null,
+				attributes: {'watchdog.attempt.number': 1, 'watchdog.timing.source': 'unavailable_buffered_transport', 'watchdog.output.partial': true, 'watchdog.context.utilization_ratio': null, 'watchdog.context.limit_source': 'unknown'},
+				costs: [{kind: 'subscription_value_estimate', currency: 'USD', amount: null, source: '<equivalent>'}]}],
+		}],
+	};
+	context.renderCanonicalObservability();
+	assert.ok(elements.canonicalContainer.innerHTML.includes('&lt;logical&gt;') && !elements.canonicalContainer.innerHTML.includes('<logical>'), 'logical request identity must be escaped');
+	assert.ok(elements.canonicalContainer.innerHTML.includes('not measurable by buffered proxy'), 'buffered TTFT must not render as zero');
+	assert.ok(elements.canonicalContainer.innerHTML.includes('no terminal event'), 'successful spans must not imply completion');
+	assert.ok(elements.canonicalContainer.innerHTML.includes('partial output'), 'partial evidence must be visible');
+	assert.ok(elements.canonicalContainer.innerHTML.includes('subscription_value_estimate') && elements.canonicalContainer.innerHTML.includes('amount not reported'), 'cost kind and null amount must remain distinct');
+	assert.ok(elements.canonicalContainer.innerHTML.includes('&lt;app&gt;') && !elements.canonicalContainer.innerHTML.includes('<app>'), 'canonical identity must be escaped');
+	assert.ok(elements.canonicalDiagnostics.textContent.includes('1 unresolved parents'));
+}
+
 function testStatCardSparklinesUseMetricTrends() {
 	const { context, renderedCharts } = createHarness();
 	const day = 24 * 60 * 60 * 1000;
@@ -517,6 +539,7 @@ async function run() {
 	await testRequestsFiltersSortingAndEscaping();
 	testToolCallsErrorsSessionsAndTracesContracts();
 	testToolChartUsesAggregatedCallCounts();
+	testCanonicalEvidenceUsesExplicitNullAndKinds();
 	testStatCardSparklinesUseMetricTrends();
 	testBackgroundRefreshPreservesInteractiveView();
 	await testApiResponsesAreValidatedAndOptionalStatusDegradesGracefully();

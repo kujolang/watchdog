@@ -289,6 +289,38 @@ func repo_insert_references(db, record_dbid, references) {
 	}
 }
 
+func repo_parent_graph_error(db, batch) {
+	producer_name := repo_text(repo_get(repo_get(batch, "producer", {}), "name", ""), 80)
+	local_spans := {}
+	for record in batch["records"] {
+		span_id := repo_nullable_text(repo_get(record, "span_id", null), 16)
+		if type(span_id) != "null" {
+			if has_key(local_spans, span_id) && repo_text(repo_get(local_spans[span_id], "trace_id", ""), 32) != repo_text(repo_get(record, "trace_id", ""), 32) { return "span id reused across traces in one producer batch" }
+			local_spans[span_id] = record
+		}
+	}
+	for record in batch["records"] {
+		parent_id := repo_nullable_text(repo_get(record, "parent_span_id", null), 16)
+		if type(parent_id) == "null" { continue }
+		child_trace := repo_text(repo_get(record, "trace_id", ""), 32)
+		if has_key(local_spans, parent_id) && repo_text(repo_get(local_spans[parent_id], "trace_id", ""), 32) != child_trace { return "known parent belongs to another trace" }
+		known := db_query(db, "SELECT trace_id FROM telemetry_records_v2 WHERE producer_name = ? AND span_id = ? LIMIT 2", [producer_name, parent_id])
+		for parent_row in known { if repo_text(parent_row["trace_id"], 32) != child_trace { return "known parent belongs to another trace" } }
+		cursor := parent_id
+		steps := 0
+		child_span := repo_nullable_text(repo_get(record, "span_id", null), 16)
+		while steps < 100 && type(child_span) != "null" && has_key(local_spans, cursor) {
+			if cursor == child_span { return "span parent cycle detected" }
+			next_parent := repo_nullable_text(repo_get(local_spans[cursor], "parent_span_id", null), 16)
+			if type(next_parent) == "null" { break }
+			cursor = next_parent
+			steps = steps + 1
+		}
+		if steps >= 100 { return "span parent traversal exceeded batch bound" }
+	}
+	return ""
+}
+
 func repo_insert_batch_rows(db, batch) {
 	producer := batch["producer"]
 	producer_name := repo_text(repo_get(producer, "name", "external"), 80)
@@ -362,6 +394,11 @@ func repo_insert_batch(db, batch) {
 	if validation["ok"] == false { return validation }
 	db_execute(db, "BEGIN IMMEDIATE", [])
 	try {
+		parent_error := repo_parent_graph_error(db, batch)
+		if parent_error != "" {
+			db_execute(db, "ROLLBACK", [])
+			return {"ok": false, "error": parent_error, "error_code": "invalid_semantics"}
+		}
 		result := repo_insert_batch_rows(db, batch)
 		db_execute(db, "COMMIT", [])
 		return result
@@ -375,6 +412,8 @@ func repo_insert_batch_fast(db, batch) {
 	validation := repo_validate_batch(batch)
 	if validation["ok"] == false { return validation }
 	if len(batch["records"]) != 1 { return {"ok": false, "error": "fast repository path requires exactly one record"} }
+	parent_error := repo_parent_graph_error(db, batch)
+	if parent_error != "" { return {"ok": false, "error": parent_error, "error_code": "invalid_semantics"} }
 	return repo_insert_batch_rows(db, batch)
 }
 

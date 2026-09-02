@@ -3879,6 +3879,16 @@ server := server.route("GET", "/api/telemetry/v2/records", func(req) {
 		conditions = push(conditions, "producer_name = ?")
 		params = push(params, producer)
 	}
+	logical_request_id := request_query_text(req, "logical_request_id", "")
+	if logical_request_id != "" { conditions = push(conditions, "logical_request_id = ?"); params = push(params, logical_request_id) }
+	application_name := request_query_text(req, "application", "")
+	if application_name != "" { conditions = push(conditions, "application_name = ?"); params = push(params, application_name) }
+	outcome := request_query_text(req, "outcome", "")
+	if outcome != "" { conditions = push(conditions, "terminal_outcome = ?"); params = push(params, outcome) }
+	after_time := request_query_text(req, "after_time", "")
+	if after_time != "" { conditions = push(conditions, "observed_at >= ?"); params = push(params, after_time) }
+	before_time := request_query_text(req, "before_time", "")
+	if before_time != "" { conditions = push(conditions, "observed_at <= ?"); params = push(params, before_time) }
 	params = push(params, limit_value)
 	rows := db_query(db, "SELECT id, canonical_json FROM telemetry_records_v2 WHERE " + join(conditions, " AND ") + " ORDER BY id DESC LIMIT ?", params)
 	records := []
@@ -3891,6 +3901,46 @@ server := server.route("GET", "/api/telemetry/v2/records", func(req) {
 		}
 	}
 	return api_ok({"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION, "records": records, "next_before": next_cursor})
+})
+
+server := server.route("GET", "/api/telemetry/v2/observability", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	limit_value := request_query_int(req, "limit", 100, 1, 200)
+	conditions := ["logical_request_id IS NOT NULL", "logical_request_id != ''"]
+	params := []
+	logical_request_id := request_query_text(req, "logical_request_id", "")
+	if logical_request_id != "" { conditions = push(conditions, "logical_request_id = ?"); params = push(params, logical_request_id) }
+	application_name := request_query_text(req, "application", "")
+	if application_name != "" { conditions = push(conditions, "application_name = ?"); params = push(params, application_name) }
+	params = push(params, limit_value * 32)
+	rows := db_query(db, "SELECT id, producer_name, record_id, logical_request_id, attempt_number, retry_of_request_id, terminal_outcome, started_at, observed_at, canonical_json FROM telemetry_records_v2 WHERE " + join(conditions, " AND ") + " ORDER BY logical_request_id ASC, CASE WHEN attempt_number IS NULL THEN 2147483647 ELSE attempt_number END ASC, COALESCE(started_at, observed_at) ASC, id ASC LIMIT ?", params)
+	operations := []
+	current_id := ""
+	current_operation := null
+	for row in rows {
+		logical_id := to_string(row["logical_request_id"])
+		if logical_id != current_id {
+			if type(current_operation) == "dict" { operations = push(operations, current_operation) }
+			if len(operations) >= limit_value { break }
+			current_id = logical_id
+			current_operation = {"logical_request_id": logical_id, "producer": row["producer_name"], "attempts": [], "lifecycle_events": [], "terminal_outcome": null}
+		}
+		parsed := parse_json_safe(row["canonical_json"])
+		if !parsed["ok"] { continue }
+		record := parsed["data"]
+		if safe_dict_get(record, "kind", null) == "model" {
+			current_operation["attempts"] = push(current_operation["attempts"], record)
+		} else {
+			current_operation["lifecycle_events"] = push(current_operation["lifecycle_events"], record)
+		}
+		if type(row["terminal_outcome"]) != "null" { current_operation["terminal_outcome"] = row["terminal_outcome"] }
+	}
+	if type(current_operation) == "dict" && len(operations) < limit_value { operations = push(operations, current_operation) }
+	orphan_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_records_v2 child WHERE child.parent_span_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM telemetry_records_v2 parent WHERE parent.producer_name = child.producer_name AND parent.trace_id = child.trace_id AND parent.span_id = child.parent_span_id)", [])
+	cross_trace_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_records_v2 child WHERE child.parent_span_id IS NOT NULL AND EXISTS (SELECT 1 FROM telemetry_records_v2 parent WHERE parent.producer_name = child.producer_name AND parent.span_id = child.parent_span_id AND parent.trace_id != child.trace_id)", [])
+	conflict_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_record_conflicts_v2", [])
+	return api_ok({"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION, "operations": operations, "diagnostics": {"unresolved_parents": orphan_rows[0]["n"], "cross_trace_conflicts": cross_trace_rows[0]["n"], "identity_conflicts": conflict_rows[0]["n"]}})
 })
 
 server := server.route("GET", "/telemetry/v2/jsonl", func(req) {

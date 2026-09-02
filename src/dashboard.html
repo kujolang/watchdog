@@ -1216,6 +1216,7 @@
       <button class="tab-btn" onclick="switchTab('errors',this)">Errors <span class="tab-badge" id="badgeErrors">0</span></button>
       <button class="tab-btn" onclick="switchTab('sessions',this)">Sessions <span class="tab-badge" id="badgeSessions">0</span></button>
       <button class="tab-btn" onclick="switchTab('insights',this)">Agent Insights</button>
+      <button class="tab-btn" onclick="switchTab('canonical',this)">Canonical Evidence <span class="tab-badge" id="badgeCanonical">0</span></button>
       <button class="tab-btn" onclick="switchTab('exporters',this)">Exporters <span class="tab-badge" id="badgeExporters">0</span></button>
       <button class="tab-btn" onclick="switchTab('backups',this)">Backups <span class="tab-badge" id="badgeBackups">0</span></button>
     </div>
@@ -1357,6 +1358,14 @@
       </div>
     </div>
 
+    <!-- ── Canonical observability tab ─────────── -->
+    <div class="tab-panel" id="tab-canonical">
+      <div class="backup-help" id="canonicalDiagnostics">Canonical lineage diagnostics are loading.</div>
+      <div class="insights-grid" id="canonicalContainer">
+        <div class="empty" style="grid-column:1/-1"><div class="empty-icon">◇</div>No canonical logical requests recorded.</div>
+      </div>
+    </div>
+
     <!-- ── Exporter health tab ───────────────── -->
     <div class="tab-panel" id="tab-exporters">
       <div class="backup-layout">
@@ -1475,6 +1484,7 @@ const state = {
   insights:   null,
   backups:    null,
   exportStatus: null,
+  canonical: null,
   backupHistoryTab: 'active',
   visibleRows: { requests: [], toolCalls: [], sessions: [] },
   sortKey:    { requests: 'created_at', sessions: 'last_seen' },
@@ -1775,6 +1785,7 @@ async function loadAll(options = {}) {
       configured_profiles: 0,
       deliveries: [],
     });
+    const canonical = await fetchOptionalJSON('/api/telemetry/v2/observability?limit=100', {operations: [], diagnostics: {unresolved_parents: 0, cross_trace_conflicts: 0, identity_conflicts: 0}});
     const reqs = await fetchJSON(buildApiUrl('/api/requests', loadRange));
     const tools = await fetchJSON(buildApiUrl('/api/tool-calls', loadRange));
     const steps = await fetchJSON(buildApiUrl('/api/agent-steps', loadRange));
@@ -1805,6 +1816,7 @@ async function loadAll(options = {}) {
     state.insights   = insights || null;
     state.backups    = backups || null;
     state.exportStatus = exportStatus || null;
+    state.canonical = canonical || null;
 
     renderStats(stats, loadRange);
     renderCharts(chartReqData, chartLatData, chartStatusData, (insights && insights.tool_effectiveness) || [], loadRange, chartStatData);
@@ -1815,6 +1827,7 @@ async function loadAll(options = {}) {
     renderErrors();
     renderSessionsTable();
     renderInsights();
+    renderCanonicalObservability();
     renderExporters();
     renderBackups();
     restoreDashboardView(preservedView);
@@ -1868,6 +1881,47 @@ function renderStats(s, range = getActiveRange()) {
   setText('badgeErrors',   s.total_errors);
   setText('badgeTraces',   state.traces.length || new Set((state.agentSteps || []).map(r => r.session_id)).size);
   setText('statRequestsSub', range.label.toLowerCase());
+}
+
+function canonicalMetric(value, unavailableReason = '') {
+  if (value === null || value === undefined || value === '') return unavailableReason || 'not reported';
+  return safeText(String(value));
+}
+
+function renderCanonicalObservability() {
+  const data = state.canonical || {};
+  const operations = Array.isArray(data.operations) ? data.operations : [];
+  const diagnostics = data.diagnostics || {};
+  setText('badgeCanonical', operations.length);
+  setText('canonicalDiagnostics', `Lineage diagnostics: ${Number(diagnostics.unresolved_parents || 0)} unresolved parents · ${Number(diagnostics.cross_trace_conflicts || 0)} cross-trace conflicts · ${Number(diagnostics.identity_conflicts || 0)} immutable identity conflicts`);
+  const container = document.getElementById('canonicalContainer');
+  if (!container) return;
+  if (!operations.length) {
+    container.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="empty-icon">◇</div>No canonical logical requests recorded.</div>';
+    return;
+  }
+  container.innerHTML = operations.map(operation => {
+    const attempts = Array.isArray(operation.attempts) ? operation.attempts : [];
+    const terminal = operation.terminal_outcome == null ? 'no terminal event' : safeText(operation.terminal_outcome);
+    const attemptMarkup = attempts.map(attempt => {
+      const attrs = attempt.attributes || {};
+      const source = attempt.source || {};
+      const timingUnavailable = attrs['watchdog.timing.source'] === 'unavailable_buffered_transport' ? 'not measurable by buffered proxy' : '';
+      const costs = Array.isArray(attempt.costs) && attempt.costs.length
+        ? attempt.costs.map(cost => `${safeText(cost.kind || 'unknown')}: ${cost.amount == null ? 'amount not reported' : safeText(`${cost.currency || 'USD'} ${cost.amount}`)} (${safeText(cost.source || 'unknown source')})`).join('<br>')
+        : 'no cost evidence';
+      const requestedModel = attrs['gen_ai.request.model'] || 'not reported';
+      const responseModel = attrs['gen_ai.response.model'] || attrs['gen_ai.request.model'] || 'not reported';
+      const requestedProvider = attrs['gen_ai.provider.name'] || 'not reported';
+      const contextRatio = attrs['watchdog.context.utilization_ratio'];
+      const contextText = contextRatio == null ? 'unknown capacity' : `${(Number(contextRatio) * 100).toFixed(1)}% · ${safeText(attrs['watchdog.context.pressure'] || 'unknown')}`;
+      const identity = [source['application.name'], source['application.version'], source['harness.name'], source['harness.version'], source['instrumentation.name'], source['instrumentation.version']].filter(Boolean).map(safeText).join(' · ') || 'not reported';
+      const relations = (attempt.references || []).filter(ref => ['retries','fallback_from','recovers'].includes(ref.relation)).map(ref => `${safeText(ref.relation)} ${safeText(ref.id)}`).join(' · ') || 'initial/unlinked';
+      const partial = attrs['watchdog.output.partial'] === true ? ' · partial output' : '';
+      return `<div class="insight-list-item"><strong>Attempt ${canonicalMetric(attrs['watchdog.attempt.number'])} · ${safeText(attempt.status || 'unset')}${partial}</strong><div>${safeText(requestedProvider)} · requested ${safeText(requestedModel)} · response ${safeText(responseModel)}</div><div>Lineage: ${relations}</div><div>TTFT: ${canonicalMetric(attrs['watchdog.time_to_first_output_ms'], timingUnavailable)} · generation: ${canonicalMetric(attrs['watchdog.output_generation_duration_ms'], timingUnavailable)} · throughput: ${canonicalMetric(attrs['watchdog.output_tokens_per_second'], timingUnavailable)}</div><div>Context: ${contextText} · limit ${canonicalMetric(attrs['watchdog.context.window_tokens'])} (${safeText(attrs['watchdog.context.limit_source'] || 'unknown')})</div><div>Costs: ${costs}</div><div>Identity: ${identity}</div></div>`;
+    }).join('') || '<div class="backup-help">No model attempts were reported.</div>';
+    return `<section class="insight-card wide"><h3>${safeText(operation.logical_request_id || 'unknown logical request')}</h3><div class="backup-help">Terminal outcome: ${terminal}</div>${attemptMarkup}</section>`;
+  }).join('');
 }
 
 function renderExporters() {
@@ -2420,7 +2474,7 @@ function renderInsights() {
       <div class="insight-note">Transitions are inferred from consecutive numbered agent steps within a session and linked to request outcomes where available.</div>
     </section>
     <section class="insight-card wide">
-      <h3>Context pressure</h3>
+      <h3>Legacy token volume (not capacity pressure)</h3>
       <div class="insight-stats">
         <div class="insight-stat"><div class="insight-stat-label">Traces measured</div><div class="insight-stat-value">${fmtNum(contextSummary.trace_count)}</div></div>
         <div class="insight-stat"><div class="insight-stat-label">Average input</div><div class="insight-stat-value">${fmtNum(contextSummary.avg_input_tokens)}</div></div>

@@ -79,3 +79,15 @@ hashes, outcome, and time only—never record payloads.
 Content capture stays off by default. All new fields are bounded metadata and
 pass through the same authoritative redaction/policy boundary before hashing,
 persistence, JSONL, or OTLP export.
+
+## Canonical read model
+
+`/api/telemetry/v2/records` accepts bounded `logical_request_id`, `application`,
+`outcome`, `trace_id`, `kind`, `producer`, `after_time`, and `before_time`
+filters. `/api/telemetry/v2/observability` groups evidence by explicit logical
+request, orders attempts by explicit attempt number then time, and returns
+terminal events separately from successful spans. Its diagnostics count
+unresolved parents, historical cross-trace conflicts, and immutable identity
+conflicts without exposing content. The dashboard renders missing evidence as
+not reported or, for the buffered proxy, not measurable; it never substitutes
+zero or heuristic completion.

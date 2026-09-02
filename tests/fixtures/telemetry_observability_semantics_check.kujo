@@ -82,4 +82,61 @@ bad_account["records"] = [bad_account_record]
 bad_account_result := watchdog_telemetry_repository_validate(bad_account)
 assert(bad_account_result["ok"] == false && bad_account_result["error_code"] == "invalid_semantics", "raw billing identity was accepted")
 
+parent_source := parse_json(to_json(timing_batch["records"][1]))
+parent_source["attributes"] = {"watchdog.context.window_tokens": null, "watchdog.context.limit_source": "unknown", "watchdog.context.utilization_ratio": null, "watchdog.context.pressure": "unknown"}
+parent_producer := {"name": "fixture-parents", "version": "1.0.0", "adapter_id": "fixture", "adapter_version": "1.0.0", "original_schema": null}
+missing_child := parse_json(to_json(parent_source))
+missing_child["record_id"] = "parent:missing-child"
+missing_child["trace_id"] = "5523456789abcdef0123456789abcdef"
+missing_child["span_id"] = "5523456789abc001"
+missing_child["parent_span_id"] = "5523456789abc099"
+missing_batch := {"schema_version": "watchdog.telemetry.v2", "batch_id": "fixture:parent-missing", "sent_at": "2026-09-02T14:00:00Z", "producer": parent_producer, "records": [missing_child]}
+missing_result := watchdog_telemetry_repository_insert(db, missing_batch)
+assert(missing_result["ok"], "unresolved parent should be accepted")
+
+later_child := parse_json(to_json(parent_source))
+later_child["record_id"] = "parent:later-child"
+later_child["trace_id"] = "6623456789abcdef0123456789abcdef"
+later_child["span_id"] = "6623456789abc002"
+later_child["parent_span_id"] = "6623456789abc001"
+later_parent := parse_json(to_json(parent_source))
+later_parent["record_id"] = "parent:later-parent"
+later_parent["trace_id"] = "6623456789abcdef0123456789abcdef"
+later_parent["span_id"] = "6623456789abc001"
+later_parent["parent_span_id"] = null
+later_batch := {"schema_version": "watchdog.telemetry.v2", "batch_id": "fixture:parent-later", "sent_at": "2026-09-02T14:01:00Z", "producer": parent_producer, "records": [later_child, later_parent]}
+later_result := watchdog_telemetry_repository_insert(db, later_batch)
+assert(later_result["ok"] && later_result["records"] == 2, "parent later in batch should be accepted")
+
+cycle_a := parse_json(to_json(parent_source))
+cycle_a["record_id"] = "parent:cycle-a"
+cycle_a["trace_id"] = "7723456789abcdef0123456789abcdef"
+cycle_a["span_id"] = "7723456789abc001"
+cycle_a["parent_span_id"] = "7723456789abc002"
+cycle_b := parse_json(to_json(parent_source))
+cycle_b["record_id"] = "parent:cycle-b"
+cycle_b["trace_id"] = "7723456789abcdef0123456789abcdef"
+cycle_b["span_id"] = "7723456789abc002"
+cycle_b["parent_span_id"] = "7723456789abc001"
+cycle_batch := {"schema_version": "watchdog.telemetry.v2", "batch_id": "fixture:parent-cycle", "sent_at": "2026-09-02T14:02:00Z", "producer": parent_producer, "records": [cycle_a, cycle_b]}
+cycle_result := watchdog_telemetry_repository_insert(db, cycle_batch)
+assert(cycle_result["ok"] == false && cycle_result["error_code"] == "invalid_semantics", "parent cycle was accepted")
+
+cross_child := parse_json(to_json(parent_source))
+cross_child["record_id"] = "parent:cross-trace-child"
+cross_child["trace_id"] = "8823456789abcdef0123456789abcdef"
+cross_child["span_id"] = "8823456789abc001"
+cross_child["parent_span_id"] = "6623456789abc001"
+cross_batch := {"schema_version": "watchdog.telemetry.v2", "batch_id": "fixture:parent-cross", "sent_at": "2026-09-02T14:03:00Z", "producer": parent_producer, "records": [cross_child]}
+cross_result := watchdog_telemetry_repository_insert(db, cross_batch)
+assert(cross_result["ok"] == false && cross_result["error_code"] == "invalid_semantics", "known cross-trace parent was accepted")
+
+self_parent := parse_json(to_json(parent_source))
+self_parent["record_id"] = "parent:self"
+self_parent["span_id"] = "9923456789abc001"
+self_parent["parent_span_id"] = "9923456789abc001"
+self_batch := {"schema_version": "watchdog.telemetry.v2", "batch_id": "fixture:parent-self", "sent_at": "2026-09-02T14:04:00Z", "producer": parent_producer, "records": [self_parent]}
+self_result := watchdog_telemetry_repository_validate(self_batch)
+assert(self_result["ok"] == false, "self-parent was accepted")
+
 print("telemetry_observability_semantics_check: PASS")

@@ -333,6 +333,7 @@ func ensure_schema(db) {
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_telemetry_v2_observed ON telemetry_records_v2(observed_at)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_telemetry_v2_reference ON telemetry_references_v2(ref_type, ref_id, namespace)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_telemetry_v2_logical_attempt ON telemetry_records_v2(producer_name, logical_request_id, attempt_number)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_telemetry_v2_summary ON telemetry_records_v2(logical_request_id, attempt_number, observed_at)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_telemetry_v2_outcome_observed ON telemetry_records_v2(terminal_outcome, observed_at)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_telemetry_v2_application_observed ON telemetry_records_v2(application_name, observed_at)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_telemetry_v2_trace_parent ON telemetry_records_v2(trace_id, parent_span_id)", [])

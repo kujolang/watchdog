@@ -519,6 +519,8 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `GET` | `/api/errors` | Error aggregates |
 | `GET` | `/api/sessions` | Per-session aggregates |
 | `GET` | `/api/insights` | Agent run outcomes, tool effectiveness, latency by span kind, workflow transitions, and context-pressure summaries |
+| `GET` | `/api/telemetry/v2/records` | Canonical records with bounded logical-request, application, outcome, trace, kind, producer, and time filters |
+| `GET` | `/api/telemetry/v2/observability` | Canonical attempt chains, lifecycle outcomes, evidence, and lineage diagnostics |
 | `GET` | `/api/charts/requests-over-time` | Hourly request/error counts |
 | `GET` | `/api/charts/stat-trends` | Time-bucketed request, cost, latency, error, token, session, tool, and trace-span metrics |
 | `GET` | `/api/charts/cost-over-time` | Hourly cost totals |
@@ -536,7 +538,7 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 
 The granular contract is optional and producer-neutral. Watchdog is a passive collector: applications, model providers, and tool executors remain independently usable, and a tool can append its own telemetry without importing or depending on another tool. New producers should send `schema_version: "kujo.telemetry.v1"`; the checked-in contract is [`schemas/telemetry-trace-v1.schema.json`](schemas/telemetry-trace-v1.schema.json). Trace metrics are cumulative absolute values, and trace/span/event/tool identities are replay-safe for durable at-least-once delivery. See [Granular Tracing](docs/GRANULAR_TRACING.md).
 
-`/api/insights` is intentionally labeled as observed telemetry: runs are grouped by task ID, workflow ID, or session ID; a success signal means no request error was recorded; retry signals are inferred from retry-named trace events; and context pressure is derived from trace token fields. Producers can make these classifications stronger by sending explicit task-completion and retry events.
+`/api/insights` is intentionally labeled as observed legacy telemetry: runs are grouped by task ID, workflow ID, or session ID; a success signal means no request error was recorded; retry signals are inferred from retry-named trace events; and its token-volume section does not measure context capacity. The Canonical Evidence dashboard tab uses explicit terminal events, typed relations, nullable timing, versioned context limits, and distinct cost kinds instead.
 
 List endpoints now support optional query parameters for pagination and filtering:
 

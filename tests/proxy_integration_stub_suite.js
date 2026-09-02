@@ -275,7 +275,7 @@ async function runPassthroughScenario(stubPort, received) {
 			},
 			JSON.stringify({ model: 'gpt-4.1-mini', messages: [{ role: 'user', content: 'json path' }] })
 		);
-		assert.strictEqual(jsonResp.status, 200, `passthrough JSON proxy call should succeed: ${jsonResp.body}\n${wd.outputRef()}`);
+		assert.strictEqual(jsonResp.status, 200, `passthrough JSON proxy call should succeed: ${jsonResp.body}`);
 		assert.strictEqual(received[received.length - 1].traceparent, '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01');
 		assert.strictEqual(received[received.length - 1].tracestate, 'vendor=value');
 		assert.strictEqual(received[received.length - 1]['x-watchdog-application-name'], undefined, 'Watchdog metadata headers must be stripped before upstream forwarding');
@@ -486,6 +486,14 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.strictEqual(bufferedStream.attributes['watchdog.time_to_first_output_ms'], null, 'buffered proxy must not fabricate first-output timing');
 		assert.strictEqual(bufferedStream.attributes['watchdog.output_generation_duration_ms'], null);
 		assert.strictEqual(bufferedStream.attributes['watchdog.output_tokens_per_second'], null);
+		const filteredCanonical = await getApiData(watchdogPort, '/api/telemetry/v2/records?limit=100&logical_request_id=logical-json-1&application=fixture-chat&outcome=success&after_time=2020-01-01T00%3A00%3A00Z&before_time=2030-01-01T00%3A00%3A00Z');
+		assert.ok(filteredCanonical.records.length >= 1, 'canonical bounded filters should find the terminal record');
+		assert.ok(filteredCanonical.records.every(row => row.record.attributes?.['watchdog.logical_request_id'] === 'logical-json-1'));
+		const canonicalSummary = await getApiData(watchdogPort, '/api/telemetry/v2/observability?logical_request_id=logical-json-1');
+		assert.strictEqual(canonicalSummary.operations.length, 1, 'canonical summary should group one logical request');
+		assert.strictEqual(canonicalSummary.operations[0].terminal_outcome, 'success');
+		assert.ok(canonicalSummary.operations[0].attempts.length >= 1, 'canonical summary should retain model attempts');
+		assert.ok(Number.isInteger(canonicalSummary.diagnostics.unresolved_parents), 'canonical summary should expose bounded lineage diagnostics');
 		assert.ok(requests.some(row => row.project_id === 'project-not-source-app' && row.source_app === 'watchdog-proxy'), 'project identity must not overload legacy source_app');
 		console.log('proxy_integration_stub_suite: passthrough done');
 	} finally {
