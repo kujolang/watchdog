@@ -114,8 +114,21 @@ async function run() {
 		watchdog = await startWatchdog();
 		const batch = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/telemetry-v2/canonical-model-batch.json'), 'utf8'));
 		batch.batch_id = 'exporter-conformance-1';
-		batch.records[0].content = [{class: 'prompt', media_type: 'text/plain', value: 'export-content-canary', truncated: false}];
-		batch.records[0].privacy.content_mode = 'full';
+		const costCases = [
+			{kind: 'catalog_estimated', amount: 0.001, source: 'fixture-catalog'},
+			{kind: 'provider_reported', amount: 0.002, source: 'provider-response'},
+			{kind: 'subscription_value_estimate', amount: 0.003, source: 'subscription-catalog'},
+			{kind: 'unknown', amount: null, source: 'unavailable'},
+		];
+		batch.records = costCases.map((cost, index) => {
+			const record = structuredClone(batch.records[0]);
+			record.record_id = `span:model:cost:${index}`;
+			record.span_id = (index + 1).toString(16).padStart(16, '0');
+			record.costs = [{...cost, currency: 'USD', catalog_version: null, calculated_at: '2026-09-01T12:00:01Z', components: null}];
+			record.content = [{class: 'prompt', media_type: 'text/plain', value: 'export-content-canary', truncated: false}];
+			record.privacy.content_mode = 'full';
+			return record;
+		});
 		const intake = await request('POST', '/telemetry/v2/batches', batch);
 		assert.strictEqual(intake.status, 200, intake.body);
 		const queueDb = new DatabaseSync(dbPath);
@@ -135,6 +148,7 @@ async function run() {
 		assert.strictEqual(delivered.headers.authorization, 'Bearer exporter-secret-canary');
 		assert.ok(JSON.parse(delivered.body.toString()).resourceSpans, 'OTLP request shape missing resourceSpans');
 		assert.ok(delivered.body.includes(Buffer.from('openinference.span.kind')), 'OpenInference mapping profile was not applied');
+		for (const cost of costCases) assert.ok(delivered.body.includes(Buffer.from(cost.kind)), `OTLP lost cost provenance ${cost.kind}`);
 		assert.ok(!delivered.body.includes(Buffer.from('export-content-canary')), 'exporter bypassed authoritative content policy');
 		const protobufDelivery = protobufCollector.received[0];
 		assert.strictEqual(protobufDelivery.headers['content-type'], 'application/x-protobuf');
@@ -156,10 +170,10 @@ async function run() {
 		const statusResponse = await request('GET', '/api/telemetry/v2/export-status');
 		assert.strictEqual(statusResponse.status, 200, statusResponse.body);
 		const rows = JSON.parse(statusResponse.body).data.deliveries;
-		assert.ok(rows.some((row) => row.profile_id === 'success' && row.status === 'sent' && row.records === 1));
-		assert.ok(rows.some((row) => row.profile_id === 'retry' && row.status === 'retry' && row.records === 1));
-		assert.ok(rows.some((row) => row.profile_id === 'protobuf' && row.status === 'sent' && row.records === 1));
-		for (const profileId of ['collector', 'langfuse', 'phoenix', 'grafana-tempo', 'datadog', 'honeycomb']) assert.ok(rows.some((row) => row.profile_id === profileId && row.status === 'sent' && row.records === 1), `profile ${profileId} was not sent`);
+		assert.ok(rows.some((row) => row.profile_id === 'success' && row.status === 'sent' && row.records === 4));
+		assert.ok(rows.some((row) => row.profile_id === 'retry' && row.status === 'retry' && row.records === 4));
+		assert.ok(rows.some((row) => row.profile_id === 'protobuf' && row.status === 'sent' && row.records === 4));
+		for (const profileId of ['collector', 'langfuse', 'phoenix', 'grafana-tempo', 'datadog', 'honeycomb']) assert.ok(rows.some((row) => row.profile_id === profileId && row.status === 'sent' && row.records === 4), `profile ${profileId} was not sent`);
 		const canaryDb = new DatabaseSync(dbPath);
 		canaryDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
 		canaryDb.close();
@@ -168,7 +182,7 @@ async function run() {
 			const bytes = fs.readFileSync(candidate);
 			for (const canary of ['export-content-canary', 'exporter-secret-canary', 'datadog-secret-canary', 'honeycomb-secret-canary']) assert.ok(!bytes.includes(Buffer.from(canary)), `${path.basename(candidate)} retained ${canary}`);
 		}
-		assert.ok(rows.some((row) => row.profile_id === 'expired' && row.status === 'dropped' && row.records === 1));
+		assert.ok(rows.some((row) => row.profile_id === 'expired' && row.status === 'dropped' && row.records === 4));
 	} catch (error) {
 		if (watchdog) error.stack += `\nWatchdog output:\n${watchdog.output().slice(-4000)}`;
 		throw error;

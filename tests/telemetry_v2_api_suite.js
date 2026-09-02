@@ -134,6 +134,27 @@ async function run() {
 		modelBatch.batch_id = 'fixture:model:api';
 		const modelIntake = await request('POST', '/telemetry/v2/batches', modelBatch);
 		assert.strictEqual(modelIntake.status, 200, modelIntake.body);
+		const costKinds = [
+			{kind: 'provider_reported', amount: 0.002, source: 'provider-response'},
+			{kind: 'catalog_estimated', amount: 0.001, source: 'fixture-catalog'},
+			{kind: 'subscription_value_estimate', amount: 0.003, source: 'subscription-catalog'},
+			{kind: 'unknown', amount: null, source: 'unavailable'},
+		];
+		const costBatch = structuredClone(modelBatch);
+		costBatch.batch_id = 'fixture:cost-provenance';
+		costBatch.records = costKinds.map((cost, index) => {
+			const record = structuredClone(modelBatch.records[0]);
+			record.record_id = `span:cost:${index}`;
+			record.span_id = (index + 20).toString(16).padStart(16, '0');
+			record.costs = [{...cost, currency: 'USD', catalog_version: null, calculated_at: '2026-09-01T12:00:01Z', components: null}];
+			return record;
+		});
+		assert.strictEqual((await request('POST', '/telemetry/v2/batches', costBatch)).status, 200);
+		const costJsonl = await request('GET', '/telemetry/v2/jsonl?limit=100');
+		const exportedCostRecords = costJsonl.body.trim().split('\n').filter(Boolean).map(line => JSON.parse(line).record).filter(record => String(record.record_id).startsWith('span:cost:'));
+		assert.strictEqual(exportedCostRecords.length, 4);
+		assert.deepStrictEqual(new Set(exportedCostRecords.map(record => record.costs[0].kind)), new Set(costKinds.map(cost => cost.kind)));
+		assert.strictEqual(exportedCostRecords.find(record => record.costs[0].kind === 'unknown').costs[0].amount, null, 'unknown cost must remain null, not zero');
 		const otlpPayload = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/telemetry-v2/otlp-ai-traces.json'), 'utf8'));
 		const otlpIntake = await request('POST', '/telemetry/v2/otlp/v1/traces', otlpPayload);
 		assert.strictEqual(otlpIntake.status, 200, otlpIntake.body);

@@ -12,7 +12,7 @@
 - [x] W3C-valid canonical trace/span IDs and parentage are enforced; source IDs remain provenance.
 - [x] Nested agent/model/tool/retrieval/handoff/workflow cases render without ambiguity or duplicate operation payloads.
 - [x] OpenAI, Anthropic, Gemini, and Bedrock usage fixtures preserve cache/reasoning/provider distinctions and null vs zero.
-- [ ] Provider-reported, catalog-estimated, subscription-value, and unknown cost observations remain distinguishable through JSONL and OTLP.
+- [x] Provider-reported, catalog-estimated, subscription-value, and unknown cost observations remain distinguishable through JSONL and OTLP.
 
 ## Privacy/security
 
@@ -46,6 +46,5 @@
 
 Unchecked items are release blockers, not omitted evidence. The current blockers
 are the 30-minute 10/50/200 EPS qualification (the quick run supports only the
-10 EPS envelope), production streaming/per-request performance, complete
-cost-provenance round trips for all four cost kinds, and a shared delivery/spool
-proof for the Agents SDK/`kujo agent` path.
+10 EPS envelope), production streaming/per-request performance, and a shared
+delivery/spool proof for the Agents SDK/`kujo agent` path.
