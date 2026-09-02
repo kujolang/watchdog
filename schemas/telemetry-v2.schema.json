@@ -28,6 +28,9 @@
     },
     "scalar": {"type": ["string", "number", "integer", "boolean", "null"]},
     "scalarArray": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/scalar"}},
+    "attributeArray": {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/attributeValue"}},
+    "attributeObject": {"type": "object", "maxProperties": 128, "additionalProperties": {"$ref": "#/$defs/attributeValue"}},
+    "attributeValue": {"anyOf": [{"$ref": "#/$defs/scalar"}, {"$ref": "#/$defs/attributeArray"}, {"$ref": "#/$defs/attributeObject"}]},
     "reference": {
       "type": "object",
       "additionalProperties": false,
@@ -118,7 +121,7 @@
         "status": {"enum": [null, "unset", "ok", "error", "cancelled", "timeout", "denied"]},
         "source": {"type": "object", "maxProperties": 16, "additionalProperties": {"$ref": "#/$defs/scalar"}},
         "references": {"type": "array", "maxItems": 24, "items": {"$ref": "#/$defs/reference"}},
-        "attributes": {"type": "object", "maxProperties": 128, "additionalProperties": {"anyOf": [{"$ref": "#/$defs/scalar"}, {"$ref": "#/$defs/scalarArray"}]}},
+        "attributes": {"type": "object", "maxProperties": 128, "additionalProperties": {"$ref": "#/$defs/attributeValue"}},
         "usage": {"anyOf": [{"$ref": "#/$defs/usage"}, {"type": "null"}]},
         "costs": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/cost"}},
         "error": {"$ref": "#/$defs/error"},

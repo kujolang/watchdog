@@ -17,13 +17,50 @@ func otlp_text(value, max_len) {
 	return substring(text, 0, max_len)
 }
 
-func otlp_any_value(value) {
+func otlp_any_value_depth(value, depth) {
+	if depth > 8 { return {"stringValue": "[depth-limit]"} }
 	value_type := type(value)
 	if value_type == "boolean" { return {"boolValue": value} }
 	if value_type == "integer" { return {"intValue": to_string(value)} }
 	if value_type == "float" || value_type == "number" { return {"doubleValue": value} }
+	if value_type == "array" {
+		values := []
+		item_count := 0
+		for item in value {
+			if item_count < 128 { values = push(values, otlp_any_value_depth(item, depth + 1)) }
+			item_count = item_count + 1
+		}
+		return {"arrayValue": {"values": values}}
+	}
+	if value_type == "dict" {
+		if has_key(value, "$watchdog.bytes_base64") { return {"bytesValue": otlp_text(value["$watchdog.bytes_base64"], 65536)} }
+		if has_key(value, "$watchdog.kvlist") {
+			values := []
+			items := value["$watchdog.kvlist"]
+			if type(items) == "array" {
+				item_count := 0
+				for item in items {
+					if item_count < 128 && type(item) == "dict" {
+						item_key := otlp_text(otlp_get(item, "key", ""), 160)
+						if item_key != "" { values = push(values, {"key": item_key, "value": otlp_any_value_depth(otlp_get(item, "value", null), depth + 1)}) }
+					}
+					item_count = item_count + 1
+				}
+			}
+			return {"kvlistValue": {"values": values}}
+		}
+		values := []
+		item_count := 0
+		for key in keys(value) {
+			if item_count < 128 { values = push(values, {"key": otlp_text(key, 160), "value": otlp_any_value_depth(value[key], depth + 1)}) }
+			item_count = item_count + 1
+		}
+		return {"kvlistValue": {"values": values}}
+	}
 	return {"stringValue": otlp_text(value, 4096)}
 }
+
+func otlp_any_value(value) { return otlp_any_value_depth(value, 0) }
 
 func otlp_attribute(key, value) {
 	return {"key": otlp_text(key, 160), "value": otlp_any_value(value)}
@@ -31,7 +68,6 @@ func otlp_attribute(key, value) {
 
 func otlp_add_attribute(attributes, key, value) {
 	if type(value) == "null" || len(attributes) >= 160 { return attributes }
-	if type(value) == "array" || type(value) == "dict" { return attributes }
 	return push(attributes, otlp_attribute(key, value))
 }
 

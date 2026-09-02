@@ -13,6 +13,52 @@ assert(decoded_span["traceId"] == batch["records"][0]["trace_id"], "protobuf tra
 assert(decoded_span["spanId"] == batch["records"][0]["span_id"], "protobuf span ID round trip drift")
 assert(decoded_span["name"] == "chat fixture-model", "protobuf span name round trip drift")
 assert(len(decoded_span["attributes"]) > 10, "protobuf attributes round trip drift")
+
+nested_payload := {
+	"resourceSpans": [{
+		"schemaUrl": "https://opentelemetry.io/schemas/1.30.0",
+		"resource": {"droppedAttributesCount": 2, "attributes": [{"key": "service.name", "value": {"stringValue": "nested-fixture"}}]},
+		"scopeSpans": [{
+			"schemaUrl": "https://opentelemetry.io/schemas/1.30.0",
+			"scope": {"name": "nested-scope", "version": "1.0.0", "droppedAttributesCount": 1},
+			"spans": [{
+				"traceId": "0123456789abcdef0123456789abcdef",
+				"spanId": "0123456789abcdef",
+				"traceState": "vendor=value",
+				"name": "nested-values",
+				"kind": 3,
+				"startTimeUnixNano": "1000000000",
+				"endTimeUnixNano": "2000000000",
+				"flags": 1,
+				"droppedAttributesCount": 3,
+				"droppedEventsCount": 4,
+				"droppedLinksCount": 5,
+				"attributes": [
+					{"key": "nested.array", "value": {"arrayValue": {"values": [{"stringValue": "one"}, {"intValue": 2}, {"kvlistValue": {"values": [{"key": "inner", "value": {"boolValue": true}}]}}]}}},
+					{"key": "nested.bytes", "value": {"bytesValue": "AAEC/w=="}}
+				],
+				"events": [{"timeUnixNano": "1500000000", "name": "nested-event", "droppedAttributesCount": 6, "attributes": []}],
+				"links": [{"traceId": "fedcba9876543210fedcba9876543210", "spanId": "fedcba9876543210", "traceState": "linked=yes", "flags": 1, "droppedAttributesCount": 7, "attributes": []}],
+				"status": {"code": 1}
+			}]
+		}]
+	}]
+}
+nested_decoded := watchdog_otlp_protobuf_decode(watchdog_otlp_protobuf_encode(nested_payload))
+assert(nested_decoded["ok"], "nested OTLP protobuf must decode")
+nested_resource := nested_decoded["payload"]["resourceSpans"][0]
+nested_span := nested_resource["scopeSpans"][0]["spans"][0]
+assert(nested_resource["schemaUrl"] == "https://opentelemetry.io/schemas/1.30.0", "resource schema URL drift")
+assert(nested_resource["resource"]["droppedAttributesCount"] == 2, "resource dropped attribute count drift")
+assert(nested_span["traceState"] == "vendor=value", "trace state drift")
+assert(nested_span["flags"] == 1, "span flags drift")
+assert(nested_span["droppedAttributesCount"] == 3, "span dropped attribute count drift")
+assert(nested_span["droppedEventsCount"] == 4, "span dropped event count drift")
+assert(nested_span["droppedLinksCount"] == 5, "span dropped link count drift")
+assert(len(nested_span["links"]) == 1, "span links drift")
+assert(nested_span["links"][0]["traceState"] == "linked=yes", "link trace state drift")
+assert(nested_span["attributes"][0]["value"]["arrayValue"]["values"][2]["kvlistValue"]["values"][0]["key"] == "inner", "nested kvlist drift")
+assert(nested_span["attributes"][1]["value"]["bytesValue"] == "AAEC/w==", "bytes value drift")
 assert(watchdog_otlp_protobuf_rejected_spans(bytes([])) == 0, "empty success response must decode")
 assert(watchdog_otlp_protobuf_rejected_spans(bytes([10,2,8,3])) == 3, "partial success rejection count must decode")
 assert(watchdog_otlp_protobuf_rejected_spans(bytes([255])) == -1, "malformed protobuf response must fail closed")

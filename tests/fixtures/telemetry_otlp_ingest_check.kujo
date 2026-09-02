@@ -11,4 +11,34 @@ assert(contains(encoded, "otlp-raw-prompt-canary") == 0, "OTLP content bypassed 
 assert(contains(encoded, "source_content_dropped_by_watchdog_policy"), "OTLP content drop provenance missing")
 assert(contains(encoded, "session-otel-1"), "OTLP session correlation missing")
 assert(contains(encoded, "gen_ai.usage.input_tokens"), "OTLP usage attributes missing")
+
+nested_payload := {
+	"resourceSpans": [{
+		"resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "nested-otel-agent"}}]},
+		"scopeSpans": [{
+			"scope": {"name": "openinference.instrumentation.fixture"},
+			"spans": [{
+				"traceId": "1234567890abcdef1234567890abcdef",
+				"spanId": "1234567890abcdef",
+				"name": "nested-anyvalue",
+				"startTimeUnixNano": "1000000000",
+				"endTimeUnixNano": "2000000000",
+				"attributes": [
+					{"key": "openinference.span.kind", "value": {"stringValue": "LLM"}},
+					{"key": "fixture.nested", "value": {"kvlistValue": {"values": [
+						{"key": "safe", "value": {"arrayValue": {"values": [{"stringValue": "kept"}, {"bytesValue": "AAEC/w=="}]}}},
+						{"key": "prompt", "value": {"stringValue": "nested-secret-canary"}}
+					]}}}
+				]
+			}]
+		}]
+	}]
+}
+nested_mapped := watchdog_otlp_ingest_map(nested_payload)
+assert(nested_mapped["ok"], "nested AnyValue OTLP payload was rejected")
+nested_encoded := to_json(nested_mapped)
+assert(contains(nested_encoded, "nested-secret-canary") == 0, "nested OTLP content bypassed privacy boundary")
+assert(contains(nested_encoded, "$watchdog.kvlist"), "nested kvlist provenance was not preserved")
+assert(contains(nested_encoded, "$watchdog.bytes_base64"), "OTLP bytes value was not preserved")
+assert(contains(nested_encoded, "source_content_dropped_by_watchdog_policy"), "nested content drop provenance missing")
 print("telemetry_otlp_ingest_check: PASS")

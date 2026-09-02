@@ -1,6 +1,7 @@
-# Minimal OTLP TraceService protobuf encoder. It intentionally covers only the
-# exact trace payload emitted by telemetry_otlp.kujo; it is not a generic
-# protobuf runtime.
+# Bounded OTLP TraceService protobuf codec. It covers the complete trace signal
+# shapes Watchdog accepts and emits, including nested AnyValue values, links,
+# dropped counts, flags, schema URLs, and partial-success responses. It is not a
+# generic protobuf runtime and deliberately rejects unsupported wire types.
 
 func pb_get(value, key, fallback_value) {
 	if type(value) != "dict" || has_key(value, key) == 0 { return fallback_value }
@@ -20,6 +21,10 @@ func pb_varint(value) {
 
 func pb_utf8(value) {
 	raw := decode_base64(encode_base64(to_string(value)))
+	return pb_byte_array(raw)
+}
+
+func pb_byte_array(raw) {
 	utf8_bytes := []
 	i := 0
 	while i < len(raw) {
@@ -51,6 +56,19 @@ func pb_fixed64_integer(value) {
 	fixed_bytes := []
 	i := 0
 	while i < 8 {
+		fixed_bytes = push(fixed_bytes, parse_int(to_string(n % 256)))
+		n = floor(n / 256)
+		i = i + 1
+	}
+	return fixed_bytes
+}
+
+func pb_fixed32_integer(value) {
+	n := value
+	if type(n) != "int" || n < 0 { n = 0 }
+	fixed_bytes := []
+	i := 0
+	while i < 4 {
 		fixed_bytes = push(fixed_bytes, parse_int(to_string(n % 256)))
 		n = floor(n / 256)
 		i = i + 1
@@ -95,7 +113,8 @@ func pb_hex(value) {
 	return hex_bytes
 }
 
-func pb_any_value(value) {
+func pb_any_value_depth(value, depth) {
+	if depth > 8 { return pb_field_text(1, "[depth-limit]") }
 	if type(value) != "dict" { return pb_field_text(1, to_string(value)) }
 	if has_key(value, "stringValue") { return pb_field_text(1, value["stringValue"]) }
 	if has_key(value, "boolValue") {
@@ -109,13 +128,51 @@ func pb_any_value(value) {
 		return pb_field_text(1, to_string(int_value))
 	}
 	if has_key(value, "doubleValue") { return pb_field_fixed64(4, pb_double(value["doubleValue"])) }
+	if has_key(value, "arrayValue") {
+		array_message := []
+		array_value := value["arrayValue"]
+		if type(array_value) == "dict" {
+			items := pb_get(array_value, "values", [])
+			if type(items) == "array" {
+				item_count := 0
+				for item in items {
+					if item_count < 128 { array_message = concat(array_message, pb_field_bytes(1, pb_any_value_depth(item, depth + 1))) }
+					item_count = item_count + 1
+				}
+			}
+		}
+		return pb_field_bytes(5, array_message)
+	}
+	if has_key(value, "kvlistValue") {
+		kvlist_message := []
+		kvlist_value := value["kvlistValue"]
+		if type(kvlist_value) == "dict" {
+			items := pb_get(kvlist_value, "values", [])
+			if type(items) == "array" {
+				item_count := 0
+				for item in items {
+					if item_count < 128 { kvlist_message = concat(kvlist_message, pb_field_bytes(1, pb_key_value_depth(item, depth + 1))) }
+					item_count = item_count + 1
+				}
+			}
+		}
+		return pb_field_bytes(6, kvlist_message)
+	}
+	if has_key(value, "bytesValue") {
+		raw_bytes := decode_base64(to_string(value["bytesValue"]))
+		return pb_field_bytes(7, pb_byte_array(raw_bytes))
+	}
 	return pb_field_text(1, "")
 }
 
-func pb_key_value(value) {
+func pb_any_value(value) { return pb_any_value_depth(value, 0) }
+
+func pb_key_value_depth(value, depth) {
 	kv_bytes := pb_field_text(1, pb_get(value, "key", ""))
-	return concat(kv_bytes, pb_field_bytes(2, pb_any_value(pb_get(value, "value", {}))))
+	return concat(kv_bytes, pb_field_bytes(2, pb_any_value_depth(pb_get(value, "value", {}), depth)))
 }
+
+func pb_key_value(value) { return pb_key_value_depth(value, 0) }
 
 func pb_attributes(values, field) {
 	attribute_bytes := []
@@ -125,7 +182,10 @@ func pb_attributes(values, field) {
 }
 
 func pb_resource(value) {
-	return pb_attributes(pb_get(value, "attributes", []), 1)
+	resource_bytes := pb_attributes(pb_get(value, "attributes", []), 1)
+	dropped := pb_get(value, "droppedAttributesCount", 0)
+	if dropped > 0 { resource_bytes = concat(resource_bytes, pb_field_varint(2, dropped)) }
+	return resource_bytes
 }
 
 func pb_scope(value) {
@@ -134,7 +194,10 @@ func pb_scope(value) {
 	version := pb_get(value, "version", "")
 	if name != "" { scope_bytes = concat(scope_bytes, pb_field_text(1, name)) }
 	if version != "" { scope_bytes = concat(scope_bytes, pb_field_text(2, version)) }
-	return concat(scope_bytes, pb_attributes(pb_get(value, "attributes", []), 3))
+	scope_bytes = concat(scope_bytes, pb_attributes(pb_get(value, "attributes", []), 3))
+	dropped := pb_get(value, "droppedAttributesCount", 0)
+	if dropped > 0 { scope_bytes = concat(scope_bytes, pb_field_varint(4, dropped)) }
+	return scope_bytes
 }
 
 func pb_status(value) {
@@ -149,12 +212,30 @@ func pb_status(value) {
 func pb_event(value) {
 	event_bytes := pb_field_fixed64(1, pb_fixed64_integer(parse_int(to_string(pb_get(value, "timeUnixNano", "0")))))
 	event_bytes = concat(event_bytes, pb_field_text(2, pb_get(value, "name", "event")))
-	return concat(event_bytes, pb_attributes(pb_get(value, "attributes", []), 3))
+	event_bytes = concat(event_bytes, pb_attributes(pb_get(value, "attributes", []), 3))
+	dropped := pb_get(value, "droppedAttributesCount", 0)
+	if dropped > 0 { event_bytes = concat(event_bytes, pb_field_varint(4, dropped)) }
+	return event_bytes
+}
+
+func pb_link(value) {
+	link_bytes := pb_field_bytes(1, pb_hex(pb_get(value, "traceId", "")))
+	link_bytes = concat(link_bytes, pb_field_bytes(2, pb_hex(pb_get(value, "spanId", ""))))
+	trace_state := pb_get(value, "traceState", "")
+	if trace_state != "" { link_bytes = concat(link_bytes, pb_field_text(3, trace_state)) }
+	link_bytes = concat(link_bytes, pb_attributes(pb_get(value, "attributes", []), 4))
+	dropped := pb_get(value, "droppedAttributesCount", 0)
+	if dropped > 0 { link_bytes = concat(link_bytes, pb_field_varint(5, dropped)) }
+	flags := pb_get(value, "flags", 0)
+	if flags > 0 { link_bytes = concat(link_bytes, concat(pb_varint((6 * 8) + 5), pb_fixed32_integer(flags))) }
+	return link_bytes
 }
 
 func pb_span(value) {
 	span_bytes := pb_field_bytes(1, pb_hex(pb_get(value, "traceId", "")))
 	span_bytes = concat(span_bytes, pb_field_bytes(2, pb_hex(pb_get(value, "spanId", ""))))
+	trace_state := pb_get(value, "traceState", "")
+	if trace_state != "" { span_bytes = concat(span_bytes, pb_field_text(3, trace_state)) }
 	parent := pb_hex(pb_get(value, "parentSpanId", ""))
 	if len(parent) > 0 { span_bytes = concat(span_bytes, pb_field_bytes(4, parent)) }
 	span_bytes = concat(span_bytes, pb_field_text(5, pb_get(value, "name", "span")))
@@ -162,21 +243,34 @@ func pb_span(value) {
 	span_bytes = concat(span_bytes, pb_field_fixed64(7, pb_fixed64_integer(parse_int(to_string(pb_get(value, "startTimeUnixNano", "0"))))))
 	span_bytes = concat(span_bytes, pb_field_fixed64(8, pb_fixed64_integer(parse_int(to_string(pb_get(value, "endTimeUnixNano", "0"))))))
 	span_bytes = concat(span_bytes, pb_attributes(pb_get(value, "attributes", []), 9))
+	dropped_attributes := pb_get(value, "droppedAttributesCount", 0)
+	if dropped_attributes > 0 { span_bytes = concat(span_bytes, pb_field_varint(10, dropped_attributes)) }
 	for event in pb_get(value, "events", []) { span_bytes = concat(span_bytes, pb_field_bytes(11, pb_event(event))) }
+	dropped_events := pb_get(value, "droppedEventsCount", 0)
+	if dropped_events > 0 { span_bytes = concat(span_bytes, pb_field_varint(12, dropped_events)) }
+	for link in pb_get(value, "links", []) { span_bytes = concat(span_bytes, pb_field_bytes(13, pb_link(link))) }
+	dropped_links := pb_get(value, "droppedLinksCount", 0)
+	if dropped_links > 0 { span_bytes = concat(span_bytes, pb_field_varint(14, dropped_links)) }
 	status := pb_status(pb_get(value, "status", {}))
 	if len(status) > 0 { span_bytes = concat(span_bytes, pb_field_bytes(15, status)) }
+	flags := pb_get(value, "flags", 0)
+	if flags > 0 { span_bytes = concat(span_bytes, concat(pb_varint((16 * 8) + 5), pb_fixed32_integer(flags))) }
 	return span_bytes
 }
 
 func pb_scope_spans(value) {
 	scope_spans_bytes := pb_field_bytes(1, pb_scope(pb_get(value, "scope", {})))
 	for span in pb_get(value, "spans", []) { scope_spans_bytes = concat(scope_spans_bytes, pb_field_bytes(2, pb_span(span))) }
+	schema_url := pb_get(value, "schemaUrl", "")
+	if schema_url != "" { scope_spans_bytes = concat(scope_spans_bytes, pb_field_text(3, schema_url)) }
 	return scope_spans_bytes
 }
 
 func pb_resource_spans(value) {
 	resource_spans_bytes := pb_field_bytes(1, pb_resource(pb_get(value, "resource", {})))
 	for scope_spans in pb_get(value, "scopeSpans", []) { resource_spans_bytes = concat(resource_spans_bytes, pb_field_bytes(2, pb_scope_spans(scope_spans))) }
+	schema_url := pb_get(value, "schemaUrl", "")
+	if schema_url != "" { resource_spans_bytes = concat(resource_spans_bytes, pb_field_text(3, schema_url)) }
 	return resource_spans_bytes
 }
 
@@ -223,7 +317,7 @@ export watchdog_otlp_protobuf_rejected_spans := func(data) {
 }
 
 func pb_bytes_text(data) {
-	try { return decode_base64_utf8(encode_base64(data)) } except err { return "" }
+	return decode_base64_utf8(encode_base64(data))
 }
 
 func pb_bytes_hex(data) {
@@ -246,6 +340,18 @@ func pb_fixed64_decode(data) {
 	while i < 8 && i < len(data) {
 		decoded_value = decoded_value + (data[i] * multiplier)
 		if i < 7 { multiplier = multiplier * 256 }
+		i = i + 1
+	}
+	return decoded_value
+}
+
+func pb_fixed32_decode(data) {
+	decoded_value := 0
+	multiplier := 1
+	i := 0
+	while i < 4 && i < len(data) {
+		decoded_value = decoded_value + (data[i] * multiplier)
+		if i < 3 { multiplier = multiplier * 256 }
 		i = i + 1
 	}
 	return decoded_value
@@ -321,7 +427,8 @@ func pb_first_field(fields, number) {
 	return null
 }
 
-func pb_parse_any_value(data) {
+func pb_parse_any_value_depth(data, depth) {
+	if depth > 8 { return {"stringValue": "[depth-limit]"} }
 	parsed_any := pb_parse_fields(data)
 	if parsed_any["ok"] == false { return {"stringValue": ""} }
 	field := pb_first_field(parsed_any["fields"], 1)
@@ -332,19 +439,52 @@ func pb_parse_any_value(data) {
 	if field != null { return {"intValue": field["value"]} }
 	field = pb_first_field(parsed_any["fields"], 4)
 	if field != null { return {"doubleValue": pb_double_decode(field["value"])} }
+	field = pb_first_field(parsed_any["fields"], 5)
+	if field != null {
+		parsed_array := pb_parse_fields(field["value"])
+		array_values := []
+		if parsed_array["ok"] {
+			item_count := 0
+			for item_field in pb_fields_number(parsed_array["fields"], 1) {
+				if item_count < 128 { array_values = push(array_values, pb_parse_any_value_depth(item_field["value"], depth + 1)) }
+				item_count = item_count + 1
+			}
+		}
+		return {"arrayValue": {"values": array_values}}
+	}
+	field = pb_first_field(parsed_any["fields"], 6)
+	if field != null {
+		parsed_kvlist := pb_parse_fields(field["value"])
+		kv_values := []
+		if parsed_kvlist["ok"] {
+			item_count := 0
+			for item_field in pb_fields_number(parsed_kvlist["fields"], 1) {
+				if item_count < 128 {
+					item := pb_parse_key_value_depth(item_field["value"], depth + 1)
+					if item != null { kv_values = push(kv_values, item) }
+				}
+				item_count = item_count + 1
+			}
+		}
+		return {"kvlistValue": {"values": kv_values}}
+	}
 	field = pb_first_field(parsed_any["fields"], 7)
 	if field != null { return {"bytesValue": encode_base64(field["value"])} }
 	return {"stringValue": ""}
 }
 
-func pb_parse_key_value(data) {
+func pb_parse_any_value(data) { return pb_parse_any_value_depth(data, 0) }
+
+func pb_parse_key_value_depth(data, depth) {
 	parsed_key_value := pb_parse_fields(data)
 	if parsed_key_value["ok"] == false { return null }
 	key_field := pb_first_field(parsed_key_value["fields"], 1)
 	value_field := pb_first_field(parsed_key_value["fields"], 2)
 	if key_field == null || value_field == null { return null }
-	return {"key": pb_bytes_text(key_field["value"]), "value": pb_parse_any_value(value_field["value"])}
+	return {"key": pb_bytes_text(key_field["value"]), "value": pb_parse_any_value_depth(value_field["value"], depth)}
 }
+
+func pb_parse_key_value(data) { return pb_parse_key_value_depth(data, 0) }
 
 func pb_parse_attributes(fields, number) {
 	attribute_values := []
@@ -374,7 +514,25 @@ func pb_parse_event(data) {
 	if time_field != null { event_value["timeUnixNano"] = to_string(pb_fixed64_decode(time_field["value"])) }
 	name_field := pb_first_field(parsed_event["fields"], 2)
 	if name_field != null { event_value["name"] = pb_bytes_text(name_field["value"]) }
+	dropped_field := pb_first_field(parsed_event["fields"], 4)
+	if dropped_field != null { event_value["droppedAttributesCount"] = dropped_field["value"] }
 	return event_value
+}
+
+func pb_parse_link(data) {
+	parsed_link := pb_parse_fields(data)
+	if parsed_link["ok"] == false { return null }
+	trace_field := pb_first_field(parsed_link["fields"], 1)
+	span_field := pb_first_field(parsed_link["fields"], 2)
+	if trace_field == null || span_field == null { return null }
+	link_value := {"traceId": pb_bytes_hex(trace_field["value"]), "spanId": pb_bytes_hex(span_field["value"]), "attributes": pb_parse_attributes(parsed_link["fields"], 4)}
+	trace_state_field := pb_first_field(parsed_link["fields"], 3)
+	if trace_state_field != null { link_value["traceState"] = pb_bytes_text(trace_state_field["value"]) }
+	dropped_field := pb_first_field(parsed_link["fields"], 5)
+	if dropped_field != null { link_value["droppedAttributesCount"] = dropped_field["value"] }
+	flags_field := pb_first_field(parsed_link["fields"], 6)
+	if flags_field != null { link_value["flags"] = pb_fixed32_decode(flags_field["value"]) }
+	return link_value
 }
 
 func pb_parse_span(data) {
@@ -383,7 +541,9 @@ func pb_parse_span(data) {
 	trace_field := pb_first_field(parsed_span["fields"], 1)
 	span_field := pb_first_field(parsed_span["fields"], 2)
 	if trace_field == null || span_field == null { return null }
-	span_value := {"traceId": pb_bytes_hex(trace_field["value"]), "spanId": pb_bytes_hex(span_field["value"]), "name": "span", "kind": 0, "startTimeUnixNano": "0", "endTimeUnixNano": "0", "attributes": pb_parse_attributes(parsed_span["fields"], 9), "events": [], "status": {}}
+	span_value := {"traceId": pb_bytes_hex(trace_field["value"]), "spanId": pb_bytes_hex(span_field["value"]), "name": "span", "kind": 0, "startTimeUnixNano": "0", "endTimeUnixNano": "0", "attributes": pb_parse_attributes(parsed_span["fields"], 9), "events": [], "links": [], "status": {}}
+	trace_state_field := pb_first_field(parsed_span["fields"], 3)
+	if trace_state_field != null { span_value["traceState"] = pb_bytes_text(trace_state_field["value"]) }
 	parent_field := pb_first_field(parsed_span["fields"], 4)
 	if parent_field != null { span_value["parentSpanId"] = pb_bytes_hex(parent_field["value"]) }
 	name_field := pb_first_field(parsed_span["fields"], 5)
@@ -394,14 +554,28 @@ func pb_parse_span(data) {
 	if start_field != null { span_value["startTimeUnixNano"] = to_string(pb_fixed64_decode(start_field["value"])) }
 	end_field := pb_first_field(parsed_span["fields"], 8)
 	if end_field != null { span_value["endTimeUnixNano"] = to_string(pb_fixed64_decode(end_field["value"])) }
+	dropped_attributes_field := pb_first_field(parsed_span["fields"], 10)
+	if dropped_attributes_field != null { span_value["droppedAttributesCount"] = dropped_attributes_field["value"] }
 	event_values := []
 	for event_field in pb_fields_number(parsed_span["fields"], 11) {
 		event_value := pb_parse_event(event_field["value"])
 		if event_value != null { event_values = push(event_values, event_value) }
 	}
 	span_value["events"] = event_values
+	dropped_events_field := pb_first_field(parsed_span["fields"], 12)
+	if dropped_events_field != null { span_value["droppedEventsCount"] = dropped_events_field["value"] }
+	link_values := []
+	for link_field in pb_fields_number(parsed_span["fields"], 13) {
+		link_value := pb_parse_link(link_field["value"])
+		if link_value != null { link_values = push(link_values, link_value) }
+	}
+	span_value["links"] = link_values
+	dropped_links_field := pb_first_field(parsed_span["fields"], 14)
+	if dropped_links_field != null { span_value["droppedLinksCount"] = dropped_links_field["value"] }
 	status_field := pb_first_field(parsed_span["fields"], 15)
 	if status_field != null { span_value["status"] = pb_parse_status(status_field["value"]) }
+	flags_field := pb_first_field(parsed_span["fields"], 16)
+	if flags_field != null { span_value["flags"] = pb_fixed32_decode(flags_field["value"]) }
 	return span_value
 }
 
@@ -413,6 +587,8 @@ func pb_parse_scope(data) {
 	if name_field != null { scope_value["name"] = pb_bytes_text(name_field["value"]) }
 	version_field := pb_first_field(parsed_scope["fields"], 2)
 	if version_field != null { scope_value["version"] = pb_bytes_text(version_field["value"]) }
+	dropped_field := pb_first_field(parsed_scope["fields"], 4)
+	if dropped_field != null { scope_value["droppedAttributesCount"] = dropped_field["value"] }
 	return scope_value
 }
 
@@ -428,13 +604,18 @@ func pb_parse_scope_spans(data) {
 		if span_value != null { span_values = push(span_values, span_value) }
 	}
 	scope_spans_value["spans"] = span_values
+	schema_url_field := pb_first_field(parsed_scope_spans["fields"], 3)
+	if schema_url_field != null { scope_spans_value["schemaUrl"] = pb_bytes_text(schema_url_field["value"]) }
 	return scope_spans_value
 }
 
 func pb_parse_resource(data) {
 	parsed_resource := pb_parse_fields(data)
 	if parsed_resource["ok"] == false { return {} }
-	return {"attributes": pb_parse_attributes(parsed_resource["fields"], 1)}
+	resource_value := {"attributes": pb_parse_attributes(parsed_resource["fields"], 1)}
+	dropped_field := pb_first_field(parsed_resource["fields"], 2)
+	if dropped_field != null { resource_value["droppedAttributesCount"] = dropped_field["value"] }
+	return resource_value
 }
 
 func pb_parse_resource_spans(data) {
@@ -449,6 +630,8 @@ func pb_parse_resource_spans(data) {
 		if scope_value != null { scope_values = push(scope_values, scope_value) }
 	}
 	resource_spans_value["scopeSpans"] = scope_values
+	schema_url_field := pb_first_field(parsed_resource_spans["fields"], 3)
+	if schema_url_field != null { resource_spans_value["schemaUrl"] = pb_bytes_text(schema_url_field["value"]) }
 	return resource_spans_value
 }
 

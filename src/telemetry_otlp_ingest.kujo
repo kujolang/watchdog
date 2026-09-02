@@ -17,15 +17,61 @@ func ingest_text(value, max_len) {
 	return substring(text, 0, max_len)
 }
 
-func ingest_any_value(value) {
-	if type(value) != "dict" { return null }
-	if has_key(value, "stringValue") { return value["stringValue"] }
+func ingest_any_value_policy(value, depth) {
+	if depth > 8 || type(value) != "dict" { return {"value": null, "content_dropped": false} }
+	if has_key(value, "stringValue") { return {"value": ingest_text(value["stringValue"], 4096), "content_dropped": false} }
 	if has_key(value, "intValue") {
-		try { return parse_int(to_string(value["intValue"])) } except err { return ingest_text(value["intValue"], 160) }
+		try { return {"value": parse_int(to_string(value["intValue"])), "content_dropped": false} } except err { return {"value": ingest_text(value["intValue"], 160), "content_dropped": false} }
 	}
-	if has_key(value, "doubleValue") { return value["doubleValue"] }
-	if has_key(value, "boolValue") { return value["boolValue"] }
-	return null
+	if has_key(value, "doubleValue") { return {"value": value["doubleValue"], "content_dropped": false} }
+	if has_key(value, "boolValue") { return {"value": value["boolValue"], "content_dropped": false} }
+	if has_key(value, "bytesValue") { return {"value": {"$watchdog.bytes_base64": ingest_text(value["bytesValue"], 65536)}, "content_dropped": false} }
+	if has_key(value, "arrayValue") {
+		array_values := []
+		content_dropped := false
+		array_value := value["arrayValue"]
+		if type(array_value) == "dict" {
+			items := ingest_get(array_value, "values", [])
+			if type(items) == "array" {
+				item_count := 0
+				for item in items {
+					if item_count < 128 {
+						mapped := ingest_any_value_policy(item, depth + 1)
+						if type(mapped["value"]) != "null" { array_values = push(array_values, mapped["value"]) }
+						if mapped["content_dropped"] { content_dropped = true }
+					}
+					item_count = item_count + 1
+				}
+			}
+		}
+		return {"value": array_values, "content_dropped": content_dropped}
+	}
+	if has_key(value, "kvlistValue") {
+		kv_values := []
+		content_dropped := false
+		kvlist_value := value["kvlistValue"]
+		if type(kvlist_value) == "dict" {
+			items := ingest_get(kvlist_value, "values", [])
+			if type(items) == "array" {
+				item_count := 0
+				for item in items {
+					if item_count < 128 && type(item) == "dict" {
+						key := ingest_text(ingest_get(item, "key", ""), 160)
+						if key != "" {
+							if ingest_content_key(key) { content_dropped = true } else {
+								mapped := ingest_any_value_policy(ingest_get(item, "value", {}), depth + 1)
+								if type(mapped["value"]) != "null" { kv_values = push(kv_values, {"key": key, "value": mapped["value"]}) }
+								if mapped["content_dropped"] { content_dropped = true }
+							}
+						}
+					}
+					item_count = item_count + 1
+				}
+			}
+		}
+		return {"value": {"$watchdog.kvlist": kv_values}, "content_dropped": content_dropped}
+	}
+	return {"value": null, "content_dropped": false}
 }
 
 func ingest_content_key(key) {
@@ -43,8 +89,9 @@ func ingest_attributes(raw_attributes) {
 			key := ingest_text(ingest_get(attribute, "key", ""), 160)
 			if key != "" {
 				if ingest_content_key(key) { content_dropped = true } else {
-					value := ingest_any_value(ingest_get(attribute, "value", {}))
-					if type(value) != "null" { attributes[key] = value }
+					mapped := ingest_any_value_policy(ingest_get(attribute, "value", {}), 0)
+					if type(mapped["value"]) != "null" { attributes[key] = mapped["value"] }
+					if mapped["content_dropped"] { content_dropped = true }
 				}
 			}
 		}

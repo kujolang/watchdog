@@ -32,9 +32,11 @@ changes.
 - OTLP ingest accepts traces only and rejects generic, logs, and metrics input.
 - Only AI-relevant spans are accepted; arbitrary baggage cannot select policy,
   tenant, retention, credentials, or exporters.
-- The minimal Protobuf decoder covers the OTLP trace shapes Watchdog consumes;
-  nested `AnyValue` arrays and kvlists are reduced rather than treated as a
-  general Protobuf object model.
+- The bounded Protobuf codec covers the complete OTLP trace signal consumed by
+  Watchdog, including nested `AnyValue` arrays/key-value lists/bytes, links,
+  flags, dropped counts, schema URLs, events, status, and partial success. It is
+  deliberately not a generic Protobuf runtime and rejects unsupported signals
+  and wire types.
 - Langfuse, Phoenix, Grafana/Tempo, Datadog, and Honeycomb use their OTLP
   endpoints. No vendor-native trace SDK is bundled.
 - Streaming proxy responses remain buffered in this release line.

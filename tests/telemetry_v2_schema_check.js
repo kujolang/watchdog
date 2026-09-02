@@ -18,6 +18,8 @@ assert(schema.properties.records.maxItems === 100, 'batch bound drift');
 assert(schema.$defs.record.additionalProperties === false, 'canonical records must reject undeclared fields');
 assert(schema.$defs.record.properties.trace_id.pattern.includes('0{32}'), 'zero trace IDs must be rejected');
 assert(schema.$defs.content.properties.value.maxLength === 65536, 'content bound drift');
+assert(schema.$defs.attributeValue && schema.$defs.attributeArray.maxItems === 128, 'bounded nested OTLP attributes must remain representable');
+assert(schema.$defs.record.properties.attributes.additionalProperties.$ref === '#/$defs/attributeValue', 'record attributes must use the bounded recursive value contract');
 assert(fixture.schema_version === 'watchdog.telemetry.v2', 'canonical fixture version drift');
 assert(fixture.records.length === 1 && fixture.records[0].privacy.content_mode === 'off', 'fixture must remain metadata-only');
 assert(fixture.records[0].content.length === 0, 'metadata-only fixture leaked content');
