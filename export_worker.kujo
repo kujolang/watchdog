@@ -154,10 +154,20 @@ func worker_send_profile(db, profile) {
 	}
 	content_type := "application/json"
 	if encoding == "protobuf" { content_type = "application/x-protobuf" }
+	compression := to_lower(trim(to_string(worker_get(profile, "compression", "none"))))
+	if compression != "none" && compression != "gzip" {
+		worker_mark_state(db, profile_id, "paused", false, "compression must be none or gzip")
+		return {"profile": profile_id, "status": "paused", "records": 0}
+	}
 	header_result := worker_profile_headers(profile, content_type)
 	if header_result["ok"] == false {
 		worker_mark_state(db, profile_id, "paused", false, header_result["error"])
 		return {"profile": profile_id, "status": "paused", "records": 0}
+	}
+	if compression == "gzip" {
+		profile_headers := header_result["headers"]
+		profile_headers["Content-Encoding"] = "gzip"
+		header_result["headers"] = profile_headers
 	}
 	batch_limit := worker_int(worker_get(profile, "batch_records", 256), 256, 1, 256)
 	max_attempts := worker_int(worker_get(profile, "max_attempts", 10), 10, 1, 20)
@@ -195,6 +205,13 @@ func worker_send_profile(db, profile) {
 	if encoding == "protobuf" && type(payload) != "bytes" {
 		worker_mark_dead(db, delivery_rows, profile_id, 0, "protobuf encoder did not return bytes", "")
 		return {"profile": profile_id, "status": "dead", "records": len(delivery_rows), "payload_type": type(payload)}
+	}
+	if compression == "gzip" {
+		if type(payload) == "string" { payload = decode_base64(encode_base64(payload)) }
+		try { payload = gzip_compress(payload) } except err {
+			worker_mark_dead(db, delivery_rows, profile_id, 0, "gzip compression failed", "")
+			return {"profile": profile_id, "status": "dead", "records": len(delivery_rows)}
+		}
 	}
 	allow_private_network := worker_get(profile, "allow_private_network", false) == true
 	destination_policy := "deny_private"

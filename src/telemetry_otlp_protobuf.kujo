@@ -221,3 +221,254 @@ export watchdog_otlp_protobuf_rejected_spans := func(data) {
 	if rejected["ok"] == false { return -1 }
 	return rejected["value"]
 }
+
+func pb_bytes_text(data) {
+	try { return decode_base64_utf8(encode_base64(data)) } except err { return "" }
+}
+
+func pb_bytes_hex(data) {
+	digits := "0123456789abcdef"
+	hex_text := ""
+	i := 0
+	while i < len(data) {
+		byte_value := data[i]
+		hex_text = hex_text + substring(digits, floor(byte_value / 16), floor(byte_value / 16) + 1)
+		hex_text = hex_text + substring(digits, byte_value % 16, (byte_value % 16) + 1)
+		i = i + 1
+	}
+	return hex_text
+}
+
+func pb_fixed64_decode(data) {
+	decoded_value := 0
+	multiplier := 1
+	i := 0
+	while i < 8 && i < len(data) {
+		decoded_value = decoded_value + (data[i] * multiplier)
+		if i < 7 { multiplier = multiplier * 256 }
+		i = i + 1
+	}
+	return decoded_value
+}
+
+func pb_double_decode(data) {
+	if len(data) != 8 { return 0.0 }
+	mantissa := 0
+	multiplier := 1
+	i := 0
+	while i < 6 {
+		mantissa = mantissa + (data[i] * multiplier)
+		multiplier = multiplier * 256
+		i = i + 1
+	}
+	mantissa = mantissa + ((data[6] % 16) * multiplier)
+	biased := floor(data[6] / 16) + ((data[7] % 128) * 16)
+	if biased == 0 && mantissa == 0 { return 0.0 }
+	sign := 1.0
+	if data[7] >= 128 { sign = -1.0 }
+	return sign * (1.0 + (mantissa / 4503599627370496.0)) * pow(2.0, biased - 1023)
+}
+
+func pb_parse_fields(data) {
+	parsed_fields := []
+	offset := 0
+	field_count := 0
+	while offset < len(data) && field_count < 10000 {
+		key_result := pb_decode_varint(data, offset)
+		if key_result["ok"] == false { return {"ok": false, "fields": [], "error": "malformed protobuf field key"} }
+		offset = key_result["offset"]
+		field_number := floor(key_result["value"] / 8)
+		wire_type := key_result["value"] % 8
+		if field_number <= 0 { return {"ok": false, "fields": [], "error": "invalid protobuf field number"} }
+		if wire_type == 0 {
+			varint_result := pb_decode_varint(data, offset)
+			if varint_result["ok"] == false { return {"ok": false, "fields": [], "error": "malformed protobuf varint"} }
+			offset = varint_result["offset"]
+			parsed_fields = push(parsed_fields, {"number": field_number, "wire": wire_type, "value": varint_result["value"]})
+		} else if wire_type == 1 {
+			if offset + 8 > len(data) { return {"ok": false, "fields": [], "error": "truncated protobuf fixed64"} }
+			parsed_fields = push(parsed_fields, {"number": field_number, "wire": wire_type, "value": slice(data, offset, offset + 8)})
+			offset = offset + 8
+		} else if wire_type == 2 {
+			length_result := pb_decode_varint(data, offset)
+			if length_result["ok"] == false { return {"ok": false, "fields": [], "error": "malformed protobuf length"} }
+			offset = length_result["offset"]
+			field_end := offset + length_result["value"]
+			if field_end > len(data) { return {"ok": false, "fields": [], "error": "truncated protobuf message"} }
+			parsed_fields = push(parsed_fields, {"number": field_number, "wire": wire_type, "value": slice(data, offset, field_end)})
+			offset = field_end
+		} else if wire_type == 5 {
+			if offset + 4 > len(data) { return {"ok": false, "fields": [], "error": "truncated protobuf fixed32"} }
+			parsed_fields = push(parsed_fields, {"number": field_number, "wire": wire_type, "value": slice(data, offset, offset + 4)})
+			offset = offset + 4
+		} else {
+			return {"ok": false, "fields": [], "error": "unsupported protobuf wire type"}
+		}
+		field_count = field_count + 1
+	}
+	if offset != len(data) { return {"ok": false, "fields": [], "error": "protobuf field bound exceeded"} }
+	return {"ok": true, "fields": parsed_fields, "error": ""}
+}
+
+func pb_fields_number(fields, number) {
+	matches := []
+	for field in fields { if field["number"] == number { matches = push(matches, field) } }
+	return matches
+}
+
+func pb_first_field(fields, number) {
+	for field in fields { if field["number"] == number { return field } }
+	return null
+}
+
+func pb_parse_any_value(data) {
+	parsed_any := pb_parse_fields(data)
+	if parsed_any["ok"] == false { return {"stringValue": ""} }
+	field := pb_first_field(parsed_any["fields"], 1)
+	if field != null { return {"stringValue": pb_bytes_text(field["value"])} }
+	field = pb_first_field(parsed_any["fields"], 2)
+	if field != null { return {"boolValue": field["value"] != 0} }
+	field = pb_first_field(parsed_any["fields"], 3)
+	if field != null { return {"intValue": field["value"]} }
+	field = pb_first_field(parsed_any["fields"], 4)
+	if field != null { return {"doubleValue": pb_double_decode(field["value"])} }
+	field = pb_first_field(parsed_any["fields"], 7)
+	if field != null { return {"bytesValue": encode_base64(field["value"])} }
+	return {"stringValue": ""}
+}
+
+func pb_parse_key_value(data) {
+	parsed_key_value := pb_parse_fields(data)
+	if parsed_key_value["ok"] == false { return null }
+	key_field := pb_first_field(parsed_key_value["fields"], 1)
+	value_field := pb_first_field(parsed_key_value["fields"], 2)
+	if key_field == null || value_field == null { return null }
+	return {"key": pb_bytes_text(key_field["value"]), "value": pb_parse_any_value(value_field["value"])}
+}
+
+func pb_parse_attributes(fields, number) {
+	attribute_values := []
+	for field in pb_fields_number(fields, number) {
+		attribute := pb_parse_key_value(field["value"])
+		if attribute != null { attribute_values = push(attribute_values, attribute) }
+	}
+	return attribute_values
+}
+
+func pb_parse_status(data) {
+	parsed_status := pb_parse_fields(data)
+	if parsed_status["ok"] == false { return {} }
+	status_value := {}
+	message := pb_first_field(parsed_status["fields"], 2)
+	if message != null { status_value["message"] = pb_bytes_text(message["value"]) }
+	code := pb_first_field(parsed_status["fields"], 3)
+	if code != null { status_value["code"] = code["value"] }
+	return status_value
+}
+
+func pb_parse_event(data) {
+	parsed_event := pb_parse_fields(data)
+	if parsed_event["ok"] == false { return null }
+	event_value := {"timeUnixNano": "0", "name": "event", "attributes": pb_parse_attributes(parsed_event["fields"], 3)}
+	time_field := pb_first_field(parsed_event["fields"], 1)
+	if time_field != null { event_value["timeUnixNano"] = to_string(pb_fixed64_decode(time_field["value"])) }
+	name_field := pb_first_field(parsed_event["fields"], 2)
+	if name_field != null { event_value["name"] = pb_bytes_text(name_field["value"]) }
+	return event_value
+}
+
+func pb_parse_span(data) {
+	parsed_span := pb_parse_fields(data)
+	if parsed_span["ok"] == false { return null }
+	trace_field := pb_first_field(parsed_span["fields"], 1)
+	span_field := pb_first_field(parsed_span["fields"], 2)
+	if trace_field == null || span_field == null { return null }
+	span_value := {"traceId": pb_bytes_hex(trace_field["value"]), "spanId": pb_bytes_hex(span_field["value"]), "name": "span", "kind": 0, "startTimeUnixNano": "0", "endTimeUnixNano": "0", "attributes": pb_parse_attributes(parsed_span["fields"], 9), "events": [], "status": {}}
+	parent_field := pb_first_field(parsed_span["fields"], 4)
+	if parent_field != null { span_value["parentSpanId"] = pb_bytes_hex(parent_field["value"]) }
+	name_field := pb_first_field(parsed_span["fields"], 5)
+	if name_field != null { span_value["name"] = pb_bytes_text(name_field["value"]) }
+	kind_field := pb_first_field(parsed_span["fields"], 6)
+	if kind_field != null { span_value["kind"] = kind_field["value"] }
+	start_field := pb_first_field(parsed_span["fields"], 7)
+	if start_field != null { span_value["startTimeUnixNano"] = to_string(pb_fixed64_decode(start_field["value"])) }
+	end_field := pb_first_field(parsed_span["fields"], 8)
+	if end_field != null { span_value["endTimeUnixNano"] = to_string(pb_fixed64_decode(end_field["value"])) }
+	event_values := []
+	for event_field in pb_fields_number(parsed_span["fields"], 11) {
+		event_value := pb_parse_event(event_field["value"])
+		if event_value != null { event_values = push(event_values, event_value) }
+	}
+	span_value["events"] = event_values
+	status_field := pb_first_field(parsed_span["fields"], 15)
+	if status_field != null { span_value["status"] = pb_parse_status(status_field["value"]) }
+	return span_value
+}
+
+func pb_parse_scope(data) {
+	parsed_scope := pb_parse_fields(data)
+	if parsed_scope["ok"] == false { return {} }
+	scope_value := {"attributes": pb_parse_attributes(parsed_scope["fields"], 3)}
+	name_field := pb_first_field(parsed_scope["fields"], 1)
+	if name_field != null { scope_value["name"] = pb_bytes_text(name_field["value"]) }
+	version_field := pb_first_field(parsed_scope["fields"], 2)
+	if version_field != null { scope_value["version"] = pb_bytes_text(version_field["value"]) }
+	return scope_value
+}
+
+func pb_parse_scope_spans(data) {
+	parsed_scope_spans := pb_parse_fields(data)
+	if parsed_scope_spans["ok"] == false { return null }
+	scope_spans_value := {"scope": {}, "spans": []}
+	scope_field := pb_first_field(parsed_scope_spans["fields"], 1)
+	if scope_field != null { scope_spans_value["scope"] = pb_parse_scope(scope_field["value"]) }
+	span_values := []
+	for span_field in pb_fields_number(parsed_scope_spans["fields"], 2) {
+		span_value := pb_parse_span(span_field["value"])
+		if span_value != null { span_values = push(span_values, span_value) }
+	}
+	scope_spans_value["spans"] = span_values
+	return scope_spans_value
+}
+
+func pb_parse_resource(data) {
+	parsed_resource := pb_parse_fields(data)
+	if parsed_resource["ok"] == false { return {} }
+	return {"attributes": pb_parse_attributes(parsed_resource["fields"], 1)}
+}
+
+func pb_parse_resource_spans(data) {
+	parsed_resource_spans := pb_parse_fields(data)
+	if parsed_resource_spans["ok"] == false { return null }
+	resource_spans_value := {"resource": {"attributes": []}, "scopeSpans": []}
+	resource_field := pb_first_field(parsed_resource_spans["fields"], 1)
+	if resource_field != null { resource_spans_value["resource"] = pb_parse_resource(resource_field["value"]) }
+	scope_values := []
+	for scope_field in pb_fields_number(parsed_resource_spans["fields"], 2) {
+		scope_value := pb_parse_scope_spans(scope_field["value"])
+		if scope_value != null { scope_values = push(scope_values, scope_value) }
+	}
+	resource_spans_value["scopeSpans"] = scope_values
+	return resource_spans_value
+}
+
+export watchdog_otlp_protobuf_decode := func(data) {
+	if type(data) != "bytes" { return {"ok": false, "payload": {}, "error": "protobuf input must be bytes"} }
+	parsed_request := pb_parse_fields(data)
+	if parsed_request["ok"] == false { return {"ok": false, "payload": {}, "error": parsed_request["error"]} }
+	resource_values := []
+	for resource_field in pb_fields_number(parsed_request["fields"], 1) {
+		resource_value := pb_parse_resource_spans(resource_field["value"])
+		if resource_value != null { resource_values = push(resource_values, resource_value) }
+	}
+	if len(resource_values) == 0 { return {"ok": false, "payload": {}, "error": "protobuf request contains no resource spans"} }
+	return {"ok": true, "payload": {"resourceSpans": resource_values}, "error": ""}
+}
+
+export watchdog_otlp_protobuf_encode_response := func(rejected_spans, error_message) {
+	if rejected_spans <= 0 && trim(to_string(error_message)) == "" { return bytes([]) }
+	partial_bytes := []
+	if rejected_spans > 0 { partial_bytes = concat(partial_bytes, pb_field_varint(1, rejected_spans)) }
+	if trim(to_string(error_message)) != "" { partial_bytes = concat(partial_bytes, pb_field_text(2, error_message)) }
+	return bytes(pb_field_bytes(1, partial_bytes))
+}

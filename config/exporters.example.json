@@ -8,6 +8,7 @@
       "endpoint": "http://127.0.0.1:4318/v1/traces",
       "mapping_profile": "otel.genai.v1",
       "encoding": "protobuf",
+      "compression": "gzip",
       "headers_from_env": {},
       "batch_records": 256,
       "timeout_seconds": 10,

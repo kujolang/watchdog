@@ -1,11 +1,18 @@
 from telemetry_otlp import watchdog_otlp_map
-from telemetry_otlp_protobuf import watchdog_otlp_protobuf_encode, watchdog_otlp_protobuf_rejected_spans
+from telemetry_otlp_protobuf import watchdog_otlp_protobuf_encode, watchdog_otlp_protobuf_rejected_spans, watchdog_otlp_protobuf_decode
 
 batch := parse_json(read_file("tests/fixtures/telemetry-v2/canonical-model-batch.json"))
 payload := watchdog_otlp_map(batch["records"], "otel.genai.v1")
 encoded := watchdog_otlp_protobuf_encode(payload)
 assert(type(encoded) == "bytes", "OTLP protobuf encoder must return bytes")
 assert(len(encoded) > 100, "OTLP protobuf payload unexpectedly small")
+decoded := watchdog_otlp_protobuf_decode(encoded)
+assert(decoded["ok"], "OTLP protobuf must decode")
+decoded_span := decoded["payload"]["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+assert(decoded_span["traceId"] == batch["records"][0]["trace_id"], "protobuf trace ID round trip drift")
+assert(decoded_span["spanId"] == batch["records"][0]["span_id"], "protobuf span ID round trip drift")
+assert(decoded_span["name"] == "chat fixture-model", "protobuf span name round trip drift")
+assert(len(decoded_span["attributes"]) > 10, "protobuf attributes round trip drift")
 assert(watchdog_otlp_protobuf_rejected_spans(bytes([])) == 0, "empty success response must decode")
 assert(watchdog_otlp_protobuf_rejected_spans(bytes([10,2,8,3])) == 3, "partial success rejection count must decode")
 assert(watchdog_otlp_protobuf_rejected_spans(bytes([255])) == -1, "malformed protobuf response must fail closed")

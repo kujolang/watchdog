@@ -32,6 +32,7 @@ from telemetry_delivery import watchdog_delivery_status
 from telemetry_delivery import watchdog_delivery_resume_profile
 from telemetry_delivery import watchdog_delivery_backfill
 from telemetry_otlp_ingest import watchdog_otlp_ingest_map
+from telemetry_otlp_protobuf import watchdog_otlp_protobuf_decode, watchdog_otlp_protobuf_encode_response
 
 DEFAULT_PORT := 7700
 DEFAULT_DB_PATH := "data/watchdog.db"
@@ -3695,21 +3696,46 @@ server := server.route("POST", "/telemetry/v2/otlp/v1/traces", func(req) {
 	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
 	headers := safe_dict_get(req, "headers", {})
 	content_type := to_lower(get_header(headers, "Content-Type"))
-	if contains(content_type, "application/json") == 0 {
-		response := api_error(415, "Guarded OTLP ingest currently accepts OTLP/HTTP JSON only")
-		response = set_header(response, "Accept-Post", "application/json")
+	content_encoding := to_lower(trim(get_header(headers, "Content-Encoding")))
+	if content_encoding != "" && content_encoding != "identity" && content_encoding != "gzip" {
+		return api_error(415, "Unsupported OTLP content encoding")
+	}
+	is_protobuf := contains(content_type, "application/x-protobuf") > 0
+	is_json := contains(content_type, "application/json") > 0
+	if is_protobuf == false && is_json == false {
+		response := api_error(415, "Guarded OTLP ingest accepts OTLP/HTTP JSON or Protobuf")
+		response = set_header(response, "Accept-Post", "application/json, application/x-protobuf")
 		return response
 	}
 	body_text := to_string(safe_dict_get(req, "body", "{}"))
-	parsed := parse_json_with_limit(body_text, MAX_PARSE_BODY_BYTES)
-	if parsed["ok"] == false || type(parsed["data"]) != "dict" { return api_error(400, "Invalid OTLP JSON trace request") }
-	mapped := watchdog_otlp_ingest_map(parsed["data"])
+	body_bytes := safe_dict_get(req, "body_bytes", bytes([]))
+	if type(body_bytes) != "bytes" { return api_error(400, "OTLP request body is unavailable") }
+	if content_encoding == "gzip" {
+		try { body_bytes = gzip_decompress(body_bytes, MAX_PARSE_BODY_BYTES) } except err { return api_error(400, "Invalid or over-limit OTLP gzip body") }
+		try { body_text = decode_base64_utf8(encode_base64(body_bytes)) } except err { body_text = "" }
+	}
+	payload := null
+	original_schema := "otlp-json"
+	body_hash_input := body_text
+	if is_protobuf {
+		if len(body_bytes) > MAX_PARSE_BODY_BYTES { return api_error(400, "OTLP Protobuf body exceeds configured parse limit") }
+		decoded := watchdog_otlp_protobuf_decode(body_bytes)
+		if decoded["ok"] == false { return api_error(400, "Invalid OTLP Protobuf trace request") }
+		payload = decoded["payload"]
+		original_schema = "otlp-protobuf"
+		body_hash_input = encode_base64(body_bytes)
+	} else {
+		parsed := parse_json_with_limit(body_text, MAX_PARSE_BODY_BYTES)
+		if parsed["ok"] == false || type(parsed["data"]) != "dict" { return api_error(400, "Invalid OTLP JSON trace request") }
+		payload = parsed["data"]
+	}
+	mapped := watchdog_otlp_ingest_map(payload)
 	if mapped["ok"] == false { return api_error(400, mapped["error"]) }
 	batch := {
 		"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION,
-		"batch_id": "otlp:" + substring(sha256(body_text), 0, 32),
+		"batch_id": "otlp:" + substring(sha256(body_hash_input), 0, 32),
 		"sent_at": null,
-		"producer": {"name": mapped["producer"], "version": "unknown", "adapter_id": "watchdog.otlp-json-ingest", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "otlp-json"},
+		"producer": {"name": mapped["producer"], "version": "unknown", "adapter_id": "watchdog.otlp-ingest", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": original_schema},
 		"records": mapped["records"]
 	}
 	try {
@@ -3717,7 +3743,13 @@ server := server.route("POST", "/telemetry/v2/otlp/v1/traces", func(req) {
 		insert_audit_event("guarded_otlp_trace_intake", resolve_audit_actor_key(req, "api"), "success", {"producer": mapped["producer"], "accepted_records": result["records"], "rejected_spans": mapped["rejected"]})
 		message := ""
 		if mapped["rejected"] > 0 { message = "Generic, invalid, or over-limit spans were rejected" }
-		response := json_response(200, {"partialSuccess": {"rejectedSpans": mapped["rejected"], "errorMessage": message}})
+		response := null
+		if is_protobuf {
+			response = http_response(200, watchdog_otlp_protobuf_encode_response(mapped["rejected"], message))
+			response = set_header(response, "Content-Type", "application/x-protobuf")
+		} else {
+			response = json_response(200, {"partialSuccess": {"rejectedSpans": mapped["rejected"], "errorMessage": message}})
+		}
 		return apply_default_security_headers(response)
 	} except err {
 		print("Guarded OTLP intake failed: " + to_string(err))

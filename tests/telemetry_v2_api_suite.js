@@ -3,7 +3,8 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const {spawn} = require('node:child_process');
+const zlib = require('node:zlib');
+const {spawn, spawnSync} = require('node:child_process');
 const {resolveKujoBinOrThrow} = require('./_kujo_bin');
 
 const root = path.resolve(__dirname, '..');
@@ -16,10 +17,10 @@ fs.writeFileSync(exportersPath, JSON.stringify({schema_version: 'watchdog.export
 
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
-function request(method, pathname, payload) {
+function request(method, pathname, payload, extraHeaders = {}) {
 	return new Promise((resolve, reject) => {
-		const body = payload == null ? '' : (typeof payload === 'string' ? payload : JSON.stringify(payload));
-		const req = http.request({host: '127.0.0.1', port, method, path: pathname, headers: body ? {'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body)} : {}}, (res) => {
+		const body = payload == null ? '' : (Buffer.isBuffer(payload) ? payload : (typeof payload === 'string' ? payload : JSON.stringify(payload)));
+		const req = http.request({host: '127.0.0.1', port, method, path: pathname, headers: body.length ? {'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), ...extraHeaders} : extraHeaders}, (res) => {
 			let text = '';
 			res.on('data', (chunk) => { text += chunk; });
 			res.on('end', () => resolve({status: res.statusCode || 0, body: text, headers: res.headers || {}}));
@@ -139,6 +140,16 @@ async function run() {
 		const otlpRecords = JSON.parse((await request('GET', '/api/telemetry/v2/records?producer=fixture-otel-agent')).body).data.records;
 		assert.strictEqual(otlpRecords.length, 2, 'guarded OTLP records were not persisted');
 		assert.ok(!JSON.stringify(otlpRecords).includes('otlp-raw-prompt-canary'), 'OTLP prompt content leaked into storage');
+		const protobufFixture = spawnSync(kujoBin, ['run', '--interpreter', 'tests/fixtures/telemetry_otlp_protobuf_check.kujo'], {cwd: root, encoding: 'utf8', env: process.env, timeout: 30000});
+		assert.strictEqual(protobufFixture.status, 0, protobufFixture.stderr);
+		const protobufPayload = Buffer.from(protobufFixture.stdout.trim().split(/\n/).pop(), 'base64');
+		const protobufIntake = await request('POST', '/telemetry/v2/otlp/v1/traces', protobufPayload, {'Content-Type': 'application/x-protobuf'});
+		assert.strictEqual(protobufIntake.status, 200, protobufIntake.body);
+		assert.strictEqual(protobufIntake.headers['content-type'], 'application/x-protobuf');
+		assert.strictEqual(protobufIntake.body, '', 'successful protobuf intake should return an empty OTLP response');
+		assert.strictEqual((await request('POST', '/telemetry/v2/otlp/v1/traces', Buffer.from([255]), {'Content-Type': 'application/x-protobuf'})).status, 400, 'malformed protobuf was accepted');
+		assert.strictEqual((await request('POST', '/telemetry/v2/otlp/v1/traces', protobufPayload, {'Content-Type': 'application/x-protobuf', 'Content-Encoding': 'gzip'})).status, 400, 'malformed compressed OTLP was accepted');
+		assert.strictEqual((await request('POST', '/telemetry/v2/otlp/v1/traces', zlib.gzipSync(protobufPayload), {'Content-Type': 'application/x-protobuf', 'Content-Encoding': 'gzip'})).status, 200, 'valid gzip protobuf intake failed');
 		const frameworkPayload = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/telemetry-v2/otlp-framework-traces.json'), 'utf8'));
 		const frameworkIntake = await request('POST', '/telemetry/v2/otlp/v1/traces', frameworkPayload);
 		assert.strictEqual(frameworkIntake.status, 200, frameworkIntake.body);

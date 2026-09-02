@@ -12,6 +12,7 @@
     "endpoint": {"type": "string", "minLength": 1, "maxLength": 1000},
     "mapping_profile": {"enum": ["otel.base.v1", "otel.genai.v1", "openinference.v1"]},
     "encoding": {"enum": ["protobuf", "json"], "default": "json"},
+    "compression": {"enum": ["none", "gzip"], "default": "none"},
     "headers_from_env": {"type": "object", "maxProperties": 16, "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 120}},
     "batch_records": {"type": "integer", "minimum": 1, "maximum": 256},
     "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 30},

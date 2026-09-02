@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const {spawn} = require('node:child_process');
 const {DatabaseSync} = require('node:sqlite');
 const {resolveKujoBinOrThrow} = require('./_kujo_bin');
@@ -101,7 +102,7 @@ async function run() {
 		fs.writeFileSync(configPath, JSON.stringify({schema_version: 'watchdog.exporters.v1', exporters: [
 			{id: 'success', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${successPort}/v1/traces`, mapping_profile: 'openinference.v1', headers_from_env: {Authorization: 'WDG_TEST_OTLP_AUTH'}, batch_records: 32, timeout_seconds: 3, max_attempts: 3},
 			{id: 'retry', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${retryPort}/v1/traces`, mapping_profile: 'otel.genai.v1', batch_records: 32, timeout_seconds: 3, max_attempts: 3},
-			{id: 'protobuf', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${protobufPort}/v1/traces`, mapping_profile: 'otel.genai.v1', encoding: 'protobuf', batch_records: 32, timeout_seconds: 3, max_attempts: 3},
+			{id: 'protobuf', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${protobufPort}/v1/traces`, mapping_profile: 'otel.genai.v1', encoding: 'protobuf', compression: 'gzip', batch_records: 32, timeout_seconds: 3, max_attempts: 3},
 			{id: 'expired', type: 'otlp_http', enabled: true, endpoint: 'http://127.0.0.1:17731/v1/traces', mapping_profile: 'otel.genai.v1', batch_records: 32, timeout_seconds: 1, max_attempts: 3, max_queue_age_seconds: 60},
 		]}));
 		watchdog = await startWatchdog();
@@ -131,9 +132,11 @@ async function run() {
 		assert.ok(!delivered.body.includes(Buffer.from('export-content-canary')), 'exporter bypassed authoritative content policy');
 		const protobufDelivery = protobufCollector.received[0];
 		assert.strictEqual(protobufDelivery.headers['content-type'], 'application/x-protobuf');
-		assert.strictEqual(protobufDelivery.body[0], 0x0a, `protobuf request must start with resource_spans field; bytes=${protobufDelivery.body.length}; worker=${workerOutput}`);
-		assert.ok(protobufDelivery.body.includes(Buffer.from('gen_ai.usage.input_tokens')), 'protobuf GenAI mapping was not applied');
-		assert.ok(!protobufDelivery.body.includes(Buffer.from('export-content-canary')), 'protobuf exporter bypassed authoritative content policy');
+		assert.strictEqual(protobufDelivery.headers['content-encoding'], 'gzip');
+		const uncompressedProtobuf = zlib.gunzipSync(protobufDelivery.body);
+		assert.strictEqual(uncompressedProtobuf[0], 0x0a, `protobuf request must start with resource_spans field; bytes=${uncompressedProtobuf.length}; worker=${workerOutput}`);
+		assert.ok(uncompressedProtobuf.includes(Buffer.from('gen_ai.usage.input_tokens')), 'protobuf GenAI mapping was not applied');
+		assert.ok(!uncompressedProtobuf.includes(Buffer.from('export-content-canary')), 'protobuf exporter bypassed authoritative content policy');
 		assert.ok(!workerOutput.includes('exporter-secret-canary'), 'worker output leaked exporter credential');
 
 		const statusResponse = await request('GET', '/api/telemetry/v2/export-status');
