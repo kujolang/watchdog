@@ -73,7 +73,7 @@ function runWorker() {
 	return new Promise((resolve, reject) => {
 		const child = spawn(kujoBin, ['run', '--interpreter', 'export_worker.kujo'], {
 			cwd: root,
-			env: {...process.env, WDG_DB_PATH: dbPath, WDG_EXPORTERS_CONFIG_PATH: configPath, WDG_TEST_OTLP_AUTH: 'Bearer exporter-secret-canary'},
+			env: {...process.env, WDG_DB_PATH: dbPath, WDG_EXPORTERS_CONFIG_PATH: configPath, WDG_TEST_OTLP_AUTH: 'Bearer exporter-secret-canary', WDG_TEST_DATADOG_KEY: 'datadog-secret-canary', WDG_TEST_HONEYCOMB_KEY: 'honeycomb-secret-canary'},
 			stdio: ['ignore', 'pipe', 'pipe'],
 		});
 		let output = '';
@@ -101,6 +101,12 @@ async function run() {
 		protobufCollector = await createCollector(protobufPort, 200, true);
 		fs.writeFileSync(configPath, JSON.stringify({schema_version: 'watchdog.exporters.v1', exporters: [
 			{id: 'success', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${successPort}/v1/traces`, mapping_profile: 'openinference.v1', headers_from_env: {Authorization: 'WDG_TEST_OTLP_AUTH'}, batch_records: 32, timeout_seconds: 3, max_attempts: 3},
+			{id: 'collector', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${successPort}/collector/v1/traces`, mapping_profile: 'otel.genai.v1', headers_from_env: {Authorization: 'WDG_TEST_OTLP_AUTH'}, batch_records: 32, timeout_seconds: 3, max_attempts: 3},
+			{id: 'langfuse', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${successPort}/langfuse/v1/traces`, mapping_profile: 'otel.genai.v1', headers_from_env: {Authorization: 'WDG_TEST_OTLP_AUTH'}, batch_records: 32, timeout_seconds: 3, max_attempts: 3},
+			{id: 'phoenix', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${successPort}/phoenix/v1/traces`, mapping_profile: 'openinference.v1', headers_from_env: {Authorization: 'WDG_TEST_OTLP_AUTH'}, batch_records: 32, timeout_seconds: 3, max_attempts: 3},
+			{id: 'grafana-tempo', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${successPort}/tempo/v1/traces`, mapping_profile: 'otel.genai.v1', headers_from_env: {Authorization: 'WDG_TEST_OTLP_AUTH'}, batch_records: 32, timeout_seconds: 3, max_attempts: 3},
+			{id: 'datadog', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${successPort}/datadog/v1/traces`, mapping_profile: 'otel.genai.v1', headers_from_env: {'DD-API-KEY': 'WDG_TEST_DATADOG_KEY'}, batch_records: 32, timeout_seconds: 3, max_attempts: 3},
+			{id: 'honeycomb', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${successPort}/honeycomb/v1/traces`, mapping_profile: 'otel.genai.v1', headers_from_env: {'x-honeycomb-team': 'WDG_TEST_HONEYCOMB_KEY'}, batch_records: 32, timeout_seconds: 3, max_attempts: 3},
 			{id: 'retry', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${retryPort}/v1/traces`, mapping_profile: 'otel.genai.v1', batch_records: 32, timeout_seconds: 3, max_attempts: 3},
 			{id: 'protobuf', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${protobufPort}/v1/traces`, mapping_profile: 'otel.genai.v1', encoding: 'protobuf', compression: 'gzip', batch_records: 32, timeout_seconds: 3, max_attempts: 3},
 			{id: 'expired', type: 'otlp_http', enabled: true, endpoint: 'http://127.0.0.1:17731/v1/traces', mapping_profile: 'otel.genai.v1', batch_records: 32, timeout_seconds: 1, max_attempts: 3, max_queue_age_seconds: 60},
@@ -120,10 +126,10 @@ async function run() {
 		assert.match(workerOutput, /"status":"sent"/);
 		assert.match(workerOutput, /"status":"retry"/);
 		assert.match(workerOutput, /"profile":"expired"[^}]*"status":"idle"/);
-		assert.strictEqual(successCollector.received.length, 1, 'success collector delivery count drift');
+		assert.strictEqual(successCollector.received.length, 7, 'destination-profile delivery count drift');
 		assert.strictEqual(retryCollector.received.length, 1, 'retry collector delivery count drift');
 		assert.strictEqual(protobufCollector.received.length, 1, 'protobuf collector delivery count drift');
-		const delivered = successCollector.received[0];
+		const delivered = successCollector.received.find((item) => item.url === '/v1/traces');
 		assert.strictEqual(delivered.method, 'POST');
 		assert.strictEqual(delivered.url, '/v1/traces');
 		assert.strictEqual(delivered.headers.authorization, 'Bearer exporter-secret-canary');
@@ -138,6 +144,14 @@ async function run() {
 		assert.ok(uncompressedProtobuf.includes(Buffer.from('gen_ai.usage.input_tokens')), 'protobuf GenAI mapping was not applied');
 		assert.ok(!uncompressedProtobuf.includes(Buffer.from('export-content-canary')), 'protobuf exporter bypassed authoritative content policy');
 		assert.ok(!workerOutput.includes('exporter-secret-canary'), 'worker output leaked exporter credential');
+		assert.ok(!workerOutput.includes('datadog-secret-canary'), 'worker output leaked Datadog credential');
+		assert.ok(!workerOutput.includes('honeycomb-secret-canary'), 'worker output leaked Honeycomb credential');
+		const byPath = new Map(successCollector.received.map((item) => [item.url, item]));
+		for (const pathname of ['/collector/v1/traces', '/langfuse/v1/traces', '/phoenix/v1/traces', '/tempo/v1/traces', '/datadog/v1/traces', '/honeycomb/v1/traces']) assert.ok(byPath.has(pathname), `missing destination profile ${pathname}`);
+		assert.strictEqual(byPath.get('/datadog/v1/traces').headers['dd-api-key'], 'datadog-secret-canary');
+		assert.strictEqual(byPath.get('/honeycomb/v1/traces').headers['x-honeycomb-team'], 'honeycomb-secret-canary');
+		assert.ok(byPath.get('/phoenix/v1/traces').body.includes(Buffer.from('openinference.span.kind')), 'Phoenix profile did not apply OpenInference');
+		assert.ok(byPath.get('/langfuse/v1/traces').body.includes(Buffer.from('gen_ai.usage.input_tokens')), 'Langfuse OTLP profile lost GenAI usage');
 
 		const statusResponse = await request('GET', '/api/telemetry/v2/export-status');
 		assert.strictEqual(statusResponse.status, 200, statusResponse.body);
@@ -145,6 +159,7 @@ async function run() {
 		assert.ok(rows.some((row) => row.profile_id === 'success' && row.status === 'sent' && row.records === 1));
 		assert.ok(rows.some((row) => row.profile_id === 'retry' && row.status === 'retry' && row.records === 1));
 		assert.ok(rows.some((row) => row.profile_id === 'protobuf' && row.status === 'sent' && row.records === 1));
+		for (const profileId of ['collector', 'langfuse', 'phoenix', 'grafana-tempo', 'datadog', 'honeycomb']) assert.ok(rows.some((row) => row.profile_id === profileId && row.status === 'sent' && row.records === 1), `profile ${profileId} was not sent`);
 		assert.ok(rows.some((row) => row.profile_id === 'expired' && row.status === 'dropped' && row.records === 1));
 	} catch (error) {
 		if (watchdog) error.stack += `\nWatchdog output:\n${watchdog.output().slice(-4000)}`;
