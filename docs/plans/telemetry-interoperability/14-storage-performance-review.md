@@ -4,6 +4,12 @@
 
 SQLite remains appropriate for a local-first, single-process gateway. Current WAL mode, indexed time/session/status/provider/correlation queries, bounded pruning, quick-check backups, and local dashboard fit the workload. Do not network-mount the database or promise cluster semantics. Hosted/fleet deployments should export to an external observability system; a future alternate repository backend is a separate project.
 
+Implemented baseline: every Watchdog connection enables WAL,
+`synchronous=NORMAL`, a 5-second busy timeout, and foreign-key enforcement
+before schema work. Canonical retention protects records with pending/retry
+deliveries. Terminal delivery history, queue age, and dead letters are bounded
+independently from canonical local retention.
+
 ## Schema direction
 
 Add append-oriented canonical `telemetry_records` or normalized trace/span/event v2 tables plus:
@@ -56,4 +62,3 @@ Retain all bounded metadata locally by default. Do not probabilistically sample 
 ## Token efficiency
 
 Telemetry must stay outside model context. Host adapters are hooks/sidecars, not model tools. Do not inject the canonical schema, trace IDs, or exporter state into prompts. MCP telemetry rides protocol metadata and execution instrumentation; it adds no tool schema. Measure hook payload bytes and ensure adapters emit a reduced payload rather than raw transcripts.
-

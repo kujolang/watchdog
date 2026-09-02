@@ -12,6 +12,8 @@ function assertContains(snippet, message) {
 
 assertContains('CREATE TABLE IF NOT EXISTS schema_migrations', 'Schema migrations table should be created');
 assertContains('INSERT OR IGNORE INTO schema_migrations', 'Baseline migration record should be inserted');
+assertContains('PRAGMA journal_mode=WAL', 'SQLite should use WAL for concurrent local reads');
+assertContains('PRAGMA busy_timeout=5000', 'SQLite should use a bounded writer lock wait');
 
 assertContains('idx_requests_created_at', 'requests.created_at index should exist');
 assertContains('idx_requests_created_at_ms', 'requests created_at integer-expression index should exist');

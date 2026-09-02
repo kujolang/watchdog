@@ -203,6 +203,12 @@ func estimate_cost(model, input_tokens, output_tokens) {
 }
 
 func ensure_schema(db) {
+	# Local-first concurrency baseline: one durable writer, concurrent readers,
+	# and a bounded wait instead of immediate lock failures.
+	db_query(db, "PRAGMA journal_mode=WAL", [])
+	db_query(db, "PRAGMA synchronous=NORMAL", [])
+	db_query(db, "PRAGMA busy_timeout=5000", [])
+	db_query(db, "PRAGMA foreign_keys=ON", [])
 	db_execute(db, "CREATE TABLE IF NOT EXISTS schema_migrations (key TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT '')", [])
 
 	db_execute(db, "CREATE TABLE IF NOT EXISTS requests (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL DEFAULT '', user_id TEXT NOT NULL DEFAULT '', tenant_id TEXT NOT NULL DEFAULT '', project_id TEXT NOT NULL DEFAULT '', workflow_id TEXT NOT NULL DEFAULT '', task_id TEXT NOT NULL DEFAULT '', correlation_id TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'success', input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, total_tokens INTEGER NOT NULL DEFAULT 0, cached_input_tokens INTEGER NOT NULL DEFAULT 0, cache_write_input_tokens INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL DEFAULT 0.0, input_cost_usd REAL NOT NULL DEFAULT 0.0, output_cost_usd REAL NOT NULL DEFAULT 0.0, cached_input_cost_usd REAL NOT NULL DEFAULT 0.0, cache_write_input_cost_usd REAL NOT NULL DEFAULT 0.0, input_rate_per_million REAL NOT NULL DEFAULT 0.0, output_rate_per_million REAL NOT NULL DEFAULT 0.0, cached_input_rate_per_million REAL NOT NULL DEFAULT 0.0, cache_write_input_rate_per_million REAL NOT NULL DEFAULT 0.0, pricing_source TEXT NOT NULL DEFAULT '', pricing_kind TEXT NOT NULL DEFAULT 'unknown', priced_model TEXT NOT NULL DEFAULT '', latency_ms INTEGER NOT NULL DEFAULT 0, finish_reason TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '', error_message TEXT NOT NULL DEFAULT '', prompt_summary TEXT NOT NULL DEFAULT '', response_summary TEXT NOT NULL DEFAULT '', source_app TEXT NOT NULL DEFAULT 'legacy', data_class TEXT NOT NULL DEFAULT 'legacy', created_at TEXT NOT NULL DEFAULT '')", [])
