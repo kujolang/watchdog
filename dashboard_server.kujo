@@ -1513,7 +1513,6 @@ print("Database ready: " + DB_PATH)
 func insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary) {
 	ts := to_string(current_timestamp())
 	source_app := "watchdog-proxy"
-	if trim(project_id) != "" { source_app = trim(project_id) }
 	clean_error_message := redact_sensitive_text(error_message)
 	clean_prompt_summary := redact_sensitive_text(prompt_summary)
 	clean_response_summary := redact_sensitive_text(response_summary)
@@ -1957,7 +1956,17 @@ func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class)
 	return {"trace_id": trace_id, "spans": span_count, "events": event_count, "tool_calls": tool_count, "canonical": canonical_result}
 }
 
-func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, provider, model_name, status, status_code, started_at_ms, ended_at_ms, usage) {
+func proxy_canonical_source(observability) {
+	source := {"watchdog.semantic_profile": "watchdog.observability.v1", "producer": "watchdog-proxy", "adapter_id": "watchdog.openai-compatible-proxy", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "openai-compatible"}
+	fields := ["application.name", "application.version", "harness.name", "harness.version"]
+	for field in fields {
+		value := truncate_str(redact_sensitive_text(to_string(safe_dict_get(observability, field, ""))), 80)
+		if value != "" { source[field] = value }
+	}
+	return source
+}
+
+func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, provider, model_name, status, status_code, started_at_ms, ended_at_ms, usage, observability) {
 	has_explicit_trace := trace_id != ""
 	if trace_id == "" { trace_id = "proxy-request-" + to_string(request_dbid) }
 	duration_ms := ended_at_ms - started_at_ms
@@ -2018,6 +2027,20 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 	if pricing["pricing_kind"] == "unknown" { cost_kind = "unknown" }
 	cost_amount := pricing["total_cost_usd"]
 	if cost_kind == "unknown" { cost_amount = null }
+	logical_request_id := truncate_str(trim(to_string(safe_dict_get(observability, "logical_request_id", ""))), 160)
+	if logical_request_id == "" { logical_request_id = "proxy:" + to_string(request_dbid) }
+	source := proxy_canonical_source(observability)
+	source["source_trace_id"] = trace_id
+	source["source_span_id"] = span_id
+	references := [
+		{"type": "session", "id": session_id, "namespace": "watchdog-proxy", "relation": "groups"},
+		{"type": "request", "id": logical_request_id, "namespace": "watchdog-proxy", "relation": "attempt_of"},
+		{"type": "request", "id": to_string(request_dbid), "namespace": "watchdog", "relation": "observes"}
+	]
+	project_id := truncate_str(trim(to_string(safe_dict_get(observability, "project_id", ""))), 160)
+	if project_id != "" { references = push(references, {"type": "artifact", "id": project_id, "namespace": "watchdog-project", "relation": "groups"}) }
+	outcome_code := "error"
+	if status == "success" { outcome_code = "success" }
 	canonical_record := {
 		"record_id": "proxy:model:" + to_string(request_dbid),
 		"record_type": "span",
@@ -2030,11 +2053,8 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 		"kind": "model",
 		"name": "provider_round",
 		"status": watchdog_telemetry_v2_status(status),
-		"source": {"producer": "watchdog-proxy", "adapter_id": "watchdog.openai-compatible-proxy", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "openai-compatible", "source_trace_id": trace_id, "source_span_id": span_id},
-		"references": [
-			{"type": "session", "id": session_id, "namespace": "watchdog-proxy", "relation": "groups"},
-			{"type": "request", "id": to_string(request_dbid), "namespace": "watchdog", "relation": "observes"}
-		],
+		"source": source,
+		"references": references,
 		"attributes": {"gen_ai.provider.name": provider, "gen_ai.request.model": model_name, "http.response.status_code": status_code, "watchdog.transport": "openai-compatible-proxy", "watchdog.duration_ms": duration_ms},
 		"usage": {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens, "cached_input_tokens": to_int_or_zero(safe_dict_get(usage, "cached_input_tokens", 0)), "cache_write_input_tokens": to_int_or_zero(safe_dict_get(usage, "cache_write_input_tokens", 0)), "reasoning_tokens": to_int_or_zero(safe_dict_get(usage, "reasoning_tokens", 0)), "usage_source": "provider-response", "total_semantics": "producer_reported", "provider_usage": safe_dict_get(usage, "provider_usage", {})},
 		"costs": [{"kind": cost_kind, "currency": "USD", "amount": cost_amount, "source": pricing["pricing_source"], "catalog_version": null, "calculated_at": watchdog_telemetry_v2_timestamp(ended_at_ms, ended_at_ms), "components": {"input": pricing["input_cost_usd"], "output": pricing["output_cost_usd"]}}],
@@ -2042,8 +2062,15 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 		"content": [],
 		"privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
 	}
+	terminal_record := {
+		"record_id": "proxy:completion:" + to_string(request_dbid), "record_type": "event", "trace_id": canonical_trace_id, "span_id": canonical_span_id, "parent_span_id": null,
+		"observed_at": watchdog_telemetry_v2_timestamp(ended_at_ms, ended_at_ms), "started_at": null, "ended_at": null, "kind": null,
+		"name": "watchdog.operation.completed", "status": watchdog_telemetry_v2_status(status), "source": source, "references": references,
+		"attributes": {"watchdog.outcome.terminal": true, "watchdog.outcome.code": outcome_code, "http.response.status_code": status_code},
+		"usage": null, "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+	}
 	try {
-		canonical_write := persist_fast_approved_canonical_batch({"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION, "batch_id": "proxy:" + to_string(request_dbid), "sent_at": canonical_record["observed_at"], "producer": {"name": "watchdog-proxy", "version": "v1", "adapter_id": "watchdog.openai-compatible-proxy", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "openai-compatible"}, "records": [canonical_record]})
+		canonical_write := persist_approved_canonical_batch({"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION, "batch_id": "proxy:" + to_string(request_dbid), "sent_at": canonical_record["observed_at"], "producer": {"name": "watchdog-proxy", "version": "v1", "adapter_id": "watchdog.openai-compatible-proxy", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "openai-compatible"}, "records": [canonical_record, terminal_record]})
 		if canonical_write["ok"] == false { print("Proxy canonical telemetry validation failed: " + canonical_write["error"]) }
 	} except canonical_err {
 		print("Proxy canonical telemetry write failed: " + to_string(canonical_err))
@@ -2803,6 +2830,17 @@ func resolve_project_id(req, parsed_payload) {
 	return ""
 }
 
+func resolve_proxy_observability(req) {
+	headers := safe_dict_get(req, "headers", {})
+	return {
+		"application.name": truncate_str(trim(get_header(headers, "X-Watchdog-Application-Name")), 80),
+		"application.version": truncate_str(trim(get_header(headers, "X-Watchdog-Application-Version")), 40),
+		"harness.name": truncate_str(trim(get_header(headers, "X-Watchdog-Harness-Name")), 80),
+		"harness.version": truncate_str(trim(get_header(headers, "X-Watchdog-Harness-Version")), 40),
+		"logical_request_id": normalize_identifier(get_header(headers, "X-Watchdog-Logical-Request-Id"))
+	}
+}
+
 func resolve_workflow_id(req, parsed_payload) {
 	headers := safe_dict_get(req, "headers", {})
 	workflow_id := get_header(headers, "x-observe-workflow-id")
@@ -3144,6 +3182,8 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 	correlation_id := resolve_correlation_id(req, payload_obj)
 	trace_id := resolve_trace_id(req, payload_obj)
 	parent_span_id := resolve_parent_span_id(req, payload_obj)
+	proxy_observability := resolve_proxy_observability(req)
+	proxy_observability["project_id"] = project_id
 	agent_id := "proxy:" + resource_clean
 
 	prompt_summary := ""
@@ -3170,7 +3210,7 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		if override_key == "" {
 			latency_ms := current_timestamp() - started_ms
 			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "proxy_auth_missing", "Proxy auth_mode=override but no API key is configured.", prompt_summary, "")
-			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 500, started_ms, current_timestamp(), {})
+			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 500, started_ms, current_timestamp(), {}, proxy_observability)
 			insert_agent_step_row(session_id, agent_id, "proxy_failed", "Proxy override mode is missing an upstream API key.", {"upstream_url": upstream_url})
 			return api_error(500, "Proxy auth_mode=override requires WDG_UPSTREAM_API_KEY or WDG_UPSTREAM_API_KEY_ENV")
 		}
@@ -3272,7 +3312,7 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 			latency_ms := current_timestamp() - started_ms
 			cost_usd := watchdog_estimate_cost(model_name, usage["input_tokens"] * 1.0, usage["output_tokens"] * 1.0)
 			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, request_id, status_label, usage["input_tokens"], usage["output_tokens"], usage["total_tokens"], cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary)
-			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, status_label, status_code, started_ms, current_timestamp(), usage)
+			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, status_label, status_code, started_ms, current_timestamp(), usage, proxy_observability)
 
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
@@ -3301,7 +3341,7 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		case Err(err): {
 			latency_ms := current_timestamp() - started_ms
 			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "network_error", to_string(err), prompt_summary, "")
-			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 502, started_ms, current_timestamp(), {})
+			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 502, started_ms, current_timestamp(), {}, proxy_observability)
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
 				"path": forwarded_path,
@@ -3319,7 +3359,7 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		case other: {
 			latency_ms := current_timestamp() - started_ms
 			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "transport_error", "Unexpected http_request result type: " + type(other), prompt_summary, "")
-			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 502, started_ms, current_timestamp(), {})
+			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 502, started_ms, current_timestamp(), {}, proxy_observability)
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
 				"path": forwarded_path,

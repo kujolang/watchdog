@@ -168,14 +168,25 @@ func ingest_references(attributes, service_name) {
 	return references
 }
 
-func ingest_resource_service(resource) {
+func ingest_resource_source(resource) {
 	parsed := ingest_attributes(ingest_get(resource, "attributes", []))
 	attributes := parsed["attributes"]
-	if has_key(attributes, "service.name") { return ingest_text(attributes["service.name"], 80) }
-	return "otlp-producer"
+	service_name := "otlp-producer"
+	if has_key(attributes, "service.name") { service_name = ingest_text(attributes["service.name"], 80) }
+	source := {"watchdog.semantic_profile": "watchdog.observability.v1", "application.name": service_name}
+	allowlist := {"service.version": "application.version", "process.runtime.name": "runtime.name", "process.runtime.version": "runtime.version"}
+	for key in keys(allowlist) {
+		if has_key(attributes, key) {
+			value := ingest_text(attributes[key], 80)
+			if value != "" { source[allowlist[key]] = value }
+		}
+	}
+	return source
 }
 
-func ingest_map_span(span, service_name, scope_name, scope_version, ordinal) {
+func ingest_map_span(span, resource_source, scope_name, scope_version, ordinal) {
+	service_name := ingest_text(ingest_get(resource_source, "application.name", "otlp-producer"), 80)
+	record_source_base := parse_json(to_json(resource_source))
 	parsed_attributes := ingest_attributes(ingest_get(span, "attributes", []))
 	attributes := parsed_attributes["attributes"]
 	if ingest_ai_relevant(attributes) == false { return {"ok": false, "error": "span is not AI-relevant", "records": []} }
@@ -199,7 +210,7 @@ func ingest_map_span(span, service_name, scope_name, scope_version, ordinal) {
 		"kind": ingest_kind(attributes),
 		"name": ingest_text(ingest_get(span, "name", "otlp.span"), 160),
 		"status": ingest_status(ingest_get(span, "status", {})),
-		"source": {"producer": service_name, "adapter_id": "watchdog.otlp-json-ingest", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "otlp-json", "instrumentation.name": scope_name, "instrumentation.version": scope_version},
+		"source": record_source_base,
 		"references": ingest_references(attributes, service_name),
 		"attributes": attributes,
 		"usage": ingest_usage(attributes),
@@ -208,6 +219,14 @@ func ingest_map_span(span, service_name, scope_name, scope_version, ordinal) {
 		"content": [],
 		"privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": transformations}
 	}
+	record_source := record["source"]
+	record_source["producer"] = service_name
+	record_source["adapter_id"] = "watchdog.otlp-json-ingest"
+	record_source["adapter_version"] = "watchdog.ingestion-adapter.v1"
+	record_source["original_schema"] = "otlp-json"
+	record_source["instrumentation.name"] = scope_name
+	if scope_version != "" { record_source["instrumentation.version"] = scope_version }
+	record["source"] = record_source
 	span_records := [record]
 	events := ingest_get(span, "events", [])
 	if type(events) == "array" {
@@ -222,7 +241,8 @@ func ingest_map_span(span, service_name, scope_name, scope_version, ordinal) {
 				if has_key(event_occurrences, duplicate_key) { occurrence = event_occurrences[duplicate_key] }
 				event_occurrences[duplicate_key] = occurrence + 1
 				event_digest := substring(sha256(service_name + ":" + trace_id + ":" + span_id + ":" + event_time + ":" + event_name + ":" + to_string(occurrence)), 0, 32)
-				span_records = push(span_records, {"record_id": "otlp:event:" + event_digest, "record_type": "event", "trace_id": trace_id, "span_id": span_id, "parent_span_id": null, "observed_at": ingest_nano_timestamp(event_time), "started_at": null, "ended_at": null, "kind": null, "name": event_name, "status": "unset", "source": {"producer": service_name, "adapter_id": "watchdog.otlp-json-ingest", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "otlp-json", "instrumentation.name": scope_name, "instrumentation.version": scope_version}, "references": [], "attributes": event_attrs["attributes"], "usage": null, "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}})
+				event_source := parse_json(to_json(record_source))
+				span_records = push(span_records, {"record_id": "otlp:event:" + event_digest, "record_type": "event", "trace_id": trace_id, "span_id": span_id, "parent_span_id": null, "observed_at": ingest_nano_timestamp(event_time), "started_at": null, "ended_at": null, "kind": null, "name": event_name, "status": "unset", "source": event_source, "references": [], "attributes": event_attrs["attributes"], "usage": null, "costs": [], "error": null, "content": [], "privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}})
 			}
 		}
 	}
@@ -238,7 +258,8 @@ func ingest_map(payload) {
 	ordinal := 0
 	for resource_span in resource_spans {
 		if type(resource_span) == "dict" {
-			service_name := ingest_resource_service(ingest_get(resource_span, "resource", {}))
+			resource_source := ingest_resource_source(ingest_get(resource_span, "resource", {}))
+			service_name := ingest_text(ingest_get(resource_source, "application.name", "otlp-producer"), 80)
 			if producer == "otlp-producer" { producer = service_name }
 			scope_spans := ingest_get(resource_span, "scopeSpans", [])
 			if type(scope_spans) == "array" {
@@ -250,7 +271,7 @@ func ingest_map(payload) {
 					if type(spans) == "array" {
 						for span in spans {
 							if len(records) < 100 {
-								mapped := ingest_map_span(span, service_name, scope_name, scope_version, ordinal)
+								mapped := ingest_map_span(span, resource_source, scope_name, scope_version, ordinal)
 								if mapped["ok"] == true {
 									mapped_records := mapped["records"]
 									for mapped_record in mapped_records { if len(records) < 100 { records = push(records, mapped_record) } }

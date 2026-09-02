@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import {createHash, randomUUID} from 'node:crypto';
+import {createHash} from 'node:crypto';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {createWatchdogTelemetryClient} from '../../clients/javascript/watchdog-telemetry.mjs';
@@ -88,16 +88,33 @@ function mapEvent(event, input, now = new Date()) {
 	if (sourceType) attributes['watchdog.source.lifecycle_source'] = sourceType;
 	if (agentId) attributes['watchdog.agent.type'] = boundedString(input.agent_type, 120);
 
+	const isTerminal = event === 'Stop' || event === 'SessionEnd';
+	if (isTerminal) {
+		attributes['watchdog.outcome.terminal'] = true;
+		attributes['watchdog.outcome.code'] = 'success';
+	}
 	const isCompletedTool = event === 'PostToolUse' || event === 'PostToolUseFailure';
 	const spanId = isCompletedTool && toolUseId ? idHex('watchdog.claude-code.tool', toolUseId, 16) : null;
+	const stableEventSource = boundedString(input.hook_event_id) || [session, event, promptId || '', toolUseId || '', agentId || '', boundedString(input.timestamp, 80) || '', model || '', reason || ''].join('\0');
+	const stableEventId = idHex('watchdog.claude-code.event', stableEventSource, 32);
+	const source = {
+		'watchdog.semantic_profile': 'watchdog.observability.v1',
+		'application.name': boundedString(input.application_name, 80) || 'claude-code',
+		'harness.name': 'claude-code',
+		'instrumentation.name': 'watchdog.claude-code-hooks',
+		'instrumentation.version': '1.1.0',
+		adapter_id: 'watchdog.claude-code-hooks', adapter_version: '1.1.0', original_schema: 'claude-code.hook-input', source_event_id: stableEventId,
+	};
+	const applicationVersion = boundedString(input.application_version ?? input.version, 40);
+	if (applicationVersion) source['application.version'] = applicationVersion;
 	return {
-		record_id: `claude-code:${event}:${boundedString(input.hook_event_id) || randomUUID()}`,
+		record_id: `claude-code:${event}:${stableEventId}`,
 		record_type: isCompletedTool ? 'span' : 'event', trace_id: traceId, span_id: spanId, parent_span_id: null,
 		observed_at: observedAt,
 		started_at: durationMs !== null ? new Date(now.getTime() - durationMs).toISOString() : null,
 		ended_at: isCompletedTool ? observedAt : null,
-		kind, name: `claude_code.${event}`, status,
-		source: {system: 'claude-code', adapter: 'watchdog.claude-code-hooks', adapter_version: '1.0.0'},
+		kind, name: isTerminal ? 'watchdog.operation.completed' : `claude_code.${event}`, status,
+		source,
 		references, attributes, usage: null, costs: [],
 		error: event === 'PostToolUseFailure' ? {class: null, category: 'tool', code: null, retryable: null, message: null} : null,
 		content: [], privacy: {content_mode: 'off', policy_version: 'watchdog.privacy.v1', transformations: ['claude_hook_content_dropped']},
@@ -105,10 +122,11 @@ function mapEvent(event, input, now = new Date()) {
 }
 
 export function createClaudeHookBatch(event, input, now = new Date()) {
+	const record = mapEvent(event, input, now);
 	return {
-		schema_version: 'watchdog.telemetry.v2', batch_id: randomUUID(), sent_at: now.toISOString(),
-		producer: {name: 'claude-code', version: boundedString(input.version, 40) || 'unknown', adapter_id: 'watchdog.claude-code-hooks', adapter_version: '1.0.0', original_schema: 'claude-code.hook-input'},
-		records: [mapEvent(event, input, now)],
+		schema_version: 'watchdog.telemetry.v2', batch_id: `claude-code:${record.record_id}`, sent_at: now.toISOString(),
+		producer: {name: 'claude-code', version: boundedString(input.version, 40) || 'unknown', adapter_id: 'watchdog.claude-code-hooks', adapter_version: '1.1.0', original_schema: 'claude-code.hook-input'},
+		records: [record],
 	};
 }
 

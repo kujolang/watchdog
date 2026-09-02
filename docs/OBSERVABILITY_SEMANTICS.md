@@ -23,6 +23,14 @@ Terminal decisions use `watchdog.operation.completed`,
 `watchdog.operation.recovered`, or `watchdog.operation.cancelled` events. A
 successful span is not by itself evidence of terminal completion.
 
+The proxy accepts these bounded, metadata-only identity headers and removes
+them before forwarding upstream: `X-Watchdog-Application-Name`,
+`X-Watchdog-Application-Version`, `X-Watchdog-Harness-Name`,
+`X-Watchdog-Harness-Version`, and `X-Watchdog-Logical-Request-Id`. When the
+logical request header is absent, the proxy creates an identity for that one
+inbound request only. Project identity remains a typed grouping reference and
+never becomes application identity.
+
 ## Timing, context, and cost
 
 First-output timing is stored only when a producer or transport observes it.

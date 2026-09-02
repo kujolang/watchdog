@@ -264,6 +264,12 @@ async function runPassthroughScenario(stubPort, received) {
 				'X-Observe-Correlation-Id': 'trace-pi-proxy',
 				'X-Observe-Trace-Id': 'trace-pi-proxy',
 				'X-Observe-Parent-Span-Id': 'turn-1',
+				'X-Observe-Project-Id': 'project-not-source-app',
+				'X-Watchdog-Application-Name': 'fixture-chat',
+				'X-Watchdog-Application-Version': '2.4.0',
+				'X-Watchdog-Harness-Name': 'fixture-harness',
+				'X-Watchdog-Harness-Version': '1.3.0',
+				'X-Watchdog-Logical-Request-Id': 'logical-json-1',
 				traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
 				tracestate: 'vendor=value',
 			},
@@ -272,6 +278,7 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.strictEqual(jsonResp.status, 200, 'passthrough JSON proxy call should succeed');
 		assert.strictEqual(received[received.length - 1].traceparent, '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01');
 		assert.strictEqual(received[received.length - 1].tracestate, 'vendor=value');
+		assert.strictEqual(received[received.length - 1]['x-watchdog-application-name'], undefined, 'Watchdog metadata headers must be stripped before upstream forwarding');
 		console.log('proxy_integration_stub_suite: json passthrough ok');
 
 		const namedProfileResp = await httpRequest(
@@ -436,6 +443,12 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.ok(normalizedUsage, 'proxy canonical telemetry should normalize cached token usage');
 		assert.strictEqual(normalizedUsage.reasoning_tokens, 1, 'proxy canonical telemetry should normalize reasoning tokens');
 		assert.strictEqual(normalizedUsage.provider_usage.cached_input_tokens, 2, 'provider usage provenance should remain available');
+		const identified = canonicalRows.find(row => row.source?.['application.name'] === 'fixture-chat');
+		assert.ok(identified, 'proxy application identity did not reach canonical telemetry');
+		assert.strictEqual(identified.source['harness.version'], '1.3.0');
+		assert.ok(identified.references.some(ref => ref.type === 'request' && ref.id === 'logical-json-1' && ref.relation === 'attempt_of'), 'stable logical request identity missing');
+		assert.ok(canonicalRows.some(row => row.name === 'watchdog.operation.completed' && row.attributes?.['watchdog.outcome.terminal'] === true), 'explicit proxy terminal outcome missing');
+		assert.ok(requests.some(row => row.project_id === 'project-not-source-app' && row.source_app === 'watchdog-proxy'), 'project identity must not overload legacy source_app');
 		console.log('proxy_integration_stub_suite: passthrough done');
 	} finally {
 		await stopWatchdog(wd.child);

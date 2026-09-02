@@ -23,6 +23,14 @@ assert.equal(JSON.stringify(batch).includes(secret), false);
 assert.equal(JSON.stringify(batch).includes('/secret/repo'), false);
 assert.deepEqual(record.content, []);
 assert.equal(record.privacy.content_mode, 'off');
+assert.equal(record.source['watchdog.semantic_profile'], 'watchdog.observability.v1');
+assert.equal(record.source['instrumentation.version'], '1.1.0');
+assert.equal(createClaudeHookBatch('PostToolUse', input, now).records[0].record_id, record.record_id, 'Claude record identity must be deterministic');
+
+const terminal = createClaudeHookBatch('Stop', {...input, hook_event_name: 'Stop', tool_use_id: null}, now).records[0];
+assert.equal(terminal.name, 'watchdog.operation.completed');
+assert.equal(terminal.attributes['watchdog.outcome.terminal'], true);
+assert.equal(terminal.attributes['watchdog.outcome.code'], 'success');
 
 const failure = createClaudeHookBatch('PostToolUseFailure', {...input, hook_event_name: 'PostToolUseFailure', error: secret}, now);
 assert.equal(JSON.stringify(failure).includes(secret), false);

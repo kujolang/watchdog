@@ -19,6 +19,21 @@
     "ended_at_ms": {"type": ["integer", "null"], "minimum": 0},
     "references": {"type": "array", "maxItems": 24},
     "attributes": {"type": "object", "maxProperties": 128},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 8,
+      "properties": {
+        "application.name": {"type": "string", "minLength": 1, "maxLength": 80},
+        "application.version": {"type": "string", "minLength": 1, "maxLength": 40},
+        "harness.name": {"type": "string", "minLength": 1, "maxLength": 80},
+        "harness.version": {"type": "string", "minLength": 1, "maxLength": 40},
+        "runtime.name": {"type": "string", "minLength": 1, "maxLength": 80},
+        "runtime.version": {"type": "string", "minLength": 1, "maxLength": 40},
+        "instrumentation.name": {"type": "string", "minLength": 1, "maxLength": 80},
+        "instrumentation.version": {"type": "string", "minLength": 1, "maxLength": 40}
+      }
+    },
     "usage": {"type": ["object", "null"]},
     "costs": {"type": "array", "maxItems": 8},
     "error": {"type": ["object", "null"]}

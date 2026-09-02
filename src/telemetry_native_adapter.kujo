@@ -51,6 +51,19 @@ func native_references(value, producer) {
 	return clean
 }
 
+func native_source(event, producer, version, event_id, source_trace_id) {
+	source := {"watchdog.semantic_profile": "watchdog.observability.v1", "producer": producer, "adapter_id": "watchdog.native-event-adapter", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": version, "source_event_id": event_id, "source_trace_id": source_trace_id}
+	incoming := native_get(event, "source", {})
+	if type(incoming) == "dict" {
+		fields := ["application.name", "application.version", "harness.name", "harness.version", "runtime.name", "runtime.version", "instrumentation.name", "instrumentation.version"]
+		for field in fields {
+			value := native_text(native_get(incoming, field, ""), 80)
+			if value != "" { source[field] = value }
+		}
+	}
+	return source
+}
+
 func native_normalize_event(event, producer) {
 	if type(event) != "dict" { return {"ok": false, "error": "native event must be an object", "record": null} }
 	version := native_text(native_get(event, "schema_version", "watchdog.native-event.v1"), 80)
@@ -94,7 +107,7 @@ func native_normalize_event(event, producer) {
 		"kind": kind,
 		"name": native_text(native_get(event, "name", event_kind), 160),
 		"status": watchdog_telemetry_v2_status(native_get(event, "status", "unset")),
-		"source": {"producer": producer, "adapter_id": "watchdog.native-event-adapter", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": version, "source_event_id": event_id, "source_trace_id": source_trace_id},
+		"source": native_source(event, producer, version, event_id, source_trace_id),
 		"references": native_references(native_get(event, "references", []), producer),
 		"attributes": attributes,
 		"usage": native_get(event, "usage", null),

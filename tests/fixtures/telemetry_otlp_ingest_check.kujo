@@ -11,6 +11,9 @@ assert(contains(encoded, "otlp-raw-prompt-canary") == 0, "OTLP content bypassed 
 assert(contains(encoded, "source_content_dropped_by_watchdog_policy"), "OTLP content drop provenance missing")
 assert(contains(encoded, "session-otel-1"), "OTLP session correlation missing")
 assert(contains(encoded, "gen_ai.usage.input_tokens"), "OTLP usage attributes missing")
+assert(contains(encoded, "fixture.instrumentation"), "OTLP instrumentation scope name missing")
+assert(contains(encoded, "1.0.0"), "OTLP instrumentation scope version missing")
+assert(contains(encoded, "watchdog.observability.v1"), "OTLP observability profile missing")
 
 nested_payload := {
 	"resourceSpans": [{

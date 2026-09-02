@@ -158,6 +158,10 @@ func otlp_record_attributes(record, profile) {
 		attributes = otlp_add_attribute(attributes, "watchdog.source.producer", otlp_get(source, "producer", ""))
 		attributes = otlp_add_attribute(attributes, "watchdog.source.adapter.id", otlp_get(source, "adapter_id", ""))
 		attributes = otlp_add_attribute(attributes, "watchdog.source.original_schema", otlp_get(source, "original_schema", ""))
+		source_fields := ["watchdog.semantic_profile", "application.name", "application.version", "harness.name", "harness.version", "runtime.name", "runtime.version", "instrumentation.name", "instrumentation.version"]
+		for field in source_fields {
+			if has_key(source, field) { attributes = otlp_add_attribute(attributes, "watchdog.source." + field, source[field]) }
+		}
 	}
 	raw_attributes := otlp_get(record, "attributes", {})
 	if type(raw_attributes) == "dict" {
