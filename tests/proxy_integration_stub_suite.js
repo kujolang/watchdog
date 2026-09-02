@@ -92,7 +92,7 @@ function startUpstreamStub(port) {
 						id: 'resp-ok-1',
 						model: 'stub-json-model',
 						choices: [{ message: { content: 'stub response' }, finish_reason: 'stop' }],
-						usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+						usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8, prompt_tokens_details: { cached_tokens: 2 }, completion_tokens_details: { reasoning_tokens: 1 } },
 					})
 				);
 				return;
@@ -424,6 +424,12 @@ async function runPassthroughScenario(stubPort, received) {
 		assert.ok(correlatedTraces.some(trace => String(trace.trace_id) === 'trace-pi-proxy'), 'proxy request should create or update the producer trace');
 		const correlatedSpans = await getApiData(watchdogPort, '/api/trace-spans?trace_id=trace-pi-proxy&page_size=50');
 		assert.ok(correlatedSpans.some(span => String(span.span_kind) === 'model' && String(span.parent_span_id) === 'turn-1'), 'proxy model span should attach to the producer turn span');
+		const canonical = await getApiData(watchdogPort, '/api/telemetry/v2/records?limit=100');
+		const canonicalRows = Array.isArray(canonical.records) ? canonical.records.map(row => row.record) : [];
+		const normalizedUsage = canonicalRows.map(row => row.usage).find(usage => usage && usage.cached_input_tokens === 2);
+		assert.ok(normalizedUsage, 'proxy canonical telemetry should normalize cached token usage');
+		assert.strictEqual(normalizedUsage.reasoning_tokens, 1, 'proxy canonical telemetry should normalize reasoning tokens');
+		assert.strictEqual(normalizedUsage.provider_usage.cached_input_tokens, 2, 'provider usage provenance should remain available');
 		console.log('proxy_integration_stub_suite: passthrough done');
 	} finally {
 		await stopWatchdog(wd.child);
