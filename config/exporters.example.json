@@ -10,7 +10,10 @@
       "headers_from_env": {},
       "batch_records": 256,
       "timeout_seconds": 10,
-      "max_attempts": 10
+      "max_attempts": 10,
+      "max_queue_age_seconds": 604800,
+      "history_age_seconds": 604800,
+      "max_dead_letters": 10000
     }
   ]
 }

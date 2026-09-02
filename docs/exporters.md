@@ -36,7 +36,9 @@ HTTPS is mandatory except for explicit loopback HTTP (`127.0.0.1`, `localhost`, 
 - other `4xx`: dead-letter with bounded reason and payload hash.
 - attempt limit: dead-letter.
 - queue capacity: oldest pending/retry delivery becomes `dropped`; canonical local data remains intact.
+- queue age: pending/retry rows older than the profile bound become `dropped` before transport.
+- terminal history and dead letters are age- and count-bounded independently from canonical telemetry retention.
 
-Defaults are 50,000 pending/retry records per profile, 256 records or 512 KiB per request, ten attempts, and a 10-second request timeout. Global caps are enforced. `GET /api/telemetry/v2/export-status` exposes queue/profile health. Optional exporter failure never fails proxy forwarding.
+Defaults are 50,000 pending/retry records per profile, a seven-day queue age, seven-day terminal history, 10,000 dead letters, 256 records or 512 KiB per request, ten attempts, and a 10-second request timeout. Global caps are enforced. `GET /api/telemetry/v2/export-status` exposes queue/profile health, and the local dashboard renders it without requiring a remote destination. Optional exporter failure never fails proxy forwarding. `/api/admin/prune` covers canonical records and terminal exporter history in addition to the legacy tables; pending/retry delivery rows remain protected until delivery policy drops or sends them.
 
 The worker maps repository records through a pure exporter contract and receives no raw source payload. Content removed by Watchdog policy cannot be reconstructed by a mapping profile.

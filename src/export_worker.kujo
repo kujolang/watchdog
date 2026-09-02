@@ -82,6 +82,24 @@ func worker_mark_state(db, profile_id, status, success, reason) {
 	}
 }
 
+func worker_bound_history(db, profile_id, max_dead_letters, history_age_seconds) {
+	now_ms := current_timestamp()
+	cutoff_ms := now_ms - (history_age_seconds * 1000)
+	db_execute(db, "DELETE FROM telemetry_export_deliveries WHERE profile_id = ? AND status IN ('sent','dead','dropped') AND updated_at_ms < ?", [profile_id, cutoff_ms])
+	db_execute(db, "DELETE FROM telemetry_export_dead_letters WHERE profile_id = ? AND created_at_ms < ?", [profile_id, cutoff_ms])
+	dead_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_export_dead_letters WHERE profile_id = ?", [profile_id])
+	overflow := worker_int(dead_rows[0]["n"], 0, 0, 10000000) - max_dead_letters
+	if overflow > 0 {
+		db_execute(db, "DELETE FROM telemetry_export_dead_letters WHERE id IN (SELECT id FROM telemetry_export_dead_letters WHERE profile_id = ? ORDER BY id ASC LIMIT ?)", [profile_id, overflow])
+	}
+}
+
+func worker_expire_queue(db, profile_id, max_queue_age_seconds) {
+	now_ms := current_timestamp()
+	cutoff_ms := now_ms - (max_queue_age_seconds * 1000)
+	db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'dropped', last_error = 'queue age exceeded', updated_at_ms = ? WHERE profile_id = ? AND status IN ('pending','retry') AND created_at_ms < ?", [now_ms, profile_id, cutoff_ms])
+}
+
 func worker_mark_sent(db, delivery_rows, profile_id) {
 	now_ms := current_timestamp()
 	for row in delivery_rows { db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'sent', attempts = attempts + 1, last_http_status = 200, last_error = '', updated_at_ms = ? WHERE id = ?", [now_ms, row["delivery_id"]]) }
@@ -134,6 +152,11 @@ func worker_send_profile(db, profile) {
 	batch_limit := worker_int(worker_get(profile, "batch_records", 256), 256, 1, 256)
 	max_attempts := worker_int(worker_get(profile, "max_attempts", 10), 10, 1, 20)
 	timeout_seconds := worker_int(worker_get(profile, "timeout_seconds", 10), 10, 1, 30)
+	max_queue_age_seconds := worker_int(worker_get(profile, "max_queue_age_seconds", 604800), 604800, 60, 2592000)
+	history_age_seconds := worker_int(worker_get(profile, "history_age_seconds", 604800), 604800, 60, 2592000)
+	max_dead_letters := worker_int(worker_get(profile, "max_dead_letters", 10000), 10000, 10, 50000)
+	worker_expire_queue(db, profile_id, max_queue_age_seconds)
+	worker_bound_history(db, profile_id, max_dead_letters, history_age_seconds)
 	rows := worker_due_rows(db, profile_id, batch_limit)
 	if len(rows) == 0 { return {"profile": profile_id, "status": "idle", "records": 0} }
 	records := []

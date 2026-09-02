@@ -4641,6 +4641,10 @@ server := server.route("POST", "/api/admin/prune", func(req) {
 	trace_rows := db_query(db, "SELECT COUNT(*) AS n FROM traces WHERE started_at_ms < ?", [before_ms])
 	span_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_spans WHERE started_at_ms < ?", [before_ms])
 	event_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_events WHERE occurred_at_ms < ?", [before_ms])
+	canonical_prune_filter := "CAST(created_at AS INTEGER) < ? AND NOT EXISTS (SELECT 1 FROM telemetry_export_deliveries pending_delivery WHERE pending_delivery.record_dbid = telemetry_records_v2.id AND pending_delivery.status IN ('pending','retry'))"
+	canonical_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_records_v2 WHERE " + canonical_prune_filter, [before_ms])
+	export_delivery_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_export_deliveries WHERE status IN ('sent','dead','dropped') AND updated_at_ms < ?", [before_ms])
+	dead_letter_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_export_dead_letters WHERE created_at_ms < ?", [before_ms])
 
 	counts := {
 		"requests": request_rows[0]["n"],
@@ -4648,10 +4652,20 @@ server := server.route("POST", "/api/admin/prune", func(req) {
 		"agent_steps": step_rows[0]["n"],
 		"traces": trace_rows[0]["n"],
 		"trace_spans": span_rows[0]["n"],
-		"trace_events": event_rows[0]["n"]
+		"trace_events": event_rows[0]["n"],
+		"canonical_records": canonical_rows[0]["n"],
+		"export_deliveries": export_delivery_rows[0]["n"],
+		"export_dead_letters": dead_letter_rows[0]["n"]
 	}
 
 	if !dry_run {
+		db_execute(db, "DELETE FROM telemetry_export_dead_letters WHERE created_at_ms < ?", [before_ms])
+		db_execute(db, "DELETE FROM telemetry_export_deliveries WHERE status IN ('sent','dead','dropped') AND updated_at_ms < ?", [before_ms])
+		db_execute(db, "DELETE FROM telemetry_export_dead_letters WHERE record_dbid IN (SELECT id FROM telemetry_records_v2 WHERE " + canonical_prune_filter + ")", [before_ms])
+		db_execute(db, "DELETE FROM telemetry_references_v2 WHERE record_dbid IN (SELECT id FROM telemetry_records_v2 WHERE " + canonical_prune_filter + ")", [before_ms])
+		db_execute(db, "DELETE FROM telemetry_export_deliveries WHERE record_dbid IN (SELECT id FROM telemetry_records_v2 WHERE " + canonical_prune_filter + ")", [before_ms])
+		db_execute(db, "DELETE FROM telemetry_records_v2 WHERE " + canonical_prune_filter, [before_ms])
+		db_execute(db, "DELETE FROM telemetry_batches_v2 WHERE id NOT IN (SELECT DISTINCT batch_dbid FROM telemetry_records_v2)", [])
 		db_execute(db, "DELETE FROM trace_events WHERE occurred_at_ms < ?", [before_ms])
 		db_execute(db, "DELETE FROM trace_spans WHERE started_at_ms < ?", [before_ms])
 		db_execute(db, "DELETE FROM traces WHERE started_at_ms < ?", [before_ms])

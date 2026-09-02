@@ -142,6 +142,10 @@ async function run() {
 			JSON.stringify({ before_ms: beforeMs, dry_run: true })
 		);
 		assert.strictEqual(pruneResp.status, 200, 'prune dry-run should succeed with valid API token');
+		const pruneJson = parseJsonSafe(pruneResp.body, '/api/admin/prune');
+		assert.ok(Object.hasOwn(pruneJson.data.affected, 'canonical_records'), 'prune should account for canonical telemetry');
+		assert.ok(Object.hasOwn(pruneJson.data.affected, 'export_deliveries'), 'prune should account for exporter delivery history');
+		assert.ok(Object.hasOwn(pruneJson.data.affected, 'export_dead_letters'), 'prune should account for exporter dead letters');
 
 		const auditResp = await httpRequest(port, 'GET', '/api/audit-events?page_size=100', {
 			'X-Watchdog-Token': 'audit-api-token',
