@@ -298,4 +298,5 @@ export watchdog_telemetry_v2_is_hex_id := v2_is_hex_id
 export watchdog_telemetry_v2_canonical_id := v2_canonical_id
 export watchdog_telemetry_v2_status := v2_status
 export watchdog_telemetry_v2_span_kind := v2_span_kind
+export watchdog_telemetry_v2_timestamp := v2_rfc3339_from_ms
 export watchdog_telemetry_v2_translate_v1 := v2_translate_v1

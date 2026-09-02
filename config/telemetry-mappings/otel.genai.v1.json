@@ -1,0 +1,16 @@
+{
+  "mapping_profile": "otel.genai.v1",
+  "pinned_semantic_conventions": "OpenTelemetry GenAI development snapshot reviewed 2026-09-01",
+  "attributes": {
+    "provider": "gen_ai.provider.name",
+    "request_model": "gen_ai.request.model",
+    "response_model": "gen_ai.response.model",
+    "input_tokens": "gen_ai.usage.input_tokens",
+    "output_tokens": "gen_ai.usage.output_tokens",
+    "cached_input_tokens": "watchdog.usage.cached_input_tokens",
+    "cache_write_input_tokens": "watchdog.usage.cache_write_input_tokens",
+    "reasoning_tokens": "watchdog.usage.reasoning_tokens",
+    "session_id": "watchdog.session.id",
+    "run_id": "watchdog.run.id"
+  }
+}

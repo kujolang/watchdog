@@ -1,0 +1,27 @@
+from watchdog_shared import watchdog_ensure_schema
+from telemetry_repository import watchdog_telemetry_repository_insert
+from telemetry_delivery import watchdog_delivery_enqueue_batch
+from telemetry_delivery import watchdog_delivery_load_profiles
+
+db_path := env("WDG_TEST_DB_PATH")
+config_path := env("WDG_TEST_EXPORTERS_PATH")
+db := db_connect("sqlite", db_path)
+watchdog_ensure_schema(db)
+profiles := watchdog_delivery_load_profiles(config_path)
+assert(len(profiles) == 2, "exporter profile filtering drift")
+
+first_batch := parse_json(read_file("tests/fixtures/telemetry-v2/canonical-minimal.json"))
+first := watchdog_telemetry_repository_insert(db, first_batch)
+first_delivery := watchdog_delivery_enqueue_batch(db, profiles, first["batch_dbid"], 1)
+assert(first_delivery["enqueued"] == 2 && first_delivery["dropped"] == 0, "first delivery enqueue failed")
+
+second_batch := parse_json(read_file("tests/fixtures/telemetry-v2/canonical-model-batch.json"))
+second := watchdog_telemetry_repository_insert(db, second_batch)
+second_delivery := watchdog_delivery_enqueue_batch(db, profiles, second["batch_dbid"], 1)
+assert(second_delivery["enqueued"] == 2 && second_delivery["dropped"] == 2, "bounded queue did not drop oldest delivery")
+
+rows := db_query(db, "SELECT status, COUNT(*) AS n FROM telemetry_export_deliveries GROUP BY status ORDER BY status", [])
+assert(len(rows) == 2, "delivery status cardinality drift")
+assert(rows[0]["status"] == "dropped" && rows[0]["n"] == 2, "oldest delivery was not marked dropped")
+assert(rows[1]["status"] == "pending" && rows[1]["n"] == 2, "newest delivery was not retained")
+print("telemetry_delivery_check: PASS")

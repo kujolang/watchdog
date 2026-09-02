@@ -1,0 +1,19 @@
+from telemetry_otlp import watchdog_otlp_exporter_contract
+from telemetry_otlp import watchdog_otlp_map
+
+batch := parse_json(read_file("tests/fixtures/telemetry-v2/canonical-model-batch.json"))
+mapped := watchdog_otlp_map(batch["records"], "openinference.v1")
+encoded := to_json(mapped)
+
+assert(watchdog_otlp_exporter_contract == "watchdog.exporter.v1", "exporter contract version drift")
+assert(contains(encoded, "0123456789abcdef0123456789abcdef"), "trace correlation missing")
+assert(contains(encoded, "0123456789abcdef"), "span correlation missing")
+assert(contains(encoded, "openinference.span.kind"), "OpenInference projection missing")
+assert(contains(encoded, "LLM"), "model span did not map to OpenInference LLM")
+assert(contains(encoded, "gen_ai.usage.input_tokens"), "GenAI input usage missing")
+assert(contains(encoded, "watchdog.cost.kind"), "cost provenance missing")
+assert(contains(encoded, "catalog_estimated"), "estimated cost kind was lost")
+assert(contains(encoded, "prompt_tokens") == 0, "provider-native usage leaked as unbounded OTLP attribute")
+assert(contains(encoded, "input.value") == 0, "content attribute emitted in metadata-only mode")
+
+print("telemetry_otlp_mapper_check: PASS")

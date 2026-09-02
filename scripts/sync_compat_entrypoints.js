@@ -10,6 +10,9 @@ const ENTRYPOINTS = [
 	{ src: 'src/watchdog_shared.kujo', root: 'watchdog_shared.kujo' },
 	{ src: 'src/telemetry_v2.kujo', root: 'telemetry_v2.kujo' },
 	{ src: 'src/telemetry_repository.kujo', root: 'telemetry_repository.kujo' },
+	{ src: 'src/telemetry_delivery.kujo', root: 'telemetry_delivery.kujo' },
+	{ src: 'src/telemetry_otlp.kujo', root: 'telemetry_otlp.kujo' },
+	{ src: 'src/export_worker.kujo', root: 'export_worker.kujo' },
 	{ src: 'src/watchdog.kujo', root: 'watchdog.kujo' },
 	{ src: 'src/dashboard.html', root: 'dashboard.html' },
 ];

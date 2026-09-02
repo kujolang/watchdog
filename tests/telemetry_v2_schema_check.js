@@ -6,6 +6,7 @@ const schema = JSON.parse(fs.readFileSync(path.join(root, 'schemas/telemetry-v2.
 const fixture = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/telemetry-v2/canonical-minimal.json'), 'utf8'));
 const usage = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/telemetry-v2/provider-usage-variants.json'), 'utf8'));
 const baseline = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/telemetry-v2/v1-baseline-manifest.json'), 'utf8'));
+const jsonlSchema = JSON.parse(fs.readFileSync(path.join(root, 'schemas/watchdog-jsonl-v2.schema.json'), 'utf8'));
 
 function assert(condition, message) {
 	if (!condition) throw new Error(message);
@@ -25,5 +26,7 @@ assert(usage.cases.every((item) => item.provider_usage && item.normalized), 'pro
 assert(baseline.baseline_commit === 'c5625d0', 'immutable v1 baseline changed');
 assert(baseline.privacy_invariants.length === 3, 'privacy baseline incomplete');
 assert(baseline.authoritative_tests.every((file) => fs.existsSync(path.join(root, file))), 'baseline references a missing compatibility test');
+assert(jsonlSchema.properties.jsonl_version.const === 'watchdog.jsonl.v2', 'JSONL v2 version drift');
+assert(jsonlSchema.properties.record.$ref === 'telemetry-v2.schema.json#/$defs/record', 'JSONL must embed canonical records');
 
 console.log('telemetry_v2_schema_check: PASS');

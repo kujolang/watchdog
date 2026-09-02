@@ -19,8 +19,18 @@ from watchdog_shared import watchdog_has_known_pricing
 from watchdog_shared import watchdog_cost_per_million
 from telemetry_repository import watchdog_telemetry_repository_insert
 from telemetry_repository import watchdog_telemetry_repository_validate
+from telemetry_repository import watchdog_telemetry_repository_insert_fast
 from telemetry_v2 import watchdog_telemetry_v2_translate_v1
 from telemetry_v2 import watchdog_telemetry_v2_version
+from telemetry_v2 import watchdog_telemetry_v2_canonical_id
+from telemetry_v2 import watchdog_telemetry_v2_status
+from telemetry_v2 import watchdog_telemetry_v2_timestamp
+from telemetry_delivery import watchdog_delivery_enqueue_batch
+from telemetry_delivery import watchdog_delivery_load_profiles
+from telemetry_delivery import watchdog_delivery_profile_ids
+from telemetry_delivery import watchdog_delivery_status
+from telemetry_delivery import watchdog_delivery_resume_profile
+from telemetry_delivery import watchdog_delivery_backfill
 
 DEFAULT_PORT := 7700
 DEFAULT_DB_PATH := "data/watchdog.db"
@@ -58,12 +68,15 @@ DEFAULT_BACKUP_ENCRYPTION_ENABLED := "false"
 DEFAULT_BACKUP_SCRIPT_PATH := "scripts/watchdog_backup.js"
 DEFAULT_NODE_BIN := "node"
 DEFAULT_OPENSSL_BIN := "openssl"
+DEFAULT_EXPORTERS_CONFIG_PATH := "watchdog_exporters.json"
+DEFAULT_EXPORT_QUEUE_MAX_RECORDS := 50000
 MIN_BACKUP_INTERVAL_MINUTES := 15
 MAX_BACKUP_INTERVAL_MINUTES := 43200
 API_CONTRACT_VERSION := "v1"
 API_CONTRACT_STATUS := "stable"
 TELEMETRY_SCHEMA_VERSION := "kujo.telemetry.v1"
 CANONICAL_TELEMETRY_SCHEMA_VERSION := watchdog_telemetry_v2_version
+JSONL_V2_VERSION := "watchdog.jsonl.v2"
 
 func env_or(key, fallback_value) {
 	v := env(key)
@@ -1351,6 +1364,8 @@ PROXY_CONFIG_PATH := env_or_many(["WDG_PROXY_CONFIG_PATH"], DEFAULT_PROXY_CONFIG
 PROXY_CONFIG_VISIBILITY := to_lower(env_or_many(["WDG_PROXY_CONFIG_VISIBILITY"], DEFAULT_PROXY_CONFIG_VISIBILITY))
 API_AUTH_MODE := normalize_api_auth_mode(env_or_many(["WDG_API_AUTH_MODE"], DEFAULT_API_AUTH_MODE))
 API_AUTH_TOKEN := trim(env_or_many(["WDG_API_AUTH_TOKEN"], ""))
+JSONL_CURSOR_SECRET := trim(env_or_many(["WDG_JSONL_CURSOR_SECRET"], API_AUTH_TOKEN))
+if JSONL_CURSOR_SECRET == "" { JSONL_CURSOR_SECRET = "watchdog-local-jsonl-cursor-v2" }
 PROXY_AUTHZ_MODE := normalize_proxy_authz_mode(env_or_many(["WDG_PROXY_AUTHZ_MODE"], DEFAULT_PROXY_AUTHZ_MODE))
 PROXY_AUTHZ_TOKEN := trim(env_or_many(["WDG_PROXY_AUTHZ_TOKEN"], ""))
 DEPLOYMENT_PROFILE := normalize_deployment_profile(env_or_many(["WDG_DEPLOYMENT_PROFILE"], DEFAULT_DEPLOYMENT_PROFILE))
@@ -1384,6 +1399,11 @@ BACKUP_ENCRYPTION_KEY_FILE := env_or_many(["WDG_BACKUP_ENCRYPTION_KEY_FILE"], ""
 BACKUP_SCRIPT_PATH := env_or_many(["WDG_BACKUP_SCRIPT_PATH"], DEFAULT_BACKUP_SCRIPT_PATH)
 NODE_BIN := env_or_many(["WDG_NODE_BIN"], DEFAULT_NODE_BIN)
 OPENSSL_BIN := env_or_many(["WDG_OPENSSL_BIN"], DEFAULT_OPENSSL_BIN)
+EXPORTERS_CONFIG_PATH := env_or_many(["WDG_EXPORTERS_CONFIG_PATH"], DEFAULT_EXPORTERS_CONFIG_PATH)
+EXPORT_QUEUE_MAX_RECORDS := positive_int_or_fallback(parse_int_env_many(["WDG_EXPORT_QUEUE_MAX_RECORDS"], DEFAULT_EXPORT_QUEUE_MAX_RECORDS), DEFAULT_EXPORT_QUEUE_MAX_RECORDS)
+if EXPORT_QUEUE_MAX_RECORDS > 200000 { EXPORT_QUEUE_MAX_RECORDS = 200000 }
+EXPORTER_PROFILES := watchdog_delivery_load_profiles(EXPORTERS_CONFIG_PATH)
+EXPORTER_PROFILE_IDS := watchdog_delivery_profile_ids(EXPORTER_PROFILES)
 
 func print_lines(line_values) {
 	for line in line_values {
@@ -1417,6 +1437,8 @@ kv("Rate limit max buckets", RATE_LIMIT_MAX_BUCKETS)
 kv("Rate limit bucket ttl seconds", RATE_LIMIT_BUCKET_TTL_SECS)
 kv("Identifier max length", IDENTIFIER_MAX_LEN)
 kv("Export max rows", EXPORT_MAX_ROWS)
+kv("Exporter profiles", len(EXPORTER_PROFILE_IDS))
+kv("Export queue max records per profile", EXPORT_QUEUE_MAX_RECORDS)
 kv("Backup default enabled", BACKUP_DEFAULT_ENABLED)
 kv("Backup default interval minutes", BACKUP_DEFAULT_INTERVAL_MINUTES)
 kv("Backup default directory", BACKUP_DEFAULT_DIR)
@@ -1586,6 +1608,112 @@ func canonical_policy_privacy(record) {
 	}
 }
 
+func canonical_policy_scalar(value) {
+	if type(value) == "string" { return redact_sensitive_text(value) }
+	if type(value) == "integer" || type(value) == "float" || type(value) == "boolean" || type(value) == "null" { return value }
+	return null
+}
+
+func canonical_policy_scalar_map(value, max_properties) {
+	clean := {}
+	if type(value) != "dict" { return clean }
+	count := 0
+	for key in keys(value) {
+		if count < max_properties {
+			next := value[key]
+			if type(next) != "dict" && type(next) != "array" {
+				clean[truncate_str(to_string(key), 160)] = canonical_policy_scalar(next)
+				count = count + 1
+			}
+		}
+	}
+	return clean
+}
+
+func canonical_policy_attributes(value) {
+	clean := {}
+	if type(value) != "dict" { return clean }
+	count := 0
+	for key in keys(value) {
+		if count < 128 {
+			next := value[key]
+			if type(next) == "array" {
+				items := []
+				for item in next {
+					if len(items) < 32 && type(item) != "dict" && type(item) != "array" { items = push(items, canonical_policy_scalar(item)) }
+				}
+				clean[truncate_str(to_string(key), 160)] = items
+				count = count + 1
+			} else if type(next) != "dict" {
+				clean[truncate_str(to_string(key), 160)] = canonical_policy_scalar(next)
+				count = count + 1
+			}
+		}
+	}
+	return clean
+}
+
+func canonical_policy_references(value) {
+	clean := []
+	if type(value) != "array" { return clean }
+	for reference in value {
+		if len(clean) < 24 && type(reference) == "dict" {
+			clean = push(clean, {
+				"type": truncate_str(to_string(safe_dict_get(reference, "type", "external")), 40),
+				"id": truncate_str(redact_sensitive_text(to_string(safe_dict_get(reference, "id", ""))), 160),
+				"namespace": truncate_str(to_string(safe_dict_get(reference, "namespace", "")), 80),
+				"relation": truncate_str(to_string(safe_dict_get(reference, "relation", "")), 40)
+			})
+		}
+	}
+	return clean
+}
+
+func canonical_policy_usage(value) {
+	if type(value) != "dict" { return null }
+	return {
+		"input_tokens": safe_dict_get(value, "input_tokens", null),
+		"output_tokens": safe_dict_get(value, "output_tokens", null),
+		"total_tokens": safe_dict_get(value, "total_tokens", null),
+		"cached_input_tokens": safe_dict_get(value, "cached_input_tokens", null),
+		"cache_write_input_tokens": safe_dict_get(value, "cache_write_input_tokens", null),
+		"reasoning_tokens": safe_dict_get(value, "reasoning_tokens", null),
+		"usage_source": redact_sensitive_text(to_string(safe_dict_get(value, "usage_source", ""))),
+		"total_semantics": redact_sensitive_text(to_string(safe_dict_get(value, "total_semantics", ""))),
+		"provider_usage": canonical_policy_scalar_map(safe_dict_get(value, "provider_usage", {}), 32)
+	}
+}
+
+func canonical_policy_costs(value) {
+	clean := []
+	if type(value) != "array" { return clean }
+	for cost in value {
+		if len(clean) < 8 && type(cost) == "dict" {
+			clean = push(clean, {
+				"kind": truncate_str(to_string(safe_dict_get(cost, "kind", "unknown")), 40),
+				"currency": truncate_str(to_string(safe_dict_get(cost, "currency", "USD")), 3),
+				"amount": safe_dict_get(cost, "amount", null),
+				"source": truncate_str(redact_sensitive_text(to_string(safe_dict_get(cost, "source", "unknown"))), 120),
+				"catalog_version": safe_dict_get(cost, "catalog_version", null),
+				"calculated_at": safe_dict_get(cost, "calculated_at", null),
+				"components": canonical_policy_scalar_map(safe_dict_get(cost, "components", {}), 16)
+			})
+		}
+	}
+	return clean
+}
+
+func canonical_policy_error(value) {
+	if type(value) != "dict" { return null }
+	return {
+		"class": redact_sensitive_text(to_string(safe_dict_get(value, "class", ""))),
+		"category": redact_sensitive_text(to_string(safe_dict_get(value, "category", ""))),
+		"code": redact_sensitive_text(to_string(safe_dict_get(value, "code", ""))),
+		"retryable": safe_dict_get(value, "retryable", null),
+		"message": truncate_str(redact_sensitive_text(to_string(safe_dict_get(value, "message", ""))), 1000)
+	}
+}
+
 func canonical_policy_record(record) {
 	return {
 		"record_id": truncate_str(trim(to_string(safe_dict_get(record, "record_id", ""))), 160),
@@ -1599,12 +1727,12 @@ func canonical_policy_record(record) {
 		"kind": safe_dict_get(record, "kind", null),
 		"name": safe_dict_get(record, "name", null),
 		"status": truncate_str(trim(to_string(safe_dict_get(record, "status", "unset"))), 20),
-		"source": redact_json_value(safe_dict_get(record, "source", {})),
-		"references": redact_json_value(safe_dict_get(record, "references", [])),
-		"attributes": redact_json_value(safe_dict_get(record, "attributes", {})),
-		"usage": redact_json_value(safe_dict_get(record, "usage", null)),
-		"costs": redact_json_value(safe_dict_get(record, "costs", [])),
-		"error": redact_json_value(safe_dict_get(record, "error", null)),
+		"source": canonical_policy_scalar_map(safe_dict_get(record, "source", {}), 16),
+		"references": canonical_policy_references(safe_dict_get(record, "references", [])),
+		"attributes": canonical_policy_attributes(safe_dict_get(record, "attributes", {})),
+		"usage": canonical_policy_usage(safe_dict_get(record, "usage", null)),
+		"costs": canonical_policy_costs(safe_dict_get(record, "costs", [])),
+		"error": canonical_policy_error(safe_dict_get(record, "error", null)),
 		"content": [],
 		"privacy": canonical_policy_privacy(record)
 	}
@@ -1637,9 +1765,92 @@ func canonical_policy_batch(body) {
 	}
 }
 
+func jsonl_v2_cursor(sequence) {
+	payload := "v2:" + to_string(sequence)
+	return payload + ":" + substring(hmac_sha256(JSONL_CURSOR_SECRET, payload), 0, 24)
+}
+
+func jsonl_v2_cursor_sequence(cursor_value) {
+	cursor_text := trim(to_string(cursor_value))
+	if cursor_text == "" { return {"ok": true, "sequence": 0} }
+	parts := split(cursor_text, ":")
+	if len(parts) != 3 || parts[0] != "v2" { return {"ok": false, "sequence": 0} }
+	payload := parts[0] + ":" + parts[1]
+	expected := substring(hmac_sha256(JSONL_CURSOR_SECRET, payload), 0, 24)
+	if parts[2] != expected { return {"ok": false, "sequence": 0} }
+	sequence := to_int_or_zero(parts[1])
+	if sequence < 0 { return {"ok": false, "sequence": 0} }
+	return {"ok": true, "sequence": sequence}
+}
+
+func jsonl_v2_response(rows, exported_at, start_cursor) {
+	lines := []
+	last_sequence := start_cursor
+	for row in rows {
+		parsed := parse_json_safe(row["canonical_json"])
+		if parsed["ok"] {
+			sequence := to_int_or_zero(row["id"])
+			lines = push(lines, to_json({
+				"jsonl_version": JSONL_V2_VERSION,
+				"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION,
+				"exported_at": exported_at,
+				"producer": row["producer_name"],
+				"record_id": row["record_id"],
+				"sequence": sequence,
+				"record": parsed["data"]
+			}))
+			last_sequence = sequence
+		}
+	}
+	body := join(lines, "\n")
+	next_cursor := jsonl_v2_cursor(last_sequence)
+	manifest := {
+		"jsonl_version": JSONL_V2_VERSION,
+		"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION,
+		"exported_at": exported_at,
+		"record_count": len(lines),
+		"first_sequence_exclusive": start_cursor,
+		"last_sequence_inclusive": last_sequence,
+		"next_cursor": next_cursor,
+		"sha256": sha256(body)
+	}
+	response := http_response(200, body)
+	response = set_header(response, "Content-Type", "application/x-ndjson")
+	response = set_header(response, "X-Watchdog-JSONL-Version", JSONL_V2_VERSION)
+	response = set_header(response, "X-Watchdog-Next-Cursor", next_cursor)
+	response = set_header(response, "X-Watchdog-Record-Count", to_string(len(lines)))
+	response = set_header(response, "X-Watchdog-SHA256", manifest["sha256"])
+	response = set_header(response, "X-Watchdog-Manifest", encode_base64(to_json(manifest)))
+	return apply_default_security_headers(response)
+}
+
+func persist_approved_canonical_batch(approved) {
+	result := watchdog_telemetry_repository_insert(db, approved)
+	if result["ok"] && result["deduplicated"] == false && len(EXPORTER_PROFILE_IDS) > 0 {
+		delivery := watchdog_delivery_enqueue_batch(db, EXPORTER_PROFILE_IDS, result["batch_dbid"], EXPORT_QUEUE_MAX_RECORDS)
+		result["delivery"] = delivery
+		if delivery["dropped"] > 0 {
+			insert_audit_event("telemetry_export_queue_drop", "system", "warning", delivery)
+		}
+	}
+	return result
+}
+
+func persist_fast_approved_canonical_batch(approved) {
+	result := watchdog_telemetry_repository_insert_fast(db, approved)
+	if result["ok"] && result["deduplicated"] == false && len(EXPORTER_PROFILE_IDS) > 0 {
+		result["delivery"] = watchdog_delivery_enqueue_batch(db, EXPORTER_PROFILE_IDS, result["batch_dbid"], EXPORT_QUEUE_MAX_RECORDS)
+	}
+	return result
+}
+
 func persist_canonical_batch(body) {
-	approved := canonical_policy_batch(body)
-	return watchdog_telemetry_repository_insert(db, approved)
+	return persist_approved_canonical_batch(canonical_policy_batch(body))
+}
+
+func exporter_profile_configured(profile_id) {
+	for configured_id in EXPORTER_PROFILE_IDS { if configured_id == profile_id { return true } }
+	return false
 }
 
 func persist_v1_canonical_copy(body, source_app, session_id) {
@@ -1719,25 +1930,26 @@ func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class)
 	}
 
 	canonical_result := {"ok": true, "deduplicated": false, "records": 0}
-	try {
-		canonical_result = persist_v1_canonical_copy(body, source_app, session_id)
-	} except err {
-		print("Canonical v2 compatibility write failed: " + to_string(err))
-		canonical_result = {"ok": false, "error": "canonical compatibility write failed", "deduplicated": false, "records": 0}
+	if data_class != "live" {
+		try {
+			canonical_result = persist_v1_canonical_copy(body, source_app, session_id)
+		} except err {
+			print("Canonical v2 compatibility write failed: " + to_string(err))
+			canonical_result = {"ok": false, "error": "canonical compatibility write failed", "deduplicated": false, "records": 0}
+		}
 	}
 	return {"trace_id": trace_id, "spans": span_count, "events": event_count, "tool_calls": tool_count, "canonical": canonical_result}
 }
 
 func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, provider, model_name, status, status_code, started_at_ms, ended_at_ms, usage) {
-	if trace_id == "" {
-		return
-	}
+	has_explicit_trace := trace_id != ""
+	if trace_id == "" { trace_id = "proxy-request-" + to_string(request_dbid) }
 	duration_ms := ended_at_ms - started_at_ms
 	if duration_ms < 0 { duration_ms = 0 }
 	span_id := "proxy-model-" + to_string(request_dbid)
 	completion_event_name := "stream_completed"
 	if status != "success" { completion_event_name = "response_failed" }
-	insert_trace_bundle(request_dbid, {
+	if has_explicit_trace { insert_trace_bundle(request_dbid, {
 		"schema_version": TELEMETRY_SCHEMA_VERSION,
 		"trace_id": trace_id,
 		"trace": {
@@ -1776,7 +1988,48 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 			"occurred_at_ms": ended_at_ms,
 			"attributes": {"status_code": status_code}
 		}]
-	}, "watchdog-proxy", session_id, "live")
+	}, "watchdog-proxy", session_id, "live") }
+
+	canonical_trace_id := watchdog_telemetry_v2_canonical_id(trace_id, "watchdog-proxy", 32)
+	canonical_span_id := watchdog_telemetry_v2_canonical_id(span_id, "watchdog-proxy:" + trace_id, 16)
+	canonical_parent_span_id := null
+	if parent_span_id != "" { canonical_parent_span_id = watchdog_telemetry_v2_canonical_id(parent_span_id, "watchdog-proxy:" + trace_id, 16) }
+	input_tokens := to_int_or_zero(safe_dict_get(usage, "input_tokens", 0))
+	output_tokens := to_int_or_zero(safe_dict_get(usage, "output_tokens", 0))
+	total_tokens := to_int_or_zero(safe_dict_get(usage, "total_tokens", input_tokens + output_tokens))
+	pricing := watchdog_cost_breakdown(model_name, input_tokens * 1.0, output_tokens * 1.0, 0.0, 0.0)
+	cost_kind := "catalog_estimated"
+	if pricing["pricing_kind"] == "unknown" { cost_kind = "unknown" }
+	canonical_record := {
+		"record_id": "proxy:model:" + to_string(request_dbid),
+		"record_type": "span",
+		"trace_id": canonical_trace_id,
+		"span_id": canonical_span_id,
+		"parent_span_id": canonical_parent_span_id,
+		"observed_at": watchdog_telemetry_v2_timestamp(ended_at_ms, ended_at_ms),
+		"started_at": watchdog_telemetry_v2_timestamp(started_at_ms, started_at_ms),
+		"ended_at": watchdog_telemetry_v2_timestamp(ended_at_ms, ended_at_ms),
+		"kind": "model",
+		"name": "provider_round",
+		"status": watchdog_telemetry_v2_status(status),
+		"source": {"producer": "watchdog-proxy", "adapter_id": "watchdog.openai-compatible-proxy", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "openai-compatible", "source_trace_id": trace_id, "source_span_id": span_id},
+		"references": [
+			{"type": "session", "id": session_id, "namespace": "watchdog-proxy", "relation": "groups"},
+			{"type": "request", "id": to_string(request_dbid), "namespace": "watchdog", "relation": "observes"}
+		],
+		"attributes": {"gen_ai.provider.name": provider, "gen_ai.request.model": model_name, "http.response.status_code": status_code, "watchdog.transport": "openai-compatible-proxy", "watchdog.duration_ms": duration_ms},
+		"usage": {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens, "cached_input_tokens": null, "cache_write_input_tokens": null, "reasoning_tokens": null, "usage_source": "provider-response", "total_semantics": "producer_reported", "provider_usage": null},
+		"costs": [{"kind": cost_kind, "currency": "USD", "amount": pricing["total_cost_usd"], "source": pricing["pricing_source"], "catalog_version": null, "calculated_at": watchdog_telemetry_v2_timestamp(ended_at_ms, ended_at_ms), "components": {"input": pricing["input_cost_usd"], "output": pricing["output_cost_usd"]}}],
+		"error": null,
+		"content": [],
+		"privacy": {"content_mode": "off", "policy_version": "watchdog.privacy.v1", "transformations": []}
+	}
+	try {
+		canonical_write := persist_fast_approved_canonical_batch({"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION, "batch_id": "proxy:" + to_string(request_dbid), "sent_at": canonical_record["observed_at"], "producer": {"name": "watchdog-proxy", "version": "v1", "adapter_id": "watchdog.openai-compatible-proxy", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": "openai-compatible"}, "records": [canonical_record]})
+		if canonical_write["ok"] == false { print("Proxy canonical telemetry validation failed: " + canonical_write["error"]) }
+	} except canonical_err {
+		print("Proxy canonical telemetry write failed: " + to_string(canonical_err))
+	}
 }
 
 func insert_external_agent_steps(request_dbid, body, source_app, session_id) {
@@ -3317,7 +3570,7 @@ server := server.route("POST", "/telemetry/v2/batches", func(req) {
 		return api_error(400, validation["error"])
 	}
 	try {
-		result := watchdog_telemetry_repository_insert(db, approved)
+		result := persist_canonical_batch(body)
 		insert_audit_event("canonical_telemetry_intake", resolve_audit_actor_key(req, "api"), "success", {
 			"batch_id": external_text(body, "batch_id", "", 160),
 			"producer": external_text(safe_dict_get(body, "producer", {}), "name", "external", 80),
@@ -3367,6 +3620,85 @@ server := server.route("GET", "/api/telemetry/v2/records", func(req) {
 		}
 	}
 	return api_ok({"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION, "records": records, "next_before": next_cursor})
+})
+
+server := server.route("GET", "/telemetry/v2/jsonl", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	cursor_result := jsonl_v2_cursor_sequence(request_query_text(req, "cursor", ""))
+	if cursor_result["ok"] == false { return api_error(400, "Invalid JSONL v2 cursor") }
+	limit_value := request_query_int(req, "limit", 500, 1, 5000)
+	rows := db_query(db, "SELECT id, producer_name, record_id, canonical_json FROM telemetry_records_v2 WHERE id > ? ORDER BY id ASC LIMIT ?", [cursor_result["sequence"], limit_value])
+	return jsonl_v2_response(rows, to_string(current_timestamp()), cursor_result["sequence"])
+})
+
+server := server.route("POST", "/telemetry/v2/jsonl/replay", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	body := to_string(safe_dict_get(req, "body", ""))
+	if utf8_byte_length(body) > MAX_PARSE_BODY_BYTES { return api_error(400, "JSONL replay body exceeds configured parse limit") }
+	lines := split(body, "\n")
+	accepted := 0
+	deduplicated := 0
+	for line in lines {
+		text := trim(line)
+		if text != "" {
+			if accepted + deduplicated >= 100 { return api_error(400, "JSONL replay accepts at most 100 records") }
+			parsed := parse_json_safe(text)
+			if parsed["ok"] == false || type(parsed["data"]) != "dict" { return api_error(400, "Invalid JSONL replay line") }
+			envelope := parsed["data"]
+			if safe_dict_get(envelope, "jsonl_version", "") != JSONL_V2_VERSION || safe_dict_get(envelope, "schema_version", "") != CANONICAL_TELEMETRY_SCHEMA_VERSION {
+				return api_error(400, "Unsupported JSONL replay version")
+			}
+			record := safe_dict_get(envelope, "record", null)
+			if type(record) != "dict" { return api_error(400, "JSONL replay line is missing record") }
+			producer_name := truncate_str(trim(to_string(safe_dict_get(envelope, "producer", "jsonl-replay"))), 80)
+			batch := {
+				"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION,
+				"batch_id": "replay:" + substring(sha256(text), 0, 32),
+				"sent_at": null,
+				"producer": {"name": producer_name, "version": "jsonl-v2", "adapter_id": "watchdog.jsonl-replay", "adapter_version": "watchdog.ingestion-adapter.v1", "original_schema": JSONL_V2_VERSION},
+				"records": [record]
+			}
+			result := persist_canonical_batch(batch)
+			if result["ok"] == false { return api_error(400, result["error"]) }
+			if result["deduplicated"] { deduplicated = deduplicated + 1 } else { accepted = accepted + 1 }
+		}
+	}
+	return api_ok({"accepted": accepted, "deduplicated": deduplicated, "jsonl_version": JSONL_V2_VERSION})
+})
+
+server := server.route("GET", "/api/telemetry/v2/export-status", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	return api_ok({"contract_version": "watchdog.exporter.v1", "configured_profiles": len(EXPORTER_PROFILE_IDS), "queue_max_records_per_profile": EXPORT_QUEUE_MAX_RECORDS, "deliveries": watchdog_delivery_status(db)})
+})
+
+server := server.route("POST", "/api/telemetry/v2/export-resume", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	parsed := parse_json_with_limit(to_string(safe_dict_get(req, "body", "{}")), MAX_PARSE_BODY_BYTES)
+	if parsed["ok"] == false || type(parsed["data"]) != "dict" { return api_error(400, "Request body must be an object") }
+	profile_id := truncate_str(trim(to_string(safe_dict_get(parsed["data"], "profile_id", ""))), 80)
+	if profile_id == "" || exporter_profile_configured(profile_id) == false { return api_error(400, "Unknown exporter profile") }
+	result := watchdog_delivery_resume_profile(db, profile_id)
+	insert_audit_event("telemetry_export_profile_resume", resolve_audit_actor_key(req, "api"), "success", result)
+	return api_ok(result)
+})
+
+server := server.route("POST", "/api/telemetry/v2/export-backfill", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	parsed := parse_json_with_limit(to_string(safe_dict_get(req, "body", "{}")), MAX_PARSE_BODY_BYTES)
+	if parsed["ok"] == false || type(parsed["data"]) != "dict" { return api_error(400, "Request body must be an object") }
+	profile_id := truncate_str(trim(to_string(safe_dict_get(parsed["data"], "profile_id", ""))), 80)
+	if profile_id == "" || exporter_profile_configured(profile_id) == false { return api_error(400, "Unknown exporter profile") }
+	limit_value := to_int_or_zero(safe_dict_get(parsed["data"], "limit", 5000))
+	if limit_value < 1 { limit_value = 1 }
+	if limit_value > 5000 { limit_value = 5000 }
+	result := watchdog_delivery_backfill(db, profile_id, EXPORT_QUEUE_MAX_RECORDS, limit_value)
+	insert_audit_event("telemetry_export_backfill", resolve_audit_actor_key(req, "api"), "success", result)
+	return api_ok(result)
 })
 
 # Existing dashboard APIs

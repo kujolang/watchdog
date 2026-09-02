@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kujolang.dev/schemas/watchdog-jsonl-v2.schema.json",
+  "title": "Watchdog canonical JSONL v2 line",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["jsonl_version", "schema_version", "exported_at", "producer", "record_id", "sequence", "record"],
+  "properties": {
+    "jsonl_version": {"const": "watchdog.jsonl.v2"},
+    "schema_version": {"const": "watchdog.telemetry.v2"},
+    "exported_at": {"type": "string", "minLength": 1, "maxLength": 80},
+    "producer": {"type": "string", "minLength": 1, "maxLength": 80},
+    "record_id": {"type": "string", "minLength": 1, "maxLength": 160},
+    "sequence": {"type": "integer", "minimum": 1},
+    "record": {"$ref": "telemetry-v2.schema.json#/$defs/record"}
+  }
+}

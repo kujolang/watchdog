@@ -1,0 +1,16 @@
+{
+  "mapping_profile": "openinference.v1",
+  "transport": "OTLP/HTTP JSON",
+  "span_kinds": {
+    "model": "LLM",
+    "agent": "AGENT",
+    "tool": "TOOL",
+    "retrieval": "RETRIEVER",
+    "evaluation": "EVALUATOR",
+    "workflow": "CHAIN"
+  },
+  "content_attributes": {
+    "input.value": "opt-in only",
+    "output.value": "opt-in only"
+  }
+}

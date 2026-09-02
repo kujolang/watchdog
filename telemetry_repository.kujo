@@ -208,5 +208,13 @@ func repo_insert_batch(db, batch) {
 	}
 }
 
+func repo_insert_batch_fast(db, batch) {
+	validation := repo_validate_batch(batch)
+	if validation["ok"] == false { return validation }
+	if len(batch["records"]) != 1 { return {"ok": false, "error": "fast repository path requires exactly one record"} }
+	return repo_insert_batch_rows(db, batch)
+}
+
 export watchdog_telemetry_repository_validate := repo_validate_batch
 export watchdog_telemetry_repository_insert := repo_insert_batch
+export watchdog_telemetry_repository_insert_fast := repo_insert_batch_fast

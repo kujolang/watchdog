@@ -9,18 +9,20 @@ const {resolveKujoBinOrThrow} = require('./_kujo_bin');
 const root = path.resolve(__dirname, '..');
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-telemetry-v2-api-'));
 const dbPath = path.join(tempDir, 'watchdog.db');
+const exportersPath = path.join(tempDir, 'exporters.json');
 const port = 17718;
 const kujoBin = resolveKujoBinOrThrow(__filename);
+fs.writeFileSync(exportersPath, JSON.stringify({schema_version: 'watchdog.exporters.v1', exporters: [{id: 'fixture-collector', type: 'otlp_http', enabled: true, endpoint: 'http://127.0.0.1:4318/v1/traces', mapping_profile: 'otel.genai.v1'}]}));
 
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 function request(method, pathname, payload) {
 	return new Promise((resolve, reject) => {
-		const body = payload == null ? '' : JSON.stringify(payload);
+		const body = payload == null ? '' : (typeof payload === 'string' ? payload : JSON.stringify(payload));
 		const req = http.request({host: '127.0.0.1', port, method, path: pathname, headers: body ? {'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body)} : {}}, (res) => {
 			let text = '';
 			res.on('data', (chunk) => { text += chunk; });
-			res.on('end', () => resolve({status: res.statusCode || 0, body: text}));
+			res.on('end', () => resolve({status: res.statusCode || 0, body: text, headers: res.headers || {}}));
 		});
 		req.on('error', reject);
 		if (body) req.write(body);
@@ -31,7 +33,7 @@ function request(method, pathname, payload) {
 async function startServer() {
 	const child = spawn(kujoBin, ['run', '--interpreter', 'dashboard_server.kujo'], {
 		cwd: root,
-		env: {...process.env, WDG_DB_PATH: dbPath, WDG_PORT: String(port), WDG_API_AUTH_MODE: 'off', WDG_PROXY_AUTHZ_MODE: 'off', WDG_MAX_PARSE_BODY_BYTES: '65536'},
+		env: {...process.env, WDG_DB_PATH: dbPath, WDG_PORT: String(port), WDG_API_AUTH_MODE: 'off', WDG_PROXY_AUTHZ_MODE: 'off', WDG_MAX_PARSE_BODY_BYTES: '65536', WDG_EXPORTERS_CONFIG_PATH: exportersPath},
 		stdio: ['ignore', 'pipe', 'pipe'],
 	});
 	let output = '';
@@ -89,6 +91,30 @@ async function run() {
 		assert.ok(stored.privacy.transformations.includes('content_dropped_by_watchdog_policy'));
 		assert.ok(!JSON.stringify(stored).includes('raw-content-canary'), 'content canary leaked');
 		assert.ok(!JSON.stringify(stored).includes('secret-canary-value'), 'credential canary leaked');
+		const exportStatus = JSON.parse((await request('GET', '/api/telemetry/v2/export-status')).body).data;
+		assert.strictEqual(exportStatus.configured_profiles, 1);
+		assert.ok(exportStatus.deliveries.some((row) => row.profile_id === 'fixture-collector' && row.status === 'pending' && row.records === 1), 'canonical intake did not enqueue exporter delivery');
+
+		const jsonl = await request('GET', '/telemetry/v2/jsonl?limit=10');
+		assert.strictEqual(jsonl.status, 200, jsonl.body);
+		assert.strictEqual(jsonl.headers['x-watchdog-jsonl-version'], 'watchdog.jsonl.v2');
+		const jsonlLines = jsonl.body.trim().split('\n').filter(Boolean);
+		assert.strictEqual(jsonlLines.length, 1, 'JSONL v2 export count drift');
+		const envelope = JSON.parse(jsonlLines[0]);
+		assert.strictEqual(envelope.record_id, stored.record_id);
+		assert.strictEqual(envelope.record.privacy.content_mode, 'off');
+		assert.ok(!jsonl.body.includes('raw-content-canary'), 'JSONL exported dropped content');
+		const cursor = jsonl.headers['x-watchdog-next-cursor'];
+		assert.match(String(cursor), /^v2:\d+:[0-9a-f]{24}$/);
+		assert.strictEqual((await request('GET', '/telemetry/v2/jsonl?cursor=v2:1:invalid')).status, 400, 'tampered JSONL cursor was accepted');
+		const after = await request('GET', `/telemetry/v2/jsonl?cursor=${cursor}`);
+		assert.strictEqual(after.status, 200);
+		assert.strictEqual(after.body, '', 'cursor resume repeated records');
+		const replayFirst = await request('POST', '/telemetry/v2/jsonl/replay', jsonl.body);
+		assert.strictEqual(replayFirst.status, 200, replayFirst.body);
+		assert.strictEqual(JSON.parse(replayFirst.body).data.accepted, 1);
+		const replaySecond = await request('POST', '/telemetry/v2/jsonl/replay', jsonl.body);
+		assert.strictEqual(JSON.parse(replaySecond.body).data.deduplicated, 1, 'JSONL replay was not idempotent');
 
 		const v1 = await request('POST', '/api/telemetry/traces', {
 			schema_version: 'kujo.telemetry.v1', source_app: 'v1-client', trace_id: 'v1-trace', session_id: 'v1-session',
@@ -102,6 +128,10 @@ async function run() {
 		const v1Records = JSON.parse((await request('GET', '/api/telemetry/v2/records?producer=v1-client')).body).data.records;
 		assert.strictEqual(v1Records.length, 3, 'v1 append/replay did not preserve canonical records idempotently');
 		assert.ok(v1Records.every((item) => item.record.privacy.content_mode === 'off'));
+		const modelBatch = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/telemetry-v2/canonical-model-batch.json'), 'utf8'));
+		modelBatch.batch_id = 'fixture:model:api';
+		const modelIntake = await request('POST', '/telemetry/v2/batches', modelBatch);
+		assert.strictEqual(modelIntake.status, 200, modelIntake.body);
 	} catch (error) {
 		if (server) error.message += `\nServer output:\n${server.output().slice(-4000)}`;
 		throw error;

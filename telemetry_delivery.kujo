@@ -1,0 +1,109 @@
+# Bounded delivery-journal helpers. Mapping and transport do not live here.
+
+func delivery_get(value, key, fallback_value) {
+	if type(value) != "dict" || has_key(value, key) == 0 { return fallback_value }
+	return value[key]
+}
+
+func delivery_text(value, max_len) {
+	text := trim(to_string(value))
+	if len(text) <= max_len { return text }
+	return substring(text, 0, max_len)
+}
+
+func delivery_load_profiles(config_path) {
+	if config_path == "" || file_exists(config_path) == false { return [] }
+	parsed := null
+	try { parsed = parse_json(read_file(config_path)) } except err { return [] }
+	if type(parsed) != "dict" { return [] }
+	raw_profiles := delivery_get(parsed, "exporters", [])
+	if type(raw_profiles) != "array" { return [] }
+	profiles := []
+	seen := {}
+	for raw in raw_profiles {
+		if len(profiles) < 16 && type(raw) == "dict" {
+			profile_id := delivery_text(delivery_get(raw, "id", ""), 80)
+			type_id := delivery_text(delivery_get(raw, "type", ""), 40)
+			enabled := delivery_get(raw, "enabled", true)
+			if profile_id != "" && type_id == "otlp_http" && enabled != false && has_key(seen, profile_id) == 0 {
+				seen[profile_id] = true
+				profiles = push(profiles, raw)
+			}
+		}
+	}
+	return profiles
+}
+
+func delivery_profile_ids(profiles) {
+	ids := []
+	if type(profiles) != "array" { return ids }
+	for profile in profiles {
+		if type(profile) == "string" {
+			profile_id := delivery_text(profile, 80)
+			if profile_id != "" { ids = push(ids, profile_id) }
+		} else if type(profile) == "dict" {
+			profile_id := delivery_text(delivery_get(profile, "id", ""), 80)
+			if profile_id != "" { ids = push(ids, profile_id) }
+		}
+	}
+	return ids
+}
+
+func delivery_enqueue_batch(db, profiles, batch_dbid, max_records_per_profile) {
+	profile_ids := delivery_profile_ids(profiles)
+	if len(profile_ids) == 0 { return {"enqueued": 0, "dropped": 0, "profiles": 0} }
+	record_rows := db_query(db, "SELECT id FROM telemetry_records_v2 WHERE batch_dbid = ? ORDER BY id ASC", [batch_dbid])
+	now_ms := current_timestamp()
+	enqueued := 0
+	dropped := 0
+	for profile_id in profile_ids {
+		db_execute(db, "INSERT OR IGNORE INTO telemetry_export_profile_state (profile_id, status, updated_at_ms) VALUES (?, 'ready', ?)", [profile_id, now_ms])
+		count_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_export_deliveries WHERE profile_id = ? AND status IN ('pending','retry')", [profile_id])
+		overflow := count_rows[0]["n"] + len(record_rows) - max_records_per_profile
+		while overflow > 0 {
+			oldest := db_query(db, "SELECT id FROM telemetry_export_deliveries WHERE profile_id = ? AND status IN ('pending','retry') ORDER BY id ASC LIMIT 1", [profile_id])
+			if len(oldest) == 0 { overflow = 0 } else {
+				db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'dropped', last_error = 'queue capacity exceeded', updated_at_ms = ? WHERE id = ?", [now_ms, oldest[0]["id"]])
+				dropped = dropped + 1
+				overflow = overflow - 1
+			}
+		}
+		for row in record_rows {
+			db_execute(db, "INSERT INTO telemetry_export_deliveries (profile_id, record_dbid, status, attempts, next_attempt_ms, created_at_ms, updated_at_ms) VALUES (?, ?, 'pending', 0, 0, ?, ?) ON CONFLICT(profile_id, record_dbid) DO UPDATE SET status = 'pending', attempts = 0, next_attempt_ms = 0, last_http_status = 0, last_error = '', updated_at_ms = excluded.updated_at_ms", [profile_id, row["id"], now_ms, now_ms])
+			enqueued = enqueued + 1
+		}
+	}
+	return {"enqueued": enqueued, "dropped": dropped, "profiles": len(profile_ids)}
+}
+
+func delivery_status(db) {
+	return db_query(db, "SELECT d.profile_id, d.status, COUNT(*) AS records, MIN(d.created_at_ms) AS oldest_ms, MAX(d.updated_at_ms) AS newest_ms, s.consecutive_failures, s.last_success_ms, s.last_failure_ms, s.paused_reason FROM telemetry_export_deliveries d LEFT JOIN telemetry_export_profile_state s ON s.profile_id = d.profile_id GROUP BY d.profile_id, d.status ORDER BY d.profile_id, d.status", [])
+}
+
+func delivery_resume_profile(db, profile_id) {
+	now_ms := current_timestamp()
+	db_execute(db, "INSERT OR IGNORE INTO telemetry_export_profile_state (profile_id, status, updated_at_ms) VALUES (?, 'ready', ?)", [profile_id, now_ms])
+	db_execute(db, "UPDATE telemetry_export_profile_state SET status = 'ready', consecutive_failures = 0, paused_reason = '', updated_at_ms = ? WHERE profile_id = ?", [now_ms, profile_id])
+	return {"profile_id": profile_id, "status": "ready"}
+}
+
+func delivery_backfill(db, profile_id, max_records_per_profile, limit_value) {
+	count_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_export_deliveries WHERE profile_id = ? AND status IN ('pending','retry')", [profile_id])
+	capacity := max_records_per_profile - count_rows[0]["n"]
+	if capacity <= 0 { return {"profile_id": profile_id, "enqueued": 0, "capacity": 0} }
+	if limit_value > capacity { limit_value = capacity }
+	rows := db_query(db, "SELECT r.id FROM telemetry_records_v2 r WHERE NOT EXISTS (SELECT 1 FROM telemetry_export_deliveries d WHERE d.profile_id = ? AND d.record_dbid = r.id) ORDER BY r.id ASC LIMIT ?", [profile_id, limit_value])
+	now_ms := current_timestamp()
+	for row in rows {
+		db_execute(db, "INSERT OR IGNORE INTO telemetry_export_deliveries (profile_id, record_dbid, status, attempts, next_attempt_ms, created_at_ms, updated_at_ms) VALUES (?, ?, 'pending', 0, 0, ?, ?)", [profile_id, row["id"], now_ms, now_ms])
+	}
+	db_execute(db, "INSERT OR IGNORE INTO telemetry_export_profile_state (profile_id, status, updated_at_ms) VALUES (?, 'ready', ?)", [profile_id, now_ms])
+	return {"profile_id": profile_id, "enqueued": len(rows), "capacity": capacity - len(rows)}
+}
+
+export watchdog_delivery_load_profiles := delivery_load_profiles
+export watchdog_delivery_profile_ids := delivery_profile_ids
+export watchdog_delivery_enqueue_batch := delivery_enqueue_batch
+export watchdog_delivery_status := delivery_status
+export watchdog_delivery_resume_profile := delivery_resume_profile
+export watchdog_delivery_backfill := delivery_backfill

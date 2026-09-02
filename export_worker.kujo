@@ -1,0 +1,219 @@
+# Watchdog OTLP delivery worker.
+# Run once from a supervisor/cron, or use --watch for a local long-running loop.
+
+from watchdog_shared import watchdog_ensure_schema
+from telemetry_delivery import watchdog_delivery_load_profiles
+from telemetry_otlp import watchdog_otlp_map
+
+func worker_env(key, fallback_value) {
+	value := env(key)
+	if type(value) == "null" || trim(to_string(value)) == "" { return fallback_value }
+	return trim(to_string(value))
+}
+
+func worker_get(value, key, fallback_value) {
+	if type(value) != "dict" || has_key(value, key) == 0 { return fallback_value }
+	return value[key]
+}
+
+func worker_int(value, fallback_value, min_value, max_value) {
+	parsed := fallback_value
+	try { parsed = parse_int(to_string(value)) } except err { return fallback_value }
+	if parsed < min_value { return min_value }
+	if parsed > max_value { return max_value }
+	return parsed
+}
+
+func worker_header(headers, name) {
+	if type(headers) != "dict" { return "" }
+	for key in keys(headers) {
+		if to_lower(to_string(key)) == to_lower(name) { return trim(to_string(headers[key])) }
+	}
+	return ""
+}
+
+func worker_endpoint_allowed(endpoint) {
+	text := to_lower(trim(to_string(endpoint)))
+	if contains(text, "@") || contains(text, "#") || contains(text, "?") { return false }
+	if starts_with(text, "https://") { return true }
+	if starts_with(text, "http://127.0.0.1:") || starts_with(text, "http://localhost:") || starts_with(text, "http://[::1]:") { return true }
+	return false
+}
+
+func worker_profile_headers(profile) {
+	headers := {"Content-Type": "application/json", "User-Agent": "kujo-watchdog-exporter/1"}
+	header_env := worker_get(profile, "headers_from_env", {})
+	if type(header_env) != "dict" { return {"ok": true, "headers": headers, "error": ""} }
+	for header_name in keys(header_env) {
+		name := trim(to_string(header_name))
+		env_name := trim(to_string(header_env[header_name]))
+		if name == "" || env_name == "" || contains(name, "\n") || contains(name, "\r") { return {"ok": false, "headers": {}, "error": "invalid header environment mapping"} }
+		value := env(env_name)
+		if type(value) == "null" || trim(to_string(value)) == "" { return {"ok": false, "headers": {}, "error": "required credential environment variable is missing: " + env_name} }
+		headers[name] = trim(to_string(value))
+	}
+	return {"ok": true, "headers": headers, "error": ""}
+}
+
+func worker_backoff_ms(attempts, retry_after) {
+	if retry_after != "" {
+		try {
+			seconds := parse_int(retry_after)
+			if seconds > 0 { return worker_int(seconds * 1000, 1000, 1000, 300000) }
+		} except err {}
+	}
+	delay := 1000
+	i := 1
+	while i < attempts && delay < 300000 {
+		delay = delay * 2
+		i = i + 1
+	}
+	if delay > 300000 { delay = 300000 }
+	return random_int(0, delay)
+}
+
+func worker_mark_state(db, profile_id, status, success, reason) {
+	now_ms := current_timestamp()
+	db_execute(db, "INSERT OR IGNORE INTO telemetry_export_profile_state (profile_id, status, updated_at_ms) VALUES (?, 'ready', ?)", [profile_id, now_ms])
+	if success {
+		db_execute(db, "UPDATE telemetry_export_profile_state SET status = 'ready', consecutive_failures = 0, last_success_ms = ?, paused_reason = '', updated_at_ms = ? WHERE profile_id = ?", [now_ms, now_ms, profile_id])
+	} else {
+		db_execute(db, "UPDATE telemetry_export_profile_state SET status = ?, consecutive_failures = consecutive_failures + 1, last_failure_ms = ?, paused_reason = ?, updated_at_ms = ? WHERE profile_id = ?", [status, now_ms, substring(to_string(reason), 0, 500), now_ms, profile_id])
+	}
+}
+
+func worker_mark_sent(db, delivery_rows, profile_id) {
+	now_ms := current_timestamp()
+	for row in delivery_rows { db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'sent', attempts = attempts + 1, last_http_status = 200, last_error = '', updated_at_ms = ? WHERE id = ?", [now_ms, row["delivery_id"]]) }
+	worker_mark_state(db, profile_id, "ready", true, "")
+}
+
+func worker_mark_retry(db, delivery_rows, profile_id, http_status, reason, retry_after, max_attempts, pause_profile) {
+	now_ms := current_timestamp()
+	for row in delivery_rows {
+		next_attempt := worker_int(row["attempts"], 0, 0, 1000) + 1
+		if next_attempt >= max_attempts {
+			db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'dead', attempts = ?, last_http_status = ?, last_error = ?, updated_at_ms = ? WHERE id = ?", [next_attempt, http_status, substring(to_string(reason), 0, 500), now_ms, row["delivery_id"]])
+			db_execute(db, "INSERT INTO telemetry_export_dead_letters (delivery_id, profile_id, record_dbid, reason, payload_sha256, created_at_ms) VALUES (?,?,?,?,?,?)", [row["delivery_id"], profile_id, row["record_dbid"], substring(to_string(reason), 0, 500), "", now_ms])
+		} else {
+			delay_ms := worker_backoff_ms(next_attempt, retry_after)
+			db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'retry', attempts = ?, next_attempt_ms = ?, last_http_status = ?, last_error = ?, updated_at_ms = ? WHERE id = ?", [next_attempt, now_ms + delay_ms, http_status, substring(to_string(reason), 0, 500), now_ms, row["delivery_id"]])
+		}
+	}
+	state_status := "degraded"
+	if pause_profile { state_status = "paused" }
+	worker_mark_state(db, profile_id, state_status, false, reason)
+}
+
+func worker_mark_dead(db, delivery_rows, profile_id, http_status, reason, payload_hash) {
+	now_ms := current_timestamp()
+	for row in delivery_rows {
+		db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'dead', attempts = attempts + 1, last_http_status = ?, last_error = ?, updated_at_ms = ? WHERE id = ?", [http_status, substring(to_string(reason), 0, 500), now_ms, row["delivery_id"]])
+		db_execute(db, "INSERT INTO telemetry_export_dead_letters (delivery_id, profile_id, record_dbid, reason, payload_sha256, created_at_ms) VALUES (?,?,?,?,?,?)", [row["delivery_id"], profile_id, row["record_dbid"], substring(to_string(reason), 0, 500), payload_hash, now_ms])
+	}
+	worker_mark_state(db, profile_id, "degraded", false, reason)
+}
+
+func worker_due_rows(db, profile_id, limit_value) {
+	return db_query(db, "SELECT d.id AS delivery_id, d.record_dbid, d.attempts, r.canonical_json FROM telemetry_export_deliveries d JOIN telemetry_records_v2 r ON r.id = d.record_dbid JOIN telemetry_export_profile_state s ON s.profile_id = d.profile_id WHERE d.profile_id = ? AND d.status IN ('pending','retry') AND d.next_attempt_ms <= ? AND s.status <> 'paused' ORDER BY d.id ASC LIMIT ?", [profile_id, current_timestamp(), limit_value])
+}
+
+func worker_send_profile(db, profile) {
+	profile_id := substring(trim(to_string(worker_get(profile, "id", ""))), 0, 80)
+	endpoint := trim(to_string(worker_get(profile, "endpoint", "")))
+	if profile_id == "" { return {"profile": "", "status": "invalid", "records": 0} }
+	if worker_endpoint_allowed(endpoint) == false {
+		worker_mark_state(db, profile_id, "paused", false, "endpoint must use HTTPS or explicit loopback HTTP")
+		return {"profile": profile_id, "status": "paused", "records": 0}
+	}
+	header_result := worker_profile_headers(profile)
+	if header_result["ok"] == false {
+		worker_mark_state(db, profile_id, "paused", false, header_result["error"])
+		return {"profile": profile_id, "status": "paused", "records": 0}
+	}
+	batch_limit := worker_int(worker_get(profile, "batch_records", 256), 256, 1, 256)
+	max_attempts := worker_int(worker_get(profile, "max_attempts", 10), 10, 1, 20)
+	timeout_seconds := worker_int(worker_get(profile, "timeout_seconds", 10), 10, 1, 30)
+	rows := worker_due_rows(db, profile_id, batch_limit)
+	if len(rows) == 0 { return {"profile": profile_id, "status": "idle", "records": 0} }
+	records := []
+	delivery_rows := []
+	for row in rows {
+		parsed := null
+		try { parsed = parse_json(row["canonical_json"]) } except err { parsed = null }
+		if type(parsed) == "dict" {
+			candidate := push(records, parsed)
+			candidate_payload := to_json(watchdog_otlp_map(candidate, to_string(worker_get(profile, "mapping_profile", "otel.genai.v1"))))
+			if len(candidate_payload) <= 524288 {
+				records = candidate
+				delivery_rows = push(delivery_rows, row)
+			}
+		}
+	}
+	if len(records) == 0 {
+		worker_mark_dead(db, [rows[0]], profile_id, 0, "mapped payload exceeds 512 KiB or record is malformed", "")
+		return {"profile": profile_id, "status": "dead", "records": 1}
+	}
+	payload := to_json(watchdog_otlp_map(records, to_string(worker_get(profile, "mapping_profile", "otel.genai.v1"))))
+	options := {"method": "POST", "timeout": timeout_seconds * 1.0, "_headers": header_result["headers"], "_body": payload}
+	http_result := http_request(endpoint, options)
+	match http_result {
+		case Ok(response): {
+			status := worker_int(worker_get(response, "_status", worker_get(response, "status", 0)), 0, 0, 599)
+			body := to_string(worker_get(response, "_body", worker_get(response, "body", "")))
+			headers := worker_get(response, "_headers", worker_get(response, "headers", {}))
+			if status >= 200 && status < 300 {
+				partial := false
+				try {
+					parsed_body := parse_json(body)
+					partial_success := worker_get(parsed_body, "partialSuccess", {})
+					partial = worker_int(worker_get(partial_success, "rejectedSpans", 0), 0, 0, 1000000) > 0
+				} except err {}
+				if partial {
+					worker_mark_retry(db, delivery_rows, profile_id, status, "OTLP partial success did not identify rejected records", "", max_attempts, false)
+					return {"profile": profile_id, "status": "retry", "records": len(delivery_rows)}
+				}
+				worker_mark_sent(db, delivery_rows, profile_id)
+				return {"profile": profile_id, "status": "sent", "records": len(delivery_rows)}
+			}
+			if status == 401 || status == 403 {
+				worker_mark_retry(db, delivery_rows, profile_id, status, "destination authentication rejected", "", max_attempts, true)
+				return {"profile": profile_id, "status": "paused", "records": len(delivery_rows)}
+			}
+			if status == 408 || status == 429 || status >= 500 {
+				worker_mark_retry(db, delivery_rows, profile_id, status, "retryable destination response", worker_header(headers, "Retry-After"), max_attempts, false)
+				return {"profile": profile_id, "status": "retry", "records": len(delivery_rows)}
+			}
+			worker_mark_dead(db, delivery_rows, profile_id, status, "permanent destination rejection", sha256(payload))
+			return {"profile": profile_id, "status": "dead", "records": len(delivery_rows)}
+		}
+		case Err(error): {
+			worker_mark_retry(db, delivery_rows, profile_id, 0, "network error: " + to_string(error), "", max_attempts, false)
+			return {"profile": profile_id, "status": "retry", "records": len(delivery_rows)}
+		}
+	}
+}
+
+func worker_once(db, profiles) {
+	results := []
+	for profile in profiles { results = push(results, worker_send_profile(db, profile)) }
+	return results
+}
+
+db_path := worker_env("WDG_DB_PATH", "data/watchdog.db")
+config_path := worker_env("WDG_EXPORTERS_CONFIG_PATH", "watchdog_exporters.json")
+db := db_connect("sqlite", db_path)
+watchdog_ensure_schema(db)
+profiles := watchdog_delivery_load_profiles(config_path)
+argv := args()
+watch_mode := false
+for arg in argv { if to_string(arg) == "--watch" { watch_mode = true } }
+
+if watch_mode {
+	while true {
+		print(to_json({"contract_version": "watchdog.exporter.v1", "results": worker_once(db, profiles)}))
+		sleep(5.0)
+	}
+} else {
+	print(to_json({"contract_version": "watchdog.exporter.v1", "results": worker_once(db, profiles)}))
+}

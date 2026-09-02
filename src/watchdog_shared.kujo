@@ -226,6 +226,9 @@ func ensure_schema(db) {
 	db_execute(db, "CREATE TABLE IF NOT EXISTS telemetry_batches_v2 (id INTEGER PRIMARY KEY AUTOINCREMENT, producer_name TEXT NOT NULL, batch_id TEXT NOT NULL, schema_version TEXT NOT NULL DEFAULT 'watchdog.telemetry.v2', sent_at TEXT, received_at TEXT NOT NULL, record_count INTEGER NOT NULL DEFAULT 0, content_mode TEXT NOT NULL DEFAULT 'off', UNIQUE(producer_name, batch_id))", [])
 	db_execute(db, "CREATE TABLE IF NOT EXISTS telemetry_records_v2 (id INTEGER PRIMARY KEY AUTOINCREMENT, batch_dbid INTEGER NOT NULL, producer_name TEXT NOT NULL, record_id TEXT NOT NULL, record_type TEXT NOT NULL, trace_id TEXT NOT NULL, span_id TEXT, parent_span_id TEXT, observed_at TEXT NOT NULL, started_at TEXT, ended_at TEXT, kind TEXT, name TEXT, status TEXT NOT NULL DEFAULT 'unset', source_json TEXT NOT NULL DEFAULT '{}', references_json TEXT NOT NULL DEFAULT '[]', attributes_json TEXT NOT NULL DEFAULT '{}', usage_json TEXT, costs_json TEXT NOT NULL DEFAULT '[]', error_json TEXT, content_json TEXT NOT NULL DEFAULT '[]', privacy_json TEXT NOT NULL DEFAULT '{}', canonical_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(producer_name, record_id))", [])
 	db_execute(db, "CREATE TABLE IF NOT EXISTS telemetry_references_v2 (record_dbid INTEGER NOT NULL, ref_type TEXT NOT NULL, ref_id TEXT NOT NULL, namespace TEXT NOT NULL DEFAULT '', relation TEXT NOT NULL DEFAULT '', PRIMARY KEY(record_dbid, ref_type, ref_id, namespace, relation))", [])
+	db_execute(db, "CREATE TABLE IF NOT EXISTS telemetry_export_deliveries (id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id TEXT NOT NULL, record_dbid INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_attempt_ms INTEGER NOT NULL DEFAULT 0, last_http_status INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, UNIQUE(profile_id, record_dbid))", [])
+	db_execute(db, "CREATE TABLE IF NOT EXISTS telemetry_export_profile_state (profile_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'ready', consecutive_failures INTEGER NOT NULL DEFAULT 0, last_success_ms INTEGER NOT NULL DEFAULT 0, last_failure_ms INTEGER NOT NULL DEFAULT 0, paused_reason TEXT NOT NULL DEFAULT '', updated_at_ms INTEGER NOT NULL DEFAULT 0)", [])
+	db_execute(db, "CREATE TABLE IF NOT EXISTS telemetry_export_dead_letters (id INTEGER PRIMARY KEY AUTOINCREMENT, delivery_id INTEGER NOT NULL, profile_id TEXT NOT NULL, record_dbid INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '', payload_sha256 TEXT NOT NULL DEFAULT '', created_at_ms INTEGER NOT NULL)", [])
 
 	try { db_execute(db, "ALTER TABLE requests ADD COLUMN workflow_id TEXT NOT NULL DEFAULT ''", []) } except err {}
 	try { db_execute(db, "ALTER TABLE requests ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''", []) } except err {}
@@ -305,6 +308,9 @@ func ensure_schema(db) {
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_telemetry_v2_kind_status ON telemetry_records_v2(kind, status)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_telemetry_v2_observed ON telemetry_records_v2(observed_at)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_telemetry_v2_reference ON telemetry_references_v2(ref_type, ref_id, namespace)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_export_delivery_due ON telemetry_export_deliveries(profile_id, status, next_attempt_ms, id)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_export_delivery_record ON telemetry_export_deliveries(record_dbid)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_export_dead_letter_profile ON telemetry_export_dead_letters(profile_id, created_at_ms)", [])
 
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0001_base_schema", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0002_kennel_correlation_fields", to_string(current_timestamp())])
@@ -321,6 +327,7 @@ func ensure_schema(db) {
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0013_pricing_reprice_audit", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0014_replay_safe_telemetry", to_string(current_timestamp())])
 	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0015_canonical_telemetry_v2", to_string(current_timestamp())])
+	db_execute(db, "INSERT OR IGNORE INTO schema_migrations (key, applied_at) VALUES (?, ?)", ["0016_bounded_export_delivery_journal", to_string(current_timestamp())])
 }
 
 export watchdog_cost_per_million := cost_per_million
