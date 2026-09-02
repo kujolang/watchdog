@@ -47,7 +47,9 @@ func worker_profile_headers(profile) {
 	for header_name in keys(header_env) {
 		name := trim(to_string(header_name))
 		env_name := trim(to_string(header_env[header_name]))
-		if name == "" || env_name == "" || contains(name, "\n") || contains(name, "\r") { return {"ok": false, "headers": {}, "error": "invalid header environment mapping"} }
+		lower_name := to_lower(name)
+		blocked_names := ["host", "content-length", "transfer-encoding", "connection", "proxy-authorization", "cookie", "set-cookie"]
+		if name == "" || env_name == "" || contains(name, "\n") || contains(name, "\r") || contains(name, ":") || contains(name, " ") || contains(blocked_names, lower_name) { return {"ok": false, "headers": {}, "error": "invalid header environment mapping"} }
 		value := env(env_name)
 		if type(value) == "null" || trim(to_string(value)) == "" { return {"ok": false, "headers": {}, "error": "required credential environment variable is missing: " + env_name} }
 		headers[name] = trim(to_string(value))
@@ -178,7 +180,14 @@ func worker_send_profile(db, profile) {
 		return {"profile": profile_id, "status": "dead", "records": 1}
 	}
 	payload := to_json(watchdog_otlp_map(records, to_string(worker_get(profile, "mapping_profile", "otel.genai.v1"))))
-	options := {"method": "POST", "timeout": timeout_seconds * 1.0, "_headers": header_result["headers"], "_body": payload}
+	allow_private_network := worker_get(profile, "allow_private_network", false) == true
+	destination_policy := "deny_private"
+	pin_dns := true
+	if allow_private_network || starts_with(to_lower(endpoint), "http://127.0.0.1:") || starts_with(to_lower(endpoint), "http://localhost:") || starts_with(to_lower(endpoint), "http://[::1]:") {
+		destination_policy = "inherit"
+		pin_dns = false
+	}
+	options := {"method": "POST", "timeout": timeout_seconds * 1.0, "_headers": header_result["headers"], "_body": payload, "redirects": "none", "destination_policy": destination_policy, "pin_dns": pin_dns, "max_response_bytes": 65536}
 	http_result := http_request(endpoint, options)
 	match http_result {
 		case Ok(response): {

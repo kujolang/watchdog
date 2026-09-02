@@ -28,6 +28,8 @@ Committed profiles contain environment-variable names, never credential values:
 
 HTTPS is mandatory except for explicit loopback HTTP (`127.0.0.1`, `localhost`, or `[::1]`). User-info, query strings, and fragments are rejected. The worker never forwards source request credentials and does not print resolved header values.
 
+Redirects are disabled, response bodies are capped at 64 KiB, and remote HTTPS profiles default to Kujo's DNS-pinned `deny_private` destination policy. This blocks private, loopback, link-local, multicast, and unspecified DNS answers. Set `allow_private_network: true` only for an operator-controlled internal collector; loopback HTTP collectors are recognized explicitly. Hop-by-hop, host, cookie, proxy-authorization, and content-length header mappings are rejected.
+
 ## Delivery semantics
 
 - `2xx`: sent, unless OTLP reports rejected spans; unidentifiable partial failures retry the batch with documented duplicate risk.
