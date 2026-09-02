@@ -49,28 +49,44 @@ func delivery_profile_ids(profiles) {
 	return ids
 }
 
-func delivery_enqueue_batch(db, profiles, batch_dbid, max_records_per_profile) {
+func delivery_enqueue_batch(db, profiles, batch_dbid, max_records_per_profile, max_bytes_per_profile) {
 	profile_ids := delivery_profile_ids(profiles)
 	if len(profile_ids) == 0 { return {"enqueued": 0, "dropped": 0, "profiles": 0} }
-	record_rows := db_query(db, "SELECT id FROM telemetry_records_v2 WHERE batch_dbid = ? ORDER BY id ASC", [batch_dbid])
+	record_rows := db_query(db, "SELECT id, LENGTH(canonical_json) AS payload_bytes FROM telemetry_records_v2 WHERE batch_dbid = ? ORDER BY id ASC", [batch_dbid])
+	incoming_bytes := 0
+	for row in record_rows { incoming_bytes = incoming_bytes + row["payload_bytes"] }
 	now_ms := current_timestamp()
 	enqueued := 0
 	dropped := 0
 	for profile_id in profile_ids {
 		db_execute(db, "INSERT OR IGNORE INTO telemetry_export_profile_state (profile_id, status, updated_at_ms) VALUES (?, 'ready', ?)", [profile_id, now_ms])
 		count_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_export_deliveries WHERE profile_id = ? AND status IN ('pending','retry')", [profile_id])
+		byte_rows := db_query(db, "SELECT COALESCE(SUM(LENGTH(r.canonical_json)),0) AS n FROM telemetry_export_deliveries d JOIN telemetry_records_v2 r ON r.id = d.record_dbid WHERE d.profile_id = ? AND d.status IN ('pending','retry')", [profile_id])
 		overflow := count_rows[0]["n"] + len(record_rows) - max_records_per_profile
-		while overflow > 0 {
-			oldest := db_query(db, "SELECT id FROM telemetry_export_deliveries WHERE profile_id = ? AND status IN ('pending','retry') ORDER BY id ASC LIMIT 1", [profile_id])
-			if len(oldest) == 0 { overflow = 0 } else {
+		bytes_after := byte_rows[0]["n"] + incoming_bytes
+		while overflow > 0 || bytes_after > max_bytes_per_profile {
+			oldest := db_query(db, "SELECT d.id, LENGTH(r.canonical_json) AS payload_bytes FROM telemetry_export_deliveries d JOIN telemetry_records_v2 r ON r.id = d.record_dbid WHERE d.profile_id = ? AND d.status IN ('pending','retry') ORDER BY d.id ASC LIMIT 1", [profile_id])
+			if len(oldest) == 0 {
+				overflow = 0
+				bytes_after = 0
+			} else {
 				db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'dropped', last_error = 'queue capacity exceeded', updated_at_ms = ? WHERE id = ?", [now_ms, oldest[0]["id"]])
 				dropped = dropped + 1
 				overflow = overflow - 1
+				bytes_after = bytes_after - oldest[0]["payload_bytes"]
 			}
 		}
+		remaining_rows := db_query(db, "SELECT COALESCE(SUM(LENGTH(r.canonical_json)),0) AS n FROM telemetry_export_deliveries d JOIN telemetry_records_v2 r ON r.id = d.record_dbid WHERE d.profile_id = ? AND d.status IN ('pending','retry')", [profile_id])
+		remaining_bytes := max_bytes_per_profile - remaining_rows[0]["n"]
 		for row in record_rows {
-			db_execute(db, "INSERT INTO telemetry_export_deliveries (profile_id, record_dbid, status, attempts, next_attempt_ms, created_at_ms, updated_at_ms) VALUES (?, ?, 'pending', 0, 0, ?, ?) ON CONFLICT(profile_id, record_dbid) DO UPDATE SET status = 'pending', attempts = 0, next_attempt_ms = 0, last_http_status = 0, last_error = '', updated_at_ms = excluded.updated_at_ms", [profile_id, row["id"], now_ms, now_ms])
-			enqueued = enqueued + 1
+			if row["payload_bytes"] <= remaining_bytes {
+				db_execute(db, "INSERT INTO telemetry_export_deliveries (profile_id, record_dbid, status, attempts, next_attempt_ms, created_at_ms, updated_at_ms) VALUES (?, ?, 'pending', 0, 0, ?, ?) ON CONFLICT(profile_id, record_dbid) DO UPDATE SET status = 'pending', attempts = 0, next_attempt_ms = 0, last_http_status = 0, last_error = '', updated_at_ms = excluded.updated_at_ms", [profile_id, row["id"], now_ms, now_ms])
+				enqueued = enqueued + 1
+				remaining_bytes = remaining_bytes - row["payload_bytes"]
+			} else {
+				db_execute(db, "INSERT INTO telemetry_export_deliveries (profile_id, record_dbid, status, attempts, next_attempt_ms, last_error, created_at_ms, updated_at_ms) VALUES (?, ?, 'dropped', 0, 0, 'queue byte capacity exceeded', ?, ?) ON CONFLICT(profile_id, record_dbid) DO UPDATE SET status = 'dropped', last_error = 'queue byte capacity exceeded', updated_at_ms = excluded.updated_at_ms", [profile_id, row["id"], now_ms, now_ms])
+				dropped = dropped + 1
+			}
 		}
 	}
 	return {"enqueued": enqueued, "dropped": dropped, "profiles": len(profile_ids)}
@@ -87,18 +103,26 @@ func delivery_resume_profile(db, profile_id) {
 	return {"profile_id": profile_id, "status": "ready"}
 }
 
-func delivery_backfill(db, profile_id, max_records_per_profile, limit_value) {
+func delivery_backfill(db, profile_id, max_records_per_profile, max_bytes_per_profile, limit_value) {
 	count_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_export_deliveries WHERE profile_id = ? AND status IN ('pending','retry')", [profile_id])
 	capacity := max_records_per_profile - count_rows[0]["n"]
 	if capacity <= 0 { return {"profile_id": profile_id, "enqueued": 0, "capacity": 0} }
 	if limit_value > capacity { limit_value = capacity }
-	rows := db_query(db, "SELECT r.id FROM telemetry_records_v2 r WHERE NOT EXISTS (SELECT 1 FROM telemetry_export_deliveries d WHERE d.profile_id = ? AND d.record_dbid = r.id) ORDER BY r.id ASC LIMIT ?", [profile_id, limit_value])
+	byte_rows := db_query(db, "SELECT COALESCE(SUM(LENGTH(r.canonical_json)),0) AS n FROM telemetry_export_deliveries d JOIN telemetry_records_v2 r ON r.id = d.record_dbid WHERE d.profile_id = ? AND d.status IN ('pending','retry')", [profile_id])
+	byte_capacity := max_bytes_per_profile - byte_rows[0]["n"]
+	if byte_capacity <= 0 { return {"profile_id": profile_id, "enqueued": 0, "capacity": capacity, "byte_capacity": 0} }
+	rows := db_query(db, "SELECT r.id, LENGTH(r.canonical_json) AS payload_bytes FROM telemetry_records_v2 r WHERE NOT EXISTS (SELECT 1 FROM telemetry_export_deliveries d WHERE d.profile_id = ? AND d.record_dbid = r.id) ORDER BY r.id ASC LIMIT ?", [profile_id, limit_value])
 	now_ms := current_timestamp()
+	enqueued := 0
 	for row in rows {
-		db_execute(db, "INSERT OR IGNORE INTO telemetry_export_deliveries (profile_id, record_dbid, status, attempts, next_attempt_ms, created_at_ms, updated_at_ms) VALUES (?, ?, 'pending', 0, 0, ?, ?)", [profile_id, row["id"], now_ms, now_ms])
+		if row["payload_bytes"] <= byte_capacity {
+			db_execute(db, "INSERT OR IGNORE INTO telemetry_export_deliveries (profile_id, record_dbid, status, attempts, next_attempt_ms, created_at_ms, updated_at_ms) VALUES (?, ?, 'pending', 0, 0, ?, ?)", [profile_id, row["id"], now_ms, now_ms])
+			byte_capacity = byte_capacity - row["payload_bytes"]
+			enqueued = enqueued + 1
+		}
 	}
 	db_execute(db, "INSERT OR IGNORE INTO telemetry_export_profile_state (profile_id, status, updated_at_ms) VALUES (?, 'ready', ?)", [profile_id, now_ms])
-	return {"profile_id": profile_id, "enqueued": len(rows), "capacity": capacity - len(rows)}
+	return {"profile_id": profile_id, "enqueued": enqueued, "capacity": capacity - enqueued, "byte_capacity": byte_capacity}
 }
 
 export watchdog_delivery_load_profiles := delivery_load_profiles

@@ -12,16 +12,21 @@ assert(len(profiles) == 2, "exporter profile filtering drift")
 
 first_batch := parse_json(read_file("tests/fixtures/telemetry-v2/canonical-minimal.json"))
 first := watchdog_telemetry_repository_insert(db, first_batch)
-first_delivery := watchdog_delivery_enqueue_batch(db, profiles, first["batch_dbid"], 1)
+first_delivery := watchdog_delivery_enqueue_batch(db, profiles, first["batch_dbid"], 1, 1048576)
 assert(first_delivery["enqueued"] == 2 && first_delivery["dropped"] == 0, "first delivery enqueue failed")
 
 second_batch := parse_json(read_file("tests/fixtures/telemetry-v2/canonical-model-batch.json"))
 second := watchdog_telemetry_repository_insert(db, second_batch)
-second_delivery := watchdog_delivery_enqueue_batch(db, profiles, second["batch_dbid"], 1)
+second_delivery := watchdog_delivery_enqueue_batch(db, profiles, second["batch_dbid"], 1, 1048576)
 assert(second_delivery["enqueued"] == 2 && second_delivery["dropped"] == 2, "bounded queue did not drop oldest delivery")
 
 rows := db_query(db, "SELECT status, COUNT(*) AS n FROM telemetry_export_deliveries GROUP BY status ORDER BY status", [])
 assert(len(rows) == 2, "delivery status cardinality drift")
 assert(rows[0]["status"] == "dropped" && rows[0]["n"] == 2, "oldest delivery was not marked dropped")
 assert(rows[1]["status"] == "pending" && rows[1]["n"] == 2, "newest delivery was not retained")
+
+byte_bounded := watchdog_delivery_enqueue_batch(db, profiles, second["batch_dbid"], 10, 1)
+assert(byte_bounded["enqueued"] == 0 && byte_bounded["dropped"] >= 2, "queue byte cap did not reject oversized records")
+pending_after_byte_cap := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_export_deliveries WHERE status IN ('pending','retry')", [])
+assert(pending_after_byte_cap[0]["n"] == 0, "queue byte cap left oversized pending delivery")
 print("telemetry_delivery_check: PASS")

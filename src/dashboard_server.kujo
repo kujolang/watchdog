@@ -71,6 +71,7 @@ DEFAULT_NODE_BIN := "node"
 DEFAULT_OPENSSL_BIN := "openssl"
 DEFAULT_EXPORTERS_CONFIG_PATH := "watchdog_exporters.json"
 DEFAULT_EXPORT_QUEUE_MAX_RECORDS := 50000
+DEFAULT_EXPORT_QUEUE_MAX_BYTES := 67108864
 MIN_BACKUP_INTERVAL_MINUTES := 15
 MAX_BACKUP_INTERVAL_MINUTES := 43200
 API_CONTRACT_VERSION := "v1"
@@ -1403,6 +1404,8 @@ OPENSSL_BIN := env_or_many(["WDG_OPENSSL_BIN"], DEFAULT_OPENSSL_BIN)
 EXPORTERS_CONFIG_PATH := env_or_many(["WDG_EXPORTERS_CONFIG_PATH"], DEFAULT_EXPORTERS_CONFIG_PATH)
 EXPORT_QUEUE_MAX_RECORDS := positive_int_or_fallback(parse_int_env_many(["WDG_EXPORT_QUEUE_MAX_RECORDS"], DEFAULT_EXPORT_QUEUE_MAX_RECORDS), DEFAULT_EXPORT_QUEUE_MAX_RECORDS)
 if EXPORT_QUEUE_MAX_RECORDS > 200000 { EXPORT_QUEUE_MAX_RECORDS = 200000 }
+EXPORT_QUEUE_MAX_BYTES := positive_int_or_fallback(parse_int_env_many(["WDG_EXPORT_QUEUE_MAX_BYTES"], DEFAULT_EXPORT_QUEUE_MAX_BYTES), DEFAULT_EXPORT_QUEUE_MAX_BYTES)
+if EXPORT_QUEUE_MAX_BYTES > 1073741824 { EXPORT_QUEUE_MAX_BYTES = 1073741824 }
 EXPORTER_PROFILES := watchdog_delivery_load_profiles(EXPORTERS_CONFIG_PATH)
 EXPORTER_PROFILE_IDS := watchdog_delivery_profile_ids(EXPORTER_PROFILES)
 
@@ -1440,6 +1443,7 @@ kv("Identifier max length", IDENTIFIER_MAX_LEN)
 kv("Export max rows", EXPORT_MAX_ROWS)
 kv("Exporter profiles", len(EXPORTER_PROFILE_IDS))
 kv("Export queue max records per profile", EXPORT_QUEUE_MAX_RECORDS)
+kv("Export queue max bytes per profile", EXPORT_QUEUE_MAX_BYTES)
 kv("Backup default enabled", BACKUP_DEFAULT_ENABLED)
 kv("Backup default interval minutes", BACKUP_DEFAULT_INTERVAL_MINUTES)
 kv("Backup default directory", BACKUP_DEFAULT_DIR)
@@ -1828,7 +1832,7 @@ func jsonl_v2_response(rows, exported_at, start_cursor) {
 func persist_approved_canonical_batch(approved) {
 	result := watchdog_telemetry_repository_insert(db, approved)
 	if result["ok"] && result["deduplicated"] == false && len(EXPORTER_PROFILE_IDS) > 0 {
-		delivery := watchdog_delivery_enqueue_batch(db, EXPORTER_PROFILE_IDS, result["batch_dbid"], EXPORT_QUEUE_MAX_RECORDS)
+		delivery := watchdog_delivery_enqueue_batch(db, EXPORTER_PROFILE_IDS, result["batch_dbid"], EXPORT_QUEUE_MAX_RECORDS, EXPORT_QUEUE_MAX_BYTES)
 		result["delivery"] = delivery
 		if delivery["dropped"] > 0 {
 			insert_audit_event("telemetry_export_queue_drop", "system", "warning", delivery)
@@ -1840,7 +1844,7 @@ func persist_approved_canonical_batch(approved) {
 func persist_fast_approved_canonical_batch(approved) {
 	result := watchdog_telemetry_repository_insert_fast(db, approved)
 	if result["ok"] && result["deduplicated"] == false && len(EXPORTER_PROFILE_IDS) > 0 {
-		result["delivery"] = watchdog_delivery_enqueue_batch(db, EXPORTER_PROFILE_IDS, result["batch_dbid"], EXPORT_QUEUE_MAX_RECORDS)
+		result["delivery"] = watchdog_delivery_enqueue_batch(db, EXPORTER_PROFILE_IDS, result["batch_dbid"], EXPORT_QUEUE_MAX_RECORDS, EXPORT_QUEUE_MAX_BYTES)
 	}
 	return result
 }
@@ -3707,7 +3711,7 @@ server := server.route("POST", "/telemetry/v2/otlp/v1/traces", func(req) {
 server := server.route("GET", "/api/telemetry/v2/export-status", func(req) {
 	auth := require_api_auth(req)
 	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
-	return api_ok({"contract_version": "watchdog.exporter.v1", "configured_profiles": len(EXPORTER_PROFILE_IDS), "queue_max_records_per_profile": EXPORT_QUEUE_MAX_RECORDS, "deliveries": watchdog_delivery_status(db)})
+	return api_ok({"contract_version": "watchdog.exporter.v1", "configured_profiles": len(EXPORTER_PROFILE_IDS), "queue_max_records_per_profile": EXPORT_QUEUE_MAX_RECORDS, "queue_max_bytes_per_profile": EXPORT_QUEUE_MAX_BYTES, "deliveries": watchdog_delivery_status(db)})
 })
 
 server := server.route("POST", "/api/telemetry/v2/export-resume", func(req) {
@@ -3732,7 +3736,7 @@ server := server.route("POST", "/api/telemetry/v2/export-backfill", func(req) {
 	limit_value := to_int_or_zero(safe_dict_get(parsed["data"], "limit", 5000))
 	if limit_value < 1 { limit_value = 1 }
 	if limit_value > 5000 { limit_value = 5000 }
-	result := watchdog_delivery_backfill(db, profile_id, EXPORT_QUEUE_MAX_RECORDS, limit_value)
+	result := watchdog_delivery_backfill(db, profile_id, EXPORT_QUEUE_MAX_RECORDS, EXPORT_QUEUE_MAX_BYTES, limit_value)
 	insert_audit_event("telemetry_export_backfill", resolve_audit_actor_key(req, "api"), "success", result)
 	return api_ok(result)
 })

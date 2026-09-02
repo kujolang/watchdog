@@ -1853,7 +1853,7 @@ function renderExporters() {
   const configured = Number(data.configured_profiles || 0);
   setText('badgeExporters', configured);
   setText('exporterSummary', configured
-    ? `${configured} profile${configured === 1 ? '' : 's'} configured · bounded to ${fmtNum(data.queue_max_records_per_profile || 0)} queued records per profile`
+    ? `${configured} profile${configured === 1 ? '' : 's'} configured · bounded to ${fmtNum(data.queue_max_records_per_profile || 0)} records / ${fmtBytes(data.queue_max_bytes_per_profile || 0)} per profile`
     : 'No remote exporter profiles are enabled. JSONL and the local dashboard remain available.');
   const body = document.getElementById('exporterBody');
   const empty = document.getElementById('exporterEmpty');
