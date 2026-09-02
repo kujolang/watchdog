@@ -1,35 +1,35 @@
-# Proxy streaming timing limitation
+# Proxy streaming transport status
 
-## Decision
+## Current decision
 
-Proxy-native time to first output and client-disconnect attribution are blocked
-by the current Kujo HTTP transport. Watchdog records buffered SSE responses as
-`watchdog.response.streamed=true`, sets
-`watchdog.timing.source=unavailable_buffered_transport`, and stores null for
-first-output latency, generation duration, and throughput. It does not derive
-those values while parsing an already-buffered SSE body.
+Kujo main now exposes bounded incremental generic HTTP response pass-through,
+stream lifecycle callbacks, and downstream-disconnect reporting. Watchdog uses
+that source capability for OpenAI-compatible streaming chat responses and
+records the first meaningful content delta rather than the first byte, SSE
+comment, or heartbeat. Published Kujo 1.2.3 binaries predate this addition, so
+production deployment requires a later release artifact containing the runtime
+change or an explicitly pinned source build.
 
 ## Capability evidence
 
-The installed validation runtime reports Kujo 1.0.0. The current Kujo source
-implements `http_request` with the blocking reqwest client, calls
-`read_http_response_bytes_bounded`, and only constructs the result dictionary
-after the body is fully read. `network_policy::read_http_response_bytes_bounded`
-uses `read_to_end`. The separate `ai_stream_chat` callback replays parsed chunks
-for the AI helper contract and is not a transparent arbitrary HTTP response
-stream suitable for `/proxy/v1/*` pass-through. The experimental
-`http_get_stream` implementation also says it fetches the entire response.
+The Kujo runtime change adds `options.response_stream=true` to generic
+`http_request`. Response headers return before the body is read; the routed
+server pulls at most 16 KiB per read, forwards without assembling the complete
+body, and emits bounded `headers`, `chunk`, `complete`, `error`, and `cancelled`
+events. Hop-by-hop headers are not forwarded. The existing destination policy,
+DNS pinning, redirect, timeout, capability, and maximum-response-byte controls
+remain enforced.
 
-`tests/proxy_stream_timing_suite.js` uses a delayed SSE stub to prove the direct
-client sees an early chunk while the Watchdog client receives no response bytes
-until the upstream stream ends. The suite also verifies that canonical proxy
-timing fields remain null with the explicit buffered-transport reason.
+`tests/proxy_stream_timing_suite.js` uses a delayed SSE stub to prove the
+Watchdog client receives bytes before the upstream response completes, ignores
+the earlier heartbeat for first-output timing, and persists canonical timing
+plus a `watchdog.output.first` lifecycle event.
 
-## Required runtime dependency
+## Remaining release dependency
 
-Kujo must expose incremental response headers and body chunks for
-`http_request`, bounded backpressure, and client-disconnect/cancellation state.
-After that dependency exists, Watchdog can add pass-through forwarding with no
-more than one chunk of buffering and can run meaningful-content, partial-stream,
-slow-client, and cancellation timing tests. This repository does not edit the
-Kujo runtime or claim those metrics before that capability is available.
+The source dependency is implemented. Before production promotion, publish and
+pin a Kujo runtime release containing it, run the cross-repository streaming and
+disconnect suites against that artifact, and repeat strict latency/memory
+qualification on an otherwise quiet reference machine. Watchdog continues to
+leave timing null for non-streaming responses and for any producer path that
+does not expose observable first output.

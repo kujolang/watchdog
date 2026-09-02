@@ -28,9 +28,12 @@ No risk here justifies Kafka, Kubernetes, Postgres, Redis, Elasticsearch, or Cli
 - **R12 remains open:** the quick reference run sustained the 10 EPS case but
   achieved only about 20–24 EPS for the nominal 50/200 cases. The 30-minute
   qualification has not passed. The advertised envelope is therefore 10 EPS.
-- **R13 remains open and blocks production promotion:** Kujo's current POST
-  client buffers the complete upstream response. Streaming TTFT and nonstream
-  proxy overhead miss the target budgets; see the measured release decision.
+- **R13 is source-remediated but release-open:** Kujo main now supports bounded
+  incremental generic HTTP response pass-through and disconnect lifecycle
+  events, and Watchdog uses it for streaming chat responses. Production
+  promotion still requires a published Kujo artifact containing the change and
+  strict streaming latency/memory qualification; nonstream proxy overhead also
+  remains above budget.
 - **R5 remains performance-open:** destination failure never changes model
   success and network delivery stays off-path, but quick runs have not
   consistently held the <=2 ms proxy p95 delta when queueing is enabled.

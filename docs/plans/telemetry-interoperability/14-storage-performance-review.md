@@ -103,6 +103,17 @@ canonical summary fixture measured p50 18.46 ms, p95 22.77 ms, and p99 30.13 ms.
 This preserves or improves the existing measured envelope but does not remove
 the documented production proxy-performance or streaming transport blockers.
 
+## Incremental transport implementation status
+
+Kujo main now implements bounded incremental generic HTTP responses with
+transparent routed-server pass-through, lifecycle callbacks, callback
+cancellation, and downstream-disconnect reporting. Watchdog uses that source
+capability for streaming chat requests and measures the first meaningful
+content delta without retaining the full response. This removes the source-code
+capability gap, but it does not waive the release gate: repeat the paired
+streaming latency/RSS benchmark against a published runtime artifact on a quiet
+reference machine before claiming the table budgets.
+
 This is a release decision, not a waiver: the original table remains the target.
 
 ## Sampling

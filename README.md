@@ -239,8 +239,11 @@ and correlation but forwards request/response bodies byte-for-byte without
 trying to interpret provider extensions, multipart uploads, images, audio,
 files, fine-tuning payloads, or arbitrary JSON as chat telemetry.
 
-The proxy forwards JSON and SSE responses and returns the upstream status/body
-to the caller. Safe scalar query parameters are forwarded to upstream list and
+The proxy forwards JSON responses and incrementally passes through streaming
+chat SSE responses when run with a Kujo build containing generic HTTP response
+streaming. It returns the upstream status/body to the caller and records the
+first meaningful content delta plus completion or disconnect lifecycle facts.
+Safe scalar query parameters are forwarded to upstream list and
 retrieve endpoints, while suspicious path/query text such as path traversal,
 embedded URL schemes, fragments, and query delimiters in path segments is
 rejected before any upstream request is made.

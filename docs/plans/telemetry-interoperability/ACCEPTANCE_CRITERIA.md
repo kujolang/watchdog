@@ -47,5 +47,6 @@
 
 Unchecked items are release blockers, not omitted evidence. The current blockers
 are the 30-minute 10/50/200 EPS qualification (the quick run supports only the
-10 EPS envelope), production streaming/per-request performance, and the strict
+10 EPS envelope), publication and artifact-level qualification of the new Kujo
+incremental HTTP transport, production per-request performance, and the strict
 2 ms exporter-enabled p95 delta.

@@ -14,8 +14,9 @@ producer-observed timing, versioned context/cost provenance, canonical summary
 queries, and lineage diagnostics without changing the v2 envelope.
 
 Production promotion is blocked by the measured proxy and ingest performance in
-`14-storage-performance-review.md`. In particular, streaming responses are
-buffered by the current Kujo POST transport.
+`14-storage-performance-review.md`. Incremental proxy streaming is implemented
+against Kujo main, but production still requires a published runtime artifact
+containing that transport and strict latency/memory qualification.
 
 ## Supported versions
 
@@ -26,6 +27,9 @@ buffered by the current Kujo POST transport.
 - mapping profiles: `otel.base.v1`, `otel.genai.v1`, `openinference.v1`
 - Kujo runtime: 1.2.2 or newer is required for binary-safe OTLP
   request/response bodies and gzip export
+- Incremental proxy streaming: a post-1.2.3 Kujo runtime containing generic
+  `http_request` response streaming is required; until published, use an
+  explicitly pinned source build only for validation
 - OTLP transport: HTTP Protobuf or JSON traces; optional gzip
 
 The OTel GenAI and OpenInference conventions are pinned translation profiles,
@@ -45,9 +49,11 @@ changes.
   and wire types.
 - Langfuse, Phoenix, Grafana/Tempo, Datadog, and Honeycomb use their OTLP
   endpoints. No vendor-native trace SDK is bundled.
-- Streaming proxy responses remain buffered in this release line.
-- Proxy-native TTFT and precise client-disconnect cancellation remain
-  unavailable; buffered proxy records explicitly preserve null timing.
+- Streaming chat responses use bounded incremental pass-through when the
+  runtime capability is present. First-output timing is the first meaningful
+  content delta, not a byte, SSE comment, or heartbeat.
+- Downstream disconnects are reported as partial stream failures. Runtimes
+  without the incremental capability are not supported for this path.
 - Canonical event records attach to an owning exported span when present.
   Ownerless events use a marked zero-duration synthetic projection.
 - SQLite is single-process/local-first; one database is not a fleet collector.

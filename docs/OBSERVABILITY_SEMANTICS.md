@@ -43,9 +43,12 @@ change alone.
 ## Timing, context, and cost
 
 First-output timing is stored only when a producer or transport observes it.
-Buffered proxy responses use timing source `unavailable_buffered_transport` and
-leave first-output and generation metrics null. Zero or negative generation
-duration and zero output tokens also produce null throughput.
+Incremental proxy responses use timing source
+`watchdog_proxy_clock` and measure the first meaningful SSE content
+delta. Comments, heartbeats, empty deltas, and transport bytes do not count as
+model output. Non-streaming paths without observable first output leave timing
+null. Zero or negative generation duration and zero output tokens also produce
+null throughput.
 
 Context utilization requires an unambiguous usage numerator and a known limit
 with provenance. Default pressure thresholds are warning at 0.80, critical at
@@ -89,7 +92,7 @@ request, orders attempts by explicit attempt number then time, and returns
 terminal events separately from successful spans. Its diagnostics count
 unresolved parents, historical cross-trace conflicts, and immutable identity
 conflicts without exposing content. The dashboard renders missing evidence as
-not reported or, for the buffered proxy, not measurable; it never substitutes
+not reported or not observable on that path; it never substitutes
 zero or heuristic completion.
 
 ## Export projection
