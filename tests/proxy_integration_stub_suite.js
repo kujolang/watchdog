@@ -347,9 +347,10 @@ async function runPassthroughScenario(stubPort, received) {
 				Authorization: 'Bearer passthrough-token',
 				'X-Observe-Session-Id': 'sess_proxy_stub_pass',
 			},
-			JSON.stringify({ sample: true })
+			'{"opaque-provider-extension":'
 		);
-		assert.strictEqual(malformedResp.status, 200, 'malformed JSON upstream body should still proxy through');
+		assert.strictEqual(malformedResp.status, 200, 'opaque endpoints must forward bodies without deep parsing');
+		assert.strictEqual(received[received.length - 1].body, '{"opaque-provider-extension":', 'opaque request bytes should reach upstream unchanged');
 		console.log('proxy_integration_stub_suite: malformed upstream ok');
 
 		const timeoutResp = await httpRequest(

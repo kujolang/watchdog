@@ -3051,12 +3051,13 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		return api_error(413, error_message)
 	}
 
+	decoder_kind := "opaque"
+	if to_lower(resource_clean) == "chat" && to_lower(action_clean) == "completions" { decoder_kind = "chat_completions" }
 	payload_obj := null
-	payload_parse := parse_json_with_limit(request_body, MAX_PARSE_BODY_BYTES)
+	payload_parse := {"ok": true, "data": null, "error": ""}
+	if decoder_kind == "chat_completions" { payload_parse = parse_json_with_limit(request_body, MAX_PARSE_BODY_BYTES) }
 	if payload_parse["ok"] {
-		if type(payload_parse["data"]) == "dict" {
-			payload_obj := payload_parse["data"]
-		}
+		if type(payload_parse["data"]) == "dict" { payload_obj = payload_parse["data"] }
 	} else {
 		if len(trim(request_body)) > 0 && contains(to_lower(content_type_in), "application/json") {
 			session_id_hint := resolve_session_id(req, null)
@@ -3114,6 +3115,8 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 
 	insert_agent_step_row(session_id, agent_id, "proxy_received", "Received proxy request for " + forwarded_path, {
 		"method": method,
+		"decoder": decoder_kind,
+		"request_body_bytes": request_body_bytes,
 		"upstream_profile": upstream_profile,
 		"upstream_url": upstream_url,
 		"auth_mode": cfg["auth_mode"]
@@ -3183,14 +3186,14 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 			response_summary := ""
 			usage := {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
-			if contains(to_lower(content_type), "text/event-stream") {
+			if decoder_kind == "chat_completions" && contains(to_lower(content_type), "text/event-stream") {
 				events := parse_stream_events(body_text)
 				request_id := request_id_from_stream_events(events)
 				usage := usage_from_stream_events(events)
 				response_summary := response_summary_from_stream_events(events)
 				finish_reason := finish_reason_from_stream_events(events)
 				model_name := model_from_stream_events(events, model_name)
-			} else {
+			} else if decoder_kind == "chat_completions" {
 				parsed := parse_json_safe(body_text)
 				if parsed["ok"] {
 					data := parsed["data"]
@@ -3241,6 +3244,9 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 				"status": status_label,
 				"model": model_name,
 				"latency_ms": latency_ms,
+				"decoder": decoder_kind,
+				"request_body_bytes": request_body_bytes,
+				"response_body_bytes": utf8_byte_length(body_text),
 				"path": forwarded_path
 			})
 

@@ -226,6 +226,13 @@ name as the request provider, making account/provider filtering unambiguous.
 | `GET,POST,PUT,PATCH,DELETE` | `/proxy/v1/:resource/:action/:subaction` | Example: `/proxy/v1/fine_tuning/jobs` |
 | `GET,POST,PUT,PATCH,DELETE` | `/proxy/v1/:resource/:action/:subaction/:tail` | Example: `/proxy/v1/fine_tuning/jobs/<id>/cancel` |
 
+Proxy forwarding is broader than telemetry decoding. Chat Completions JSON/SSE
+has the first endpoint-specific decoder for model, usage, finish-reason, and
+bounded summaries. Other paths are opaque: Watchdog records transport metadata
+and correlation but forwards request/response bodies byte-for-byte without
+trying to interpret provider extensions, multipart uploads, images, audio,
+files, fine-tuning payloads, or arbitrary JSON as chat telemetry.
+
 The proxy forwards JSON and SSE responses and returns the upstream status/body
 to the caller. Safe scalar query parameters are forwarded to upstream list and
 retrieve endpoints, while suspicious path/query text such as path traversal,
