@@ -109,8 +109,10 @@ function createHarness() {
 			},
 		},
 		fetch: async () => ({
-			async json() {
-				return { data: [] };
+			ok: true,
+			status: 200,
+			async text() {
+				return JSON.stringify({ data: [] });
 			},
 		}),
 		WatchdogDitherCharts: {
@@ -451,6 +453,29 @@ function testBackgroundRefreshPreservesInteractiveView() {
 	assert.ok(source.includes('class="range-select-shell"'), 'date range should use the custom site select shell');
 	assert.ok(source.includes('href="https://github.com/kujolang/watchdog"'), 'footer should link to the Watchdog repository');
 	assert.ok(source.includes('class="footer-mark"'), 'footer should include the Kujo SVG mark');
+	assert.ok(source.includes('viewBox="0 0 1527 1536"'), 'footer should use the canonical Kujo logomark viewBox');
+	assert.ok(source.includes('M178 234 L593 234 L593 700'), 'footer should use the canonical Kujo logomark geometry');
+}
+
+async function testApiResponsesAreValidatedAndOptionalStatusDegradesGracefully() {
+	const { context } = createHarness();
+	context.fetch = async () => ({
+		ok: false,
+		status: 404,
+		async text() {
+			return 'Not Found';
+		},
+	});
+
+	await assert.rejects(
+		context.fetchJSON('/api/missing'),
+		error => error.status === 404 && error.message.includes('non-JSON response: Not Found'),
+		'non-JSON API errors should produce a clear HTTP-aware error',
+	);
+
+	const fallback = { unavailable: true, configured_profiles: 0, deliveries: [] };
+	const status = await context.fetchOptionalJSON('/api/telemetry/v2/export-status', fallback);
+	assert.deepStrictEqual(JSON.parse(JSON.stringify(status)), fallback, 'a missing optional exporter endpoint should not block core telemetry');
 }
 
 function testBackupPanelsReflectActiveAndArchivedFiles() {
@@ -494,6 +519,7 @@ async function run() {
 	testToolChartUsesAggregatedCallCounts();
 	testStatCardSparklinesUseMetricTrends();
 	testBackgroundRefreshPreservesInteractiveView();
+	await testApiResponsesAreValidatedAndOptionalStatusDegradesGracefully();
 	testBackupPanelsReflectActiveAndArchivedFiles();
 	console.log('frontend_contract_suite: PASS');
 }
