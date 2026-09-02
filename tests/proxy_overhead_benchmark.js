@@ -49,11 +49,11 @@ function startUpstream(port) {
   });
   return new Promise((resolve, reject) => { server.on('error', reject); server.listen(port, '127.0.0.1', () => resolve(server)); });
 }
-async function startWatchdog(port, upstreamPort, dbPath, configPath) {
+async function startWatchdog(port, upstreamPort, dbPath, configPath, exportersPath = '') {
   fs.writeFileSync(configPath, JSON.stringify({upstream_base_url: `http://127.0.0.1:${upstreamPort}/v1`, auth_mode: 'passthrough'}));
   const child = spawn(KUJO_BIN, ['run', '--interpreter', 'dashboard_server.kujo'], {cwd: ROOT,
     env: {...process.env, WDG_PORT: String(port), WDG_DB_PATH: dbPath, WDG_PROXY_CONFIG_PATH: configPath,
-      WDG_API_AUTH_MODE: 'off', WDG_RATE_LIMIT_MODE: 'off'}, stdio: ['ignore', 'pipe', 'pipe']});
+      WDG_API_AUTH_MODE: 'off', WDG_RATE_LIMIT_MODE: 'off', ...(exportersPath ? {WDG_EXPORTERS_CONFIG_PATH: exportersPath} : {})}, stdio: ['ignore', 'pipe', 'pipe']});
   let output = ''; child.stdout.on('data', b => { output += b; }); child.stderr.on('data', b => { output += b; });
   for (let i = 0; i < 100; i++) {
     try { const response = await new Promise((resolve, reject) => { http.get(`http://127.0.0.1:${port}/healthz`, resolve).on('error', reject); }); response.resume(); if (response.statusCode === 200) return {child, output: () => output}; } catch (_) {}
@@ -73,9 +73,12 @@ async function sample(port, pathname, stream) {
 }
 async function run() {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-overhead-'));
-  const upstreamPort = 18861, watchdogPort = 18862;
+  const upstreamPort = 18861, watchdogPort = 18862, outagePort = 18865;
   const dbPath = path.join(temp, 'watchdog.db');
+  const exportersPath = path.join(temp, 'exporters.json');
+  fs.writeFileSync(exportersPath, JSON.stringify({schema_version: 'watchdog.exporters.v1', exporters: [{id: 'outage', type: 'otlp_http', enabled: true, endpoint: 'http://127.0.0.1:1/v1/traces', mapping_profile: 'otel.genai.v1', encoding: 'protobuf', headers_from_env: {}, batch_records: 100, timeout_seconds: 1, max_attempts: 2}]}));
   const upstream = await startUpstream(upstreamPort); const wd = await startWatchdog(watchdogPort, upstreamPort, dbPath, path.join(temp, 'proxy.json'));
+  const outageWd = await startWatchdog(outagePort, upstreamPort, path.join(temp, 'outage.db'), path.join(temp, 'outage-proxy.json'), exportersPath);
   try {
     await request(upstreamPort, '/v1/chat/completions', JSON.stringify({model: 'fixture', messages: []}));
     await request(watchdogPort, '/proxy/v1/chat/completions', JSON.stringify({model: 'fixture', messages: []}));
@@ -83,22 +86,26 @@ async function run() {
     const rssBefore = processStats(wd.child.pid);
     const direct = {nonstream: await sample(upstreamPort, '/v1/chat/completions', false), stream: await sample(upstreamPort, '/v1/chat/completions', true)};
     const proxied = {nonstream: await sample(watchdogPort, '/proxy/v1/chat/completions', false), stream: await sample(watchdogPort, '/proxy/v1/chat/completions', true)};
+    const exporterOutage = await sample(outagePort, '/proxy/v1/chat/completions', false);
     const rssAfter = processStats(wd.child.pid);
     const overhead = {nonstream_p50_ms: proxied.nonstream.p50_ms - direct.nonstream.p50_ms,
       nonstream_p95_ms: proxied.nonstream.p95_ms - direct.nonstream.p95_ms,
       nonstream_p99_ms: proxied.nonstream.p99_ms - direct.nonstream.p99_ms,
-      stream_ttft_p95_ms: proxied.stream.ttft_p95_ms - direct.stream.ttft_p95_ms};
-    const report = {samples: SAMPLES, direct, proxied, overhead, cpu: {before: rssBefore.cpuTime, after: rssAfter.cpuTime},
+      stream_ttft_p95_ms: proxied.stream.ttft_p95_ms - direct.stream.ttft_p95_ms,
+      exporter_outage_p95_delta_ms: exporterOutage.p95_ms - proxied.nonstream.p95_ms};
+    const report = {samples: SAMPLES, direct, proxied, exporter_outage: exporterOutage, overhead, cpu: {before: rssBefore.cpuTime, after: rssAfter.cpuTime},
       rss_delta_bytes: Math.max(0, rssAfter.rssKiB - rssBefore.rssKiB) * 1024,
       db_bytes_per_event: Math.max(0, fs.statSync(dbPath).size - baselineBytes) / (SAMPLES * 2),
       streaming_transport: 'buffered', budgets: {nonstream_pass: overhead.nonstream_p50_ms <= 3 && overhead.nonstream_p95_ms <= 10 && overhead.nonstream_p99_ms <= 25,
-        stream_ttft_pass: overhead.stream_ttft_p95_ms <= 10}};
+        stream_ttft_pass: overhead.stream_ttft_p95_ms <= 10, exporter_isolation_pass: overhead.exporter_outage_p95_delta_ms <= 2}};
     console.log('proxy_overhead_benchmark=' + JSON.stringify(report));
     if (process.env.WDG_REQUIRE_PROXY_BUDGET === 'true') assert(report.budgets.nonstream_pass, 'nonstream proxy overhead exceeded budget');
     if (process.env.WDG_REQUIRE_STREAMING_BUDGET === 'true') assert(report.budgets.stream_ttft_pass, 'streaming TTFT exceeded budget');
+    if (process.env.WDG_REQUIRE_EXPORTER_ISOLATION_BUDGET === 'true') assert(report.budgets.exporter_isolation_pass, 'exporter outage changed proxy p95 by more than 2 ms');
     console.log('proxy_overhead_benchmark: PASS (budgets are reported; strict gates are opt-in until the transport is optimized)');
   } finally {
     wd.child.kill('SIGTERM'); await delay(200); if (wd.child.exitCode == null) wd.child.kill('SIGKILL');
+    outageWd.child.kill('SIGTERM'); await delay(200); if (outageWd.child.exitCode == null) outageWd.child.kill('SIGKILL');
     await new Promise(resolve => upstream.close(resolve)); fs.rmSync(temp, {recursive: true, force: true});
   }
 }
