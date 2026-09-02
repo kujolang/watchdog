@@ -17,6 +17,10 @@ from watchdog_shared import watchdog_cost_breakdown
 from watchdog_shared import watchdog_estimate_cost, watchdog_ensure_schema
 from watchdog_shared import watchdog_has_known_pricing
 from watchdog_shared import watchdog_cost_per_million
+from telemetry_repository import watchdog_telemetry_repository_insert
+from telemetry_repository import watchdog_telemetry_repository_validate
+from telemetry_v2 import watchdog_telemetry_v2_translate_v1
+from telemetry_v2 import watchdog_telemetry_v2_version
 
 DEFAULT_PORT := 7700
 DEFAULT_DB_PATH := "data/watchdog.db"
@@ -59,6 +63,7 @@ MAX_BACKUP_INTERVAL_MINUTES := 43200
 API_CONTRACT_VERSION := "v1"
 API_CONTRACT_STATUS := "stable"
 TELEMETRY_SCHEMA_VERSION := "kujo.telemetry.v1"
+CANONICAL_TELEMETRY_SCHEMA_VERSION := watchdog_telemetry_v2_version
 
 func env_or(key, fallback_value) {
 	v := env(key)
@@ -1556,6 +1561,96 @@ func telemetry_schema_error(body) {
 	return ""
 }
 
+func canonical_policy_privacy(record) {
+	incoming_privacy := safe_dict_get(record, "privacy", {})
+	transformations := []
+	if type(incoming_privacy) == "dict" {
+		raw_transformations := safe_dict_get(incoming_privacy, "transformations", [])
+		if type(raw_transformations) == "array" {
+			for item in raw_transformations {
+				if len(transformations) < 31 {
+					value := truncate_str(redact_sensitive_text(to_string(item)), 80)
+					if value != "" { transformations = push(transformations, value) }
+				}
+			}
+		}
+	}
+	incoming_content := safe_dict_get(record, "content", [])
+	if type(incoming_content) == "array" && len(incoming_content) > 0 && len(transformations) < 32 {
+		transformations = push(transformations, "content_dropped_by_watchdog_policy")
+	}
+	return {
+		"content_mode": "off",
+		"policy_version": "watchdog.privacy.v1",
+		"transformations": transformations
+	}
+}
+
+func canonical_policy_record(record) {
+	return {
+		"record_id": truncate_str(trim(to_string(safe_dict_get(record, "record_id", ""))), 160),
+		"record_type": truncate_str(trim(to_string(safe_dict_get(record, "record_type", ""))), 20),
+		"trace_id": truncate_str(trim(to_string(safe_dict_get(record, "trace_id", ""))), 32),
+		"span_id": safe_dict_get(record, "span_id", null),
+		"parent_span_id": safe_dict_get(record, "parent_span_id", null),
+		"observed_at": truncate_str(trim(to_string(safe_dict_get(record, "observed_at", ""))), 80),
+		"started_at": safe_dict_get(record, "started_at", null),
+		"ended_at": safe_dict_get(record, "ended_at", null),
+		"kind": safe_dict_get(record, "kind", null),
+		"name": safe_dict_get(record, "name", null),
+		"status": truncate_str(trim(to_string(safe_dict_get(record, "status", "unset"))), 20),
+		"source": redact_json_value(safe_dict_get(record, "source", {})),
+		"references": redact_json_value(safe_dict_get(record, "references", [])),
+		"attributes": redact_json_value(safe_dict_get(record, "attributes", {})),
+		"usage": redact_json_value(safe_dict_get(record, "usage", null)),
+		"costs": redact_json_value(safe_dict_get(record, "costs", [])),
+		"error": redact_json_value(safe_dict_get(record, "error", null)),
+		"content": [],
+		"privacy": canonical_policy_privacy(record)
+	}
+}
+
+func canonical_policy_batch(body) {
+	producer := safe_dict_get(body, "producer", {})
+	clean_producer := {
+		"name": truncate_str(trim(to_string(safe_dict_get(producer, "name", "external"))), 80),
+		"version": truncate_str(trim(to_string(safe_dict_get(producer, "version", "unknown"))), 40),
+		"adapter_id": safe_dict_get(producer, "adapter_id", null),
+		"adapter_version": safe_dict_get(producer, "adapter_version", null),
+		"original_schema": safe_dict_get(producer, "original_schema", null)
+	}
+	clean_records := []
+	records := safe_dict_get(body, "records", [])
+	if type(records) == "array" {
+		for record in records {
+			if len(clean_records) < 100 && type(record) == "dict" {
+				clean_records = push(clean_records, canonical_policy_record(record))
+			}
+		}
+	}
+	return {
+		"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION,
+		"batch_id": truncate_str(trim(to_string(safe_dict_get(body, "batch_id", ""))), 160),
+		"sent_at": safe_dict_get(body, "sent_at", null),
+		"producer": clean_producer,
+		"records": clean_records
+	}
+}
+
+func persist_canonical_batch(body) {
+	approved := canonical_policy_batch(body)
+	return watchdog_telemetry_repository_insert(db, approved)
+}
+
+func persist_v1_canonical_copy(body, source_app, session_id) {
+	translation_input := body
+	translation_input["source_app"] = source_app
+	translation_input["session_id"] = session_id
+	translated := watchdog_telemetry_v2_translate_v1(translation_input, current_timestamp())
+	if translated["ok"] == false { return translated }
+	return persist_canonical_batch(translated["batch"])
+}
+
 func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class) {
 	trace := safe_dict_get(body, "trace", {})
 	has_trace_payload := has_key(body, "trace") != 0 && type(trace) == "dict"
@@ -1623,7 +1718,14 @@ func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class)
 		}
 	}
 
-	return {"trace_id": trace_id, "spans": span_count, "events": event_count, "tool_calls": tool_count}
+	canonical_result := {"ok": true, "deduplicated": false, "records": 0}
+	try {
+		canonical_result = persist_v1_canonical_copy(body, source_app, session_id)
+	} except err {
+		print("Canonical v2 compatibility write failed: " + to_string(err))
+		canonical_result = {"ok": false, "error": "canonical compatibility write failed", "deduplicated": false, "records": 0}
+	}
+	return {"trace_id": trace_id, "spans": span_count, "events": event_count, "tool_calls": tool_count, "canonical": canonical_result}
 }
 
 func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, provider, model_name, status, status_code, started_at_ms, ended_at_ms, usage) {
@@ -3049,7 +3151,7 @@ server := server.route("GET", "/api/version", func(req) {
 		"versioning_mode": "metadata",
 		"legacy_base_path": "/api",
 		"version_metadata_header": "X-Watchdog-API-Version",
-		"telemetry_schema_versions": [TELEMETRY_SCHEMA_VERSION],
+		"telemetry_schema_versions": [TELEMETRY_SCHEMA_VERSION, CANONICAL_TELEMETRY_SCHEMA_VERSION],
 		"notes": "Clients should pin behavior to the reported version metadata and monitor changelog guidance before upgrades."
 	})
 })
@@ -3193,6 +3295,80 @@ server := server.route("POST", "/api/telemetry/traces", func(req) {
 	return api_ok(result)
 })
 
+# Canonical ingestion is separate from dashboard/internal API routes. Adapters
+# submit normalized records; Watchdog applies privacy policy before persistence.
+server := server.route("POST", "/telemetry/v2/batches", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+	maybe_run_scheduled_backup()
+	body_parse := parse_json_with_limit(to_string(safe_dict_get(req, "body", "{}")), MAX_PARSE_BODY_BYTES)
+	if !body_parse["ok"] || type(body_parse["data"]) != "dict" {
+		return api_error(400, "Request body must be a canonical telemetry batch object")
+	}
+	body := body_parse["data"]
+	if external_text(body, "schema_version", "", 80) != CANONICAL_TELEMETRY_SCHEMA_VERSION {
+		return api_error(400, "Unsupported canonical telemetry schema_version")
+	}
+	approved := canonical_policy_batch(body)
+	validation := watchdog_telemetry_repository_validate(approved)
+	if validation["ok"] == false {
+		return api_error(400, validation["error"])
+	}
+	try {
+		result := watchdog_telemetry_repository_insert(db, approved)
+		insert_audit_event("canonical_telemetry_intake", resolve_audit_actor_key(req, "api"), "success", {
+			"batch_id": external_text(body, "batch_id", "", 160),
+			"producer": external_text(safe_dict_get(body, "producer", {}), "name", "external", 80),
+			"records": result["records"],
+			"deduplicated": result["deduplicated"]
+		})
+		return api_ok(result)
+	} except err {
+		print("Canonical telemetry intake failed: " + to_string(err))
+		return api_error(500, "Canonical telemetry intake failed")
+	}
+})
+
+server := server.route("GET", "/api/telemetry/v2/records", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] {
+		return api_error(auth["status"], auth["error"])
+	}
+	limit_value := request_query_int(req, "limit", 200, 1, 500)
+	cursor := request_query_int(req, "before", 2147483647, 1, 2147483647)
+	conditions := ["id < ?"]
+	params := [cursor]
+	trace_id := request_query_text(req, "trace_id", "")
+	if trace_id != "" {
+		conditions = push(conditions, "trace_id = ?")
+		params = push(params, trace_id)
+	}
+	kind := request_query_text(req, "kind", "")
+	if kind != "" {
+		conditions = push(conditions, "kind = ?")
+		params = push(params, kind)
+	}
+	producer := request_query_text(req, "producer", "")
+	if producer != "" {
+		conditions = push(conditions, "producer_name = ?")
+		params = push(params, producer)
+	}
+	params = push(params, limit_value)
+	rows := db_query(db, "SELECT id, canonical_json FROM telemetry_records_v2 WHERE " + join(conditions, " AND ") + " ORDER BY id DESC LIMIT ?", params)
+	records := []
+	next_cursor := null
+	for row in rows {
+		parsed := parse_json_safe(row["canonical_json"])
+		if parsed["ok"] {
+			records = push(records, {"ingest_sequence": row["id"], "record": parsed["data"]})
+			next_cursor = row["id"]
+		}
+	}
+	return api_ok({"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION, "records": records, "next_before": next_cursor})
+})
+
 # Existing dashboard APIs
 server := server.route("GET", "/api/stats", func(req) {
 	auth := require_api_auth(req)
@@ -3220,6 +3396,7 @@ server := server.route("GET", "/api/stats", func(req) {
 	span_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_spans" + where_clause_from_conditions(span_time_filter["conditions"]), span_time_filter["params"])
 	event_time_filter := append_time_range_conditions(req, [], [], "occurred_at_ms")
 	event_rows := db_query(db, "SELECT COUNT(*) AS n FROM trace_events" + where_clause_from_conditions(event_time_filter["conditions"]), event_time_filter["params"])
+	canonical_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_records_v2", [])
 
 	total := total_rows[0]["n"]
 	errors := error_rows[0]["n"]
@@ -3232,6 +3409,7 @@ server := server.route("GET", "/api/stats", func(req) {
 	trace_n := trace_rows[0]["n"]
 	span_n := span_rows[0]["n"]
 	event_n := event_rows[0]["n"]
+	canonical_n := canonical_rows[0]["n"]
 
 	error_rate := 0.0
 	if total > 0 {
@@ -3250,7 +3428,8 @@ server := server.route("GET", "/api/stats", func(req) {
 		"total_agent_steps": steps_n,
 		"total_traces": trace_n,
 		"total_trace_spans": span_n,
-		"total_trace_events": event_n
+		"total_trace_events": event_n,
+		"total_canonical_records": canonical_n
 	})
 })
 

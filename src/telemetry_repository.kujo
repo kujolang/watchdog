@@ -1,0 +1,212 @@
+# Canonical Watchdog telemetry repository.
+#
+# This module owns structural validation and persistence only. Callers must apply
+# authoritative privacy/redaction policy before invoking insert_batch.
+
+from telemetry_v2 import watchdog_telemetry_v2_is_hex_id
+from telemetry_v2 import watchdog_telemetry_v2_version
+
+func repo_get(value, key, fallback_value) {
+	if type(value) != "dict" || has_key(value, key) == 0 {
+		return fallback_value
+	}
+	return value[key]
+}
+
+func repo_text(value, max_len) {
+	if type(value) == "null" { return "" }
+	text := trim(to_string(value))
+	if len(text) <= max_len { return text }
+	return substring(text, 0, max_len)
+}
+
+func repo_nullable_text(value, max_len) {
+	if type(value) == "null" { return null }
+	text := repo_text(value, max_len)
+	if text == "" { return null }
+	return text
+}
+
+func repo_nullable_json(value) {
+	if type(value) == "null" { return null }
+	return to_json(value)
+}
+
+func repo_valid_timestamp(value) {
+	text := repo_text(value, 80)
+	if len(text) < 20 || contains(text, "T") == 0 { return false }
+	if ends_with(text, "Z") { return true }
+	if contains(substring(text, 10, len(text)), "+") { return true }
+	if contains(substring(text, 10, len(text)), "-") { return true }
+	return false
+}
+
+func repo_valid_status(value) {
+	text := repo_text(value, 20)
+	return text == "unset" || text == "ok" || text == "error" || text == "cancelled" || text == "timeout" || text == "denied"
+}
+
+func repo_valid_kind(value) {
+	if type(value) == "null" { return true }
+	text := repo_text(value, 40)
+	return text == "model" || text == "agent" || text == "tool" || text == "retrieval" || text == "workflow" || text == "handoff" || text == "approval" || text == "execution" || text == "persistence" || text == "evaluation" || text == "internal"
+}
+
+func repo_validate_batch(batch) {
+	if type(batch) != "dict" {
+		return {"ok": false, "error": "telemetry batch must be an object"}
+	}
+	if repo_text(repo_get(batch, "schema_version", ""), 80) != watchdog_telemetry_v2_version {
+		return {"ok": false, "error": "unsupported canonical telemetry schema_version"}
+	}
+	batch_id := repo_text(repo_get(batch, "batch_id", ""), 160)
+	if batch_id == "" { return {"ok": false, "error": "batch_id is required"} }
+	producer := repo_get(batch, "producer", {})
+	if type(producer) != "dict" || repo_text(repo_get(producer, "name", ""), 80) == "" {
+		return {"ok": false, "error": "producer.name is required"}
+	}
+	if repo_text(repo_get(producer, "version", ""), 40) == "" || len(keys(producer)) > 5 {
+		return {"ok": false, "error": "producer version or shape is invalid"}
+	}
+	records := repo_get(batch, "records", [])
+	if type(records) != "array" || len(records) == 0 || len(records) > 100 {
+		return {"ok": false, "error": "records must contain between 1 and 100 items"}
+	}
+	seen := {}
+	for record in records {
+		if type(record) != "dict" { return {"ok": false, "error": "each record must be an object"} }
+		record_id := repo_text(repo_get(record, "record_id", ""), 160)
+		if record_id == "" { return {"ok": false, "error": "record_id is required"} }
+		if has_key(seen, record_id) { return {"ok": false, "error": "duplicate record_id in batch: " + record_id} }
+		seen[record_id] = true
+		record_type := repo_text(repo_get(record, "record_type", ""), 20)
+		if record_type != "trace" && record_type != "span" && record_type != "event" {
+			return {"ok": false, "error": "invalid record_type for " + record_id}
+		}
+		trace_id := repo_text(repo_get(record, "trace_id", ""), 32)
+		if watchdog_telemetry_v2_is_hex_id(trace_id, 32) == false {
+			return {"ok": false, "error": "invalid trace_id for " + record_id}
+		}
+		span_id := repo_nullable_text(repo_get(record, "span_id", null), 16)
+		if record_type == "trace" && type(span_id) != "null" {
+			return {"ok": false, "error": "trace records cannot have span_id"}
+		}
+		if record_type == "span" && type(span_id) == "null" {
+			return {"ok": false, "error": "span records require span_id"}
+		}
+		if type(span_id) != "null" && watchdog_telemetry_v2_is_hex_id(span_id, 16) == false {
+			return {"ok": false, "error": "invalid span_id for " + record_id}
+		}
+		parent_span_id := repo_nullable_text(repo_get(record, "parent_span_id", null), 16)
+		if type(parent_span_id) != "null" && watchdog_telemetry_v2_is_hex_id(parent_span_id, 16) == false {
+			return {"ok": false, "error": "invalid parent_span_id for " + record_id}
+		}
+		if type(span_id) != "null" && span_id == parent_span_id {
+			return {"ok": false, "error": "span cannot parent itself: " + record_id}
+		}
+		if repo_valid_timestamp(repo_get(record, "observed_at", "")) == false {
+			return {"ok": false, "error": "observed_at must be RFC3339 for " + record_id}
+		}
+		if type(repo_get(record, "started_at", null)) != "null" && repo_valid_timestamp(record["started_at"]) == false {
+			return {"ok": false, "error": "started_at must be RFC3339 for " + record_id}
+		}
+		if type(repo_get(record, "ended_at", null)) != "null" && repo_valid_timestamp(record["ended_at"]) == false {
+			return {"ok": false, "error": "ended_at must be RFC3339 for " + record_id}
+		}
+		if repo_valid_status(repo_get(record, "status", "unset")) == false || repo_valid_kind(repo_get(record, "kind", null)) == false {
+			return {"ok": false, "error": "status or kind is invalid for " + record_id}
+		}
+		if type(repo_get(record, "source", {})) != "dict" || len(keys(repo_get(record, "source", {}))) > 16 {
+			return {"ok": false, "error": "source exceeds bounds for " + record_id}
+		}
+		if type(repo_get(record, "attributes", {})) != "dict" || len(keys(repo_get(record, "attributes", {}))) > 128 {
+			return {"ok": false, "error": "attributes exceeds bounds for " + record_id}
+		}
+		if type(repo_get(record, "references", [])) != "array" || len(repo_get(record, "references", [])) > 24 {
+			return {"ok": false, "error": "references exceeds bounds for " + record_id}
+		}
+		if type(repo_get(record, "costs", [])) != "array" || len(repo_get(record, "costs", [])) > 8 {
+			return {"ok": false, "error": "costs exceeds bounds for " + record_id}
+		}
+		if type(repo_get(record, "content", [])) != "array" || len(repo_get(record, "content", [])) > 16 {
+			return {"ok": false, "error": "content exceeds bounds for " + record_id}
+		}
+		privacy := repo_get(record, "privacy", {})
+		if type(privacy) != "dict" || repo_text(repo_get(privacy, "policy_version", ""), 80) == "" {
+			return {"ok": false, "error": "privacy policy is required for " + record_id}
+		}
+	}
+	return {"ok": true, "error": ""}
+}
+
+func repo_content_mode(records) {
+	mode := "off"
+	for record in records {
+		privacy := repo_get(record, "privacy", {})
+		next_mode := repo_text(repo_get(privacy, "content_mode", "off"), 20)
+		if next_mode != "off" { mode = next_mode }
+	}
+	return mode
+}
+
+func repo_insert_references(db, record_dbid, references) {
+	if type(references) != "array" { return }
+	count := 0
+	for reference in references {
+		if count < 24 && type(reference) == "dict" {
+			ref_type := repo_text(repo_get(reference, "type", "external"), 40)
+			ref_id := repo_text(repo_get(reference, "id", ""), 160)
+			if ref_id != "" {
+				db_execute(db, "INSERT OR IGNORE INTO telemetry_references_v2 (record_dbid, ref_type, ref_id, namespace, relation) VALUES (?,?,?,?,?)", [record_dbid, ref_type, ref_id, repo_text(repo_get(reference, "namespace", ""), 80), repo_text(repo_get(reference, "relation", ""), 40)])
+				count = count + 1
+			}
+		}
+	}
+}
+
+func repo_insert_batch_rows(db, batch) {
+	producer := batch["producer"]
+	producer_name := repo_text(repo_get(producer, "name", "external"), 80)
+	batch_id := repo_text(batch["batch_id"], 160)
+	records := batch["records"]
+	existing := db_query(db, "SELECT id, record_count FROM telemetry_batches_v2 WHERE producer_name = ? AND batch_id = ?", [producer_name, batch_id])
+	if len(existing) > 0 {
+		return {"ok": true, "error": "", "batch_dbid": existing[0]["id"], "records": existing[0]["record_count"], "deduplicated": true}
+	}
+
+	received_at := to_string(current_timestamp())
+	db_execute(db, "INSERT INTO telemetry_batches_v2 (producer_name, batch_id, schema_version, sent_at, received_at, record_count, content_mode) VALUES (?,?,?,?,?,?,?)", [producer_name, batch_id, watchdog_telemetry_v2_version, repo_nullable_text(repo_get(batch, "sent_at", null), 80), received_at, len(records), repo_content_mode(records)])
+	batch_rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
+	batch_dbid := batch_rows[0]["id"]
+	inserted := 0
+	for record in records {
+		record_id := repo_text(record["record_id"], 160)
+		references := repo_get(record, "references", [])
+		db_execute(db, "INSERT INTO telemetry_records_v2 (batch_dbid, producer_name, record_id, record_type, trace_id, span_id, parent_span_id, observed_at, started_at, ended_at, kind, name, status, source_json, references_json, attributes_json, usage_json, costs_json, error_json, content_json, privacy_json, canonical_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(producer_name, record_id) DO UPDATE SET batch_dbid = excluded.batch_dbid, parent_span_id = COALESCE(excluded.parent_span_id, telemetry_records_v2.parent_span_id), observed_at = excluded.observed_at, started_at = COALESCE(excluded.started_at, telemetry_records_v2.started_at), ended_at = COALESCE(excluded.ended_at, telemetry_records_v2.ended_at), kind = COALESCE(excluded.kind, telemetry_records_v2.kind), name = COALESCE(excluded.name, telemetry_records_v2.name), status = excluded.status, source_json = excluded.source_json, references_json = excluded.references_json, attributes_json = excluded.attributes_json, usage_json = COALESCE(excluded.usage_json, telemetry_records_v2.usage_json), costs_json = excluded.costs_json, error_json = excluded.error_json, content_json = excluded.content_json, privacy_json = excluded.privacy_json, canonical_json = excluded.canonical_json", [batch_dbid, producer_name, record_id, repo_text(record["record_type"], 20), repo_text(record["trace_id"], 32), repo_nullable_text(repo_get(record, "span_id", null), 16), repo_nullable_text(repo_get(record, "parent_span_id", null), 16), repo_text(record["observed_at"], 80), repo_nullable_text(repo_get(record, "started_at", null), 80), repo_nullable_text(repo_get(record, "ended_at", null), 80), repo_nullable_text(repo_get(record, "kind", null), 40), repo_nullable_text(repo_get(record, "name", null), 160), repo_text(repo_get(record, "status", "unset"), 20), to_json(repo_get(record, "source", {})), to_json(references), to_json(repo_get(record, "attributes", {})), repo_nullable_json(repo_get(record, "usage", null)), to_json(repo_get(record, "costs", [])), repo_nullable_json(repo_get(record, "error", null)), to_json(repo_get(record, "content", [])), to_json(repo_get(record, "privacy", {})), to_json(record), received_at])
+		rows := db_query(db, "SELECT id FROM telemetry_records_v2 WHERE producer_name = ? AND record_id = ?", [producer_name, record_id])
+		if len(rows) > 0 {
+			record_dbid := rows[0]["id"]
+			db_execute(db, "DELETE FROM telemetry_references_v2 WHERE record_dbid = ?", [record_dbid])
+			repo_insert_references(db, record_dbid, references)
+		}
+		inserted = inserted + 1
+	}
+	return {"ok": true, "error": "", "batch_dbid": batch_dbid, "records": inserted, "deduplicated": false}
+}
+
+func repo_insert_batch(db, batch) {
+	validation := repo_validate_batch(batch)
+	if validation["ok"] == false { return validation }
+	db_execute(db, "BEGIN IMMEDIATE", [])
+	try {
+		result := repo_insert_batch_rows(db, batch)
+		db_execute(db, "COMMIT", [])
+		return result
+	} except err {
+		try { db_execute(db, "ROLLBACK", []) } except rollback_err {}
+		throw(err)
+	}
+}
+
+export watchdog_telemetry_repository_validate := repo_validate_batch
+export watchdog_telemetry_repository_insert := repo_insert_batch

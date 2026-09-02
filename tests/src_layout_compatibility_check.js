@@ -9,6 +9,7 @@ const EXPECTED_PAIRS = [
 	['src/dashboard_server.kujo', 'dashboard_server.kujo'],
 	['src/watchdog_shared.kujo', 'watchdog_shared.kujo'],
 	['src/telemetry_v2.kujo', 'telemetry_v2.kujo'],
+	['src/telemetry_repository.kujo', 'telemetry_repository.kujo'],
 	['src/watchdog.kujo', 'watchdog.kujo'],
 	['src/dashboard.html', 'dashboard.html'],
 ];

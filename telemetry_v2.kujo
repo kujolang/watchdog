@@ -278,7 +278,7 @@ func v2_translate_v1(bundle, observed_at_ms) {
 		"error": "",
 		"batch": {
 			"schema_version": WATCHDOG_TELEMETRY_V2,
-			"batch_id": "v1:" + source_app + ":" + source_trace_id,
+			"batch_id": "v1:" + source_app + ":" + substring(sha256(to_json(bundle)), 0, 32),
 			"sent_at": observed_at,
 			"producer": {
 				"name": source_app,

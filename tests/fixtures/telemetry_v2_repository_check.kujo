@@ -1,0 +1,32 @@
+from watchdog_shared import watchdog_ensure_schema
+from telemetry_repository import watchdog_telemetry_repository_insert
+from telemetry_repository import watchdog_telemetry_repository_validate
+
+db_path := env("WDG_TEST_DB_PATH")
+assert(type(db_path) == "string" && trim(db_path) != "", "WDG_TEST_DB_PATH is required")
+db := db_connect("sqlite", db_path)
+watchdog_ensure_schema(db)
+
+batch := parse_json(read_file("tests/fixtures/telemetry-v2/canonical-minimal.json"))
+validation := watchdog_telemetry_repository_validate(batch)
+assert(validation["ok"] == true, "canonical fixture failed repository validation")
+
+first := watchdog_telemetry_repository_insert(db, batch)
+assert(first["ok"] == true, "canonical insert failed")
+assert(first["deduplicated"] == false, "first insert was incorrectly deduplicated")
+assert(first["records"] == 1, "canonical insert count drift")
+
+second := watchdog_telemetry_repository_insert(db, batch)
+assert(second["ok"] == true && second["deduplicated"] == true, "batch replay was not deduplicated")
+
+migrations := db_query(db, "SELECT key FROM schema_migrations WHERE key = '0015_canonical_telemetry_v2'", [])
+records := db_query(db, "SELECT producer_name, record_id, trace_id, content_json, privacy_json FROM telemetry_records_v2", [])
+references := db_query(db, "SELECT ref_type, ref_id, namespace FROM telemetry_references_v2", [])
+assert(len(migrations) == 1, "v2 migration marker missing")
+assert(len(records) == 1, "batch replay duplicated records")
+assert(records[0]["trace_id"] == "0123456789abcdef0123456789abcdef", "trace correlation drift")
+assert(records[0]["content_json"] == "[]", "metadata-only fixture stored content")
+assert(contains(records[0]["privacy_json"], "watchdog.privacy.v1"), "privacy provenance missing")
+assert(len(references) == 1 && references[0]["ref_type"] == "session", "reference index drift")
+
+print("telemetry_v2_repository_check: PASS")
