@@ -4,9 +4,15 @@ from telemetry_otlp import watchdog_otlp_map
 batch := parse_json(read_file("tests/fixtures/telemetry-v2/canonical-model-batch.json"))
 model_record := batch["records"][0]
 model_record["source"] = {"watchdog.semantic_profile": "watchdog.observability.v1", "producer": "fixture", "application.name": "fixture-app", "application.version": "2.0.0", "instrumentation.name": "fixture-scope", "instrumentation.version": "3.1.4"}
-batch["records"] = [model_record]
+owned_event := {"record_id": "fixture:event:owned", "record_type": "event", "trace_id": model_record["trace_id"], "span_id": model_record["span_id"], "parent_span_id": null, "observed_at": model_record["observed_at"], "started_at": null, "ended_at": null, "kind": null, "name": "watchdog.operation.completed", "status": "ok", "source": model_record["source"], "references": [], "attributes": {"watchdog.outcome.terminal": true, "watchdog.outcome.code": "success"}, "usage": null, "costs": [], "error": null, "content": [], "privacy": model_record["privacy"]}
+orphan_event := parse_json(to_json(owned_event))
+orphan_event["record_id"] = "fixture:event:orphan"
+orphan_event["span_id"] = "fedcba9876543210"
+orphan_event["name"] = "watchdog.orphan.event"
+batch["records"] = [model_record, owned_event, orphan_event]
 mapped := watchdog_otlp_map(batch["records"], "openinference.v1")
 encoded := to_json(mapped)
+spans := mapped["resourceSpans"][0]["scopeSpans"][0]["spans"]
 
 assert(watchdog_otlp_exporter_contract == "watchdog.exporter.v1", "exporter contract version drift")
 assert(contains(encoded, "0123456789abcdef0123456789abcdef"), "trace correlation missing")
@@ -20,5 +26,8 @@ assert(contains(encoded, "prompt_tokens") == 0, "provider-native usage leaked as
 assert(contains(encoded, "input.value") == 0, "content attribute emitted in metadata-only mode")
 assert(contains(encoded, "fixture-scope"), "source instrumentation name was not exported")
 assert(contains(encoded, "3.1.4"), "source instrumentation version was not exported")
+assert(len(spans) == 2, "owned event was duplicated as a synthetic operation")
+assert(len(spans[0]["events"]) == 1 && spans[0]["events"][0]["name"] == "watchdog.operation.completed", "owned event did not attach to its span")
+assert(contains(to_json(spans[1]), "watchdog.event.synthetic_projection"), "unrepresentable orphan event was not marked synthetic")
 
 print("telemetry_otlp_mapper_check: PASS")

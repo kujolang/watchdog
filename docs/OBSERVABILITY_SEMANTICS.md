@@ -91,3 +91,13 @@ unresolved parents, historical cross-trace conflicts, and immutable identity
 conflicts without exposing content. The dashboard renders missing evidence as
 not reported or, for the buffered proxy, not measurable; it never substitutes
 zero or heuristic completion.
+
+## Export projection
+
+JSONL v2 remains byte-for-byte canonical and replayable. OTLP exports only the
+post-policy canonical batch and allowlisted OTel, GenAI, OpenInference, and
+`watchdog.*` metadata. Original instrumentation name/version remain source
+attributes; the `kujo-watchdog` scope version identifies the exporter itself.
+An event whose owning span is in the export batch becomes one OTel span event,
+not a second operation. An event without a representable owner uses a bounded
+zero-duration synthetic span marked `watchdog.event.synthetic_projection=true`.

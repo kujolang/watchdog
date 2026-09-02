@@ -8,6 +8,10 @@ Protobuf export, OpenTelemetry GenAI/OpenInference mappings, Kujo/Pi/Agents SDK
 producers, the MCP helper, and the Claude Code hook adapter are implemented.
 Provider-neutral AI SDK, Dispatch, Relay, Eval, RunLedger correlation, and the
 canonical-v2 workflow proof are also implemented in their owning repositories.
+The optional `watchdog.observability.v1` semantic profile now preserves
+immutable source identity, explicit terminal outcomes and causal relations,
+producer-observed timing, versioned context/cost provenance, canonical summary
+queries, and lineage diagnostics without changing the v2 envelope.
 
 Production promotion is blocked by the measured proxy and ingest performance in
 `14-storage-performance-review.md`. In particular, streaming responses are
@@ -42,6 +46,10 @@ changes.
 - Langfuse, Phoenix, Grafana/Tempo, Datadog, and Honeycomb use their OTLP
   endpoints. No vendor-native trace SDK is bundled.
 - Streaming proxy responses remain buffered in this release line.
+- Proxy-native TTFT and precise client-disconnect cancellation remain
+  unavailable; buffered proxy records explicitly preserve null timing.
+- Canonical event records attach to an owning exported span when present.
+  Ownerless events use a marked zero-duration synthetic projection.
 - SQLite is single-process/local-first; one database is not a fleet collector.
 
 ## Bounds and privacy defaults

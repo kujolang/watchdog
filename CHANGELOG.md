@@ -6,11 +6,17 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 
 ## [Unreleased]
 
+### Added
+
+- Add immutable canonical observability evidence for source identity, terminal outcomes, retries/fallbacks/recovery, truthful timing, context capacity, and billing provenance.
+- Add canonical logical-request queries, lineage diagnostics, dashboard evidence views, and lossless JSONL/OTLP projections.
+
 ### Fixed
 
 - Reject negative token telemetry and non-finite provider-reported costs before persistence.
 - Preserve safe dotted proxy resource identifiers, streamed `data:` content, and upstream retry/request-id headers.
 - Apply tenant and project export scopes to related tool, step, trace, span, and event rows.
+- Reject stable record-identity conflicts without mutating canonical or export state, and attach owned canonical events to OTLP spans without duplicating operations.
 
 ## [1.0.1] - 2026-08-11
 

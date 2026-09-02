@@ -20,7 +20,7 @@ func otlp_text(value, max_len) {
 func otlp_any_value_depth(value, depth) {
 	if depth > 8 { return {"stringValue": "[depth-limit]"} }
 	value_type := type(value)
-	if value_type == "boolean" { return {"boolValue": value} }
+	if value_type == "bool" || value_type == "boolean" { return {"boolValue": value} }
 	if value_type == "integer" { return {"intValue": to_string(value)} }
 	if value_type == "float" || value_type == "number" { return {"doubleValue": value} }
 	if value_type == "array" {
@@ -146,6 +146,13 @@ func otlp_cost_attributes(attributes, costs) {
 	return attributes
 }
 
+func otlp_canonical_attribute_allowed(key_value) {
+	key := to_lower(otlp_text(key_value, 160))
+	prefixes := ["watchdog.", "gen_ai.", "openinference.", "http.", "rpc.", "db.", "messaging.", "server.", "network.", "error.", "service.", "telemetry."]
+	for prefix in prefixes { if starts_with(key, prefix) { return true } }
+	return false
+}
+
 func otlp_record_attributes(record, profile) {
 	attributes := []
 	attributes = otlp_add_attribute(attributes, "watchdog.record.id", otlp_get(record, "record_id", ""))
@@ -166,7 +173,7 @@ func otlp_record_attributes(record, profile) {
 	raw_attributes := otlp_get(record, "attributes", {})
 	if type(raw_attributes) == "dict" {
 		for key in keys(raw_attributes) {
-			attributes = otlp_add_attribute(attributes, otlp_text(key, 160), raw_attributes[key])
+			if otlp_canonical_attribute_allowed(key) { attributes = otlp_add_attribute(attributes, otlp_text(key, 160), raw_attributes[key]) }
 		}
 	}
 	attributes = otlp_reference_attributes(attributes, otlp_get(record, "references", []))
@@ -177,6 +184,11 @@ func otlp_record_attributes(record, profile) {
 		if oi_kind != "" { attributes = otlp_add_attribute(attributes, "openinference.span.kind", oi_kind) }
 	}
 	return attributes
+}
+
+func otlp_event(record, profile) {
+	name := otlp_text(otlp_get(record, "name", "watchdog.event"), 160)
+	return {"timeUnixNano": otlp_timestamp_nano(otlp_get(record, "observed_at", null)), "name": name, "attributes": otlp_record_attributes(record, profile)}
 }
 
 func otlp_record_span(record, profile) {
@@ -201,7 +213,8 @@ func otlp_record_span(record, profile) {
 	}
 	if parent_span_id != "" { span["parentSpanId"] = parent_span_id }
 	if record_type == "event" {
-		span["events"] = [{"timeUnixNano": otlp_timestamp_nano(otlp_get(record, "observed_at", null)), "name": name, "attributes": otlp_record_attributes(record, profile)}]
+		span["attributes"] = otlp_add_attribute(span["attributes"], "watchdog.event.synthetic_projection", true)
+		span["events"] = [otlp_event(record, profile)]
 	}
 	return span
 }
@@ -209,14 +222,34 @@ func otlp_record_span(record, profile) {
 func otlp_map(records, profile) {
 	if profile != OTLP_BASE_PROFILE && profile != OTLP_GENAI_PROFILE && profile != OTLP_OPENINFERENCE_PROFILE { profile = OTLP_GENAI_PROFILE }
 	spans := []
+	owners := {}
 	service_name := "watchdog-export"
 	for record in records {
-		if type(record) == "dict" {
+		if type(record) == "dict" && otlp_text(otlp_get(record, "record_type", ""), 20) != "event" {
 			source := otlp_get(record, "source", {})
 			if service_name == "watchdog-export" && type(source) == "dict" {
 				next_service := otlp_text(otlp_get(source, "producer", ""), 80)
 				if next_service != "" { service_name = next_service }
 			}
+			span_index := len(spans)
+			spans = push(spans, otlp_record_span(record, profile))
+			owner_span_id := otlp_text(otlp_get(record, "span_id", ""), 16)
+			owner_trace_id := otlp_text(otlp_get(record, "trace_id", ""), 32)
+			if owner_span_id != "" { owners[owner_trace_id + ":" + owner_span_id] = span_index }
+		}
+	}
+	for record in records {
+		if type(record) != "dict" || otlp_text(otlp_get(record, "record_type", ""), 20) != "event" { continue }
+		trace_id := otlp_text(otlp_get(record, "trace_id", ""), 32)
+		span_id := otlp_text(otlp_get(record, "span_id", ""), 16)
+		owner_key := trace_id + ":" + span_id
+		if span_id != "" && has_key(owners, owner_key) {
+			owner_index := owners[owner_key]
+			owner_span := spans[owner_index]
+			events := otlp_get(owner_span, "events", [])
+			owner_span["events"] = push(events, otlp_event(record, profile))
+			spans[owner_index] = owner_span
+		} else {
 			spans = push(spans, otlp_record_span(record, profile))
 		}
 	}

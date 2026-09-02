@@ -171,7 +171,7 @@ async function run() {
 		const row = reqRows[0];
 		assert.strictEqual(row.workflow_id, 'wf_alpha');
 		assert.strictEqual(row.project_id, 'ai-chat');
-		assert.strictEqual(row.source_app, 'ai-chat');
+		assert.strictEqual(row.source_app, 'watchdog-proxy', 'project grouping must not be overloaded as application/source identity');
 		assert.strictEqual(row.data_class, 'live');
 		assert.strictEqual(row.task_id, 'task_beta');
 		assert.strictEqual(row.correlation_id, 'corr_gamma');

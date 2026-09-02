@@ -89,6 +89,20 @@ per-request cost. Therefore:
   release-qualification runner. A release must not claim the original budgets
   from fixture-only data.
 
+## 2026-09-02 observability-evidence qualification
+
+The Kujo 1.2.2 release interpreter measured nonstream proxy overhead at p50
+89.25 ms, p95 105.81 ms, and p99 110.00 ms (30 paired samples), improving on
+the prior p95 without meeting the 10 ms target. Buffered streaming first-byte
+overhead remained 174.67 ms and is not reported as canonical TTFT. RSS growth
+was 3.36 MiB and database growth was 17.3 KiB/event. The canonical envelope
+quick run sustained 54.5–59.0 records/s, completed the 1,000-record burst in
+17.0 seconds, and kept dashboard reads at or below 23 ms. A 100,000-row
+canonical summary fixture measured p50 18.46 ms, p95 22.77 ms, and p99 30.13 ms.
+
+This preserves or improves the existing measured envelope but does not remove
+the documented production proxy-performance or streaming transport blockers.
+
 This is a release decision, not a waiver: the original table remains the target.
 
 ## Sampling
