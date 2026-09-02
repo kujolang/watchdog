@@ -141,6 +141,8 @@ async function run() {
 		const otlpRecords = JSON.parse((await request('GET', '/api/telemetry/v2/records?producer=fixture-otel-agent')).body).data.records;
 		assert.strictEqual(otlpRecords.length, 2, 'guarded OTLP records were not persisted');
 		assert.ok(!JSON.stringify(otlpRecords).includes('otlp-raw-prompt-canary'), 'OTLP prompt content leaked into storage');
+		assert.strictEqual((await request('POST', '/telemetry/v2/otlp/v1/logs', {})).status, 404, 'OTLP logs must not be accepted');
+		assert.strictEqual((await request('POST', '/telemetry/v2/otlp/v1/metrics', {})).status, 404, 'OTLP metrics must not be accepted');
 		const protobufFixture = spawnSync(kujoBin, ['run', '--interpreter', 'tests/fixtures/telemetry_otlp_protobuf_check.kujo'], {cwd: root, encoding: 'utf8', env: process.env, timeout: 30000});
 		assert.strictEqual(protobufFixture.status, 0, protobufFixture.stderr);
 		const protobufPayload = Buffer.from(protobufFixture.stdout.trim().split(/\n/).pop(), 'base64');

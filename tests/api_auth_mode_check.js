@@ -136,11 +136,14 @@ async function run() {
 
 		const noToken = await httpRequest(7712, 'GET', '/api/stats');
 		assert.strictEqual(noToken.status, 401, 'missing token should return 401');
+		assert.strictEqual((await httpRequest(7712, 'POST', '/telemetry/v2/batches', {'Content-Type': 'application/json'}, '{}')).status, 401, 'canonical remote intake must require auth');
+		assert.strictEqual((await httpRequest(7712, 'POST', '/telemetry/v2/otlp/v1/traces', {'Content-Type': 'application/json'}, '{}')).status, 401, 'OTLP remote intake must require auth');
 
 		const wrongToken = await httpRequest(7712, 'GET', '/api/export', {
 			'X-Watchdog-Token': 'wrong-token',
 		});
 		assert.strictEqual(wrongToken.status, 403, 'wrong token should return 403');
+		assert.strictEqual((await httpRequest(7712, 'POST', '/telemetry/v2/otlp/v1/traces', {'Content-Type': 'application/json', 'X-Watchdog-Token': 'wrong-token'}, '{}')).status, 403, 'OTLP intake must reject an invalid source token');
 
 		const goodHeader = await httpRequest(7712, 'GET', '/api/sessions', {
 			'X-Watchdog-Token': 'watchdog-test-token',
