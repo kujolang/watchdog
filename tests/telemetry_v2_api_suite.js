@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const {spawn, spawnSync} = require('node:child_process');
+const {DatabaseSync} = require('node:sqlite');
 const {resolveKujoBinOrThrow} = require('./_kujo_bin');
 
 const root = path.resolve(__dirname, '..');
@@ -160,6 +161,21 @@ async function run() {
 		for (const scope of ['opentelemetry.instrumentation.langchain', 'openinference.instrumentation.llama_index', 'crewai.telemetry', 'autogen.telemetry', 'pydantic-ai', 'microsoft.semantic_kernel', 'openinference.instrumentation']) assert.ok(frameworkText.includes(scope), `missing framework scope ${scope}`);
 		assert.ok(frameworkText.includes('llm.token_count.prompt'), 'OpenInference token provenance was not preserved');
 		assert.ok(!frameworkText.includes('sensitive-document-canary'), 'OTLP retrieval content leaked into storage');
+
+		const checkpointDb = new DatabaseSync(dbPath);
+		checkpointDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+		checkpointDb.close();
+		for (const candidate of [dbPath, dbPath + '-wal']) {
+			if (!fs.existsSync(candidate)) continue;
+			const bytes = fs.readFileSync(candidate);
+			for (const canary of ['raw-content-canary', 'secret-canary-value', 'otlp-raw-prompt-canary', 'sensitive-document-canary']) assert.ok(!bytes.includes(Buffer.from(canary)), `${path.basename(candidate)} retained ${canary}`);
+		}
+		const backupDir = path.join(tempDir, 'backups');
+		const backup = spawnSync(process.execPath, ['scripts/watchdog_backup.js', '--db', dbPath, '--out-dir', backupDir, '--retention-count', '1'], {cwd: root, encoding: 'utf8'});
+		assert.strictEqual(backup.status, 0, backup.stderr || backup.stdout);
+		const backupPath = JSON.parse(backup.stdout).path;
+		const backupBytes = fs.readFileSync(backupPath);
+		for (const canary of ['raw-content-canary', 'secret-canary-value', 'otlp-raw-prompt-canary', 'sensitive-document-canary']) assert.ok(!backupBytes.includes(Buffer.from(canary)), `backup retained ${canary}`);
 	} catch (error) {
 		if (server) error.message += `\nServer output:\n${server.output().slice(-4000)}`;
 		throw error;

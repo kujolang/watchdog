@@ -160,6 +160,14 @@ async function run() {
 		assert.ok(rows.some((row) => row.profile_id === 'retry' && row.status === 'retry' && row.records === 1));
 		assert.ok(rows.some((row) => row.profile_id === 'protobuf' && row.status === 'sent' && row.records === 1));
 		for (const profileId of ['collector', 'langfuse', 'phoenix', 'grafana-tempo', 'datadog', 'honeycomb']) assert.ok(rows.some((row) => row.profile_id === profileId && row.status === 'sent' && row.records === 1), `profile ${profileId} was not sent`);
+		const canaryDb = new DatabaseSync(dbPath);
+		canaryDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+		canaryDb.close();
+		for (const candidate of [dbPath, dbPath + '-wal']) {
+			if (!fs.existsSync(candidate)) continue;
+			const bytes = fs.readFileSync(candidate);
+			for (const canary of ['export-content-canary', 'exporter-secret-canary', 'datadog-secret-canary', 'honeycomb-secret-canary']) assert.ok(!bytes.includes(Buffer.from(canary)), `${path.basename(candidate)} retained ${canary}`);
+		}
 		assert.ok(rows.some((row) => row.profile_id === 'expired' && row.status === 'dropped' && row.records === 1));
 	} catch (error) {
 		if (watchdog) error.stack += `\nWatchdog output:\n${watchdog.output().slice(-4000)}`;
