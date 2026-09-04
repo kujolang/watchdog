@@ -1062,6 +1062,32 @@
   .backup-status { min-height: 22px; margin-top: 12px; font-size: 12px; color: var(--text-muted); }
   .backup-status.error { color: var(--red); }
 
+  .sources-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; padding:20px 22px 0; }
+  .sources-heading h3 { margin:0 0 6px; font-size:15px; }
+  .sources-heading p { margin:0; color:var(--text-muted); font-size:12px; max-width:720px; }
+  .source-summary { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; padding:18px 22px; }
+  .source-summary-card { border:1px solid var(--border); border-radius:8px; padding:12px; background:var(--surface); }
+  .source-summary-card span { display:block; color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+  .source-summary-card strong { display:block; margin-top:4px; font:20px var(--font-mono); }
+  .source-status { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+  .source-status::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--text-muted); }
+  .source-status.active::before { background:var(--green); }
+  .source-status.pending::before { background:var(--orange); }
+  .source-status.stale::before,.source-status.disabled::before { background:var(--text-muted); }
+  .source-status.error::before { background:var(--red); }
+  .source-actions { display:flex; flex-wrap:wrap; gap:6px; }
+  .source-dialog { width:min(720px,calc(100vw - 32px)); max-height:calc(100vh - 48px); border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--text); padding:0; }
+  .source-dialog::backdrop { background:rgba(4,9,20,.62); }
+  .source-dialog-body { padding:20px; overflow:auto; max-height:calc(100vh - 140px); }
+  .source-form-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .source-field { display:flex; flex-direction:column; gap:6px; }
+  .source-field.wide { grid-column:1/-1; }
+  .source-field label { font-size:12px; font-weight:600; }
+  .source-field input,.source-field select,.source-field textarea { width:100%; border:1px solid var(--border); border-radius:6px; padding:10px; background:var(--surface-2); color:var(--text); font:13px var(--font-sans); }
+  .source-field textarea { min-height:80px; resize:vertical; }
+  .source-notice { margin:12px 0; padding:10px 12px; border-left:3px solid var(--accent); background:var(--surface-2); color:var(--text-muted); font-size:12px; }
+  .source-live { min-height:20px; color:var(--text-muted); font-size:12px; }
+
   @media (max-width: 1000px) {
     .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .stats-grid .stat-card { grid-column: auto; }
@@ -1081,6 +1107,10 @@
     .auth-form { flex-direction: column; }
     .detail-field { grid-template-columns: 1fr; gap: 4px; }
     .backup-layout { grid-template-columns: 1fr; padding: 14px; }
+    .source-summary { grid-template-columns:repeat(2,minmax(0,1fr)); padding:14px; }
+    .sources-heading { padding:16px 14px 0; flex-direction:column; }
+    .source-form-grid { grid-template-columns:1fr; }
+    .source-field.wide { grid-column:auto; }
     .tabs-header {
       scrollbar-width: none;
       -ms-overflow-style: none;
@@ -1122,6 +1152,37 @@
     <button class="btn btn-sm" type="button" onclick="closeRecordDetails()">Close</button>
   </div>
   <div class="detail-body" id="detailBody"></div>
+</dialog>
+
+<dialog class="source-dialog" id="sourceDialog" aria-labelledby="sourceDialogTitle" onclick="closeSourceDialogFromBackdrop(event)">
+  <div class="detail-header">
+    <h2 class="detail-title" id="sourceDialogTitle">Connected source</h2>
+    <button class="btn btn-sm" type="button" onclick="closeSourceDialog()">Close</button>
+  </div>
+  <div class="source-dialog-body" id="sourceDialogBody"></div>
+</dialog>
+
+<dialog class="source-dialog" id="sourceWizard" aria-labelledby="sourceWizardTitle" onclick="closeSourceWizardFromBackdrop(event)">
+  <div class="detail-header">
+    <h2 class="detail-title" id="sourceWizardTitle">Add source</h2>
+    <button class="btn btn-sm" type="button" onclick="closeSourceWizard()">Close</button>
+  </div>
+  <form class="source-dialog-body" id="sourceWizardForm" onsubmit="submitSourceWizard(event)">
+    <div class="source-form-grid">
+      <div class="source-field wide"><label for="sourceKind">Connection path</label><select id="sourceKind" name="kind" onchange="renderSourceWizardFields()"><option value="proxy">OpenAI-compatible proxy profile</option><option value="native_v2">Native Watchdog v2 producer</option><option value="otlp">Guarded OTLP/OpenInference producer</option><option value="observed">Already sending data</option></select></div>
+      <div class="source-field"><label for="sourceName">Display name</label><input id="sourceName" name="name" maxlength="120" required></div>
+      <div class="source-field"><label for="sourceIdentifier" id="sourceIdentifierLabel">Profile name</label><input id="sourceIdentifier" name="identifier" maxlength="80" pattern="[A-Za-z0-9._-]+" required></div>
+      <div class="source-field wide"><label for="sourceDescription">Description (optional)</label><textarea id="sourceDescription" name="description" maxlength="500"></textarea></div>
+      <div id="sourceProxyFields" class="source-form-grid source-field wide">
+        <div class="source-field wide"><label for="sourceUpstreamUrl">Upstream base URL</label><input id="sourceUpstreamUrl" name="upstream_base_url" maxlength="2048" value="https://api.openai.com/v1"></div>
+        <div class="source-field"><label for="sourceAuthMode">Upstream authentication</label><select id="sourceAuthMode" name="auth_mode"><option value="passthrough">Pass through client authorization</option><option value="override">Use server environment reference</option></select></div>
+        <div class="source-field"><label for="sourceCredentialEnv">Credential environment variable name</label><input id="sourceCredentialEnv" name="upstream_api_key_env" maxlength="120" placeholder="OPENAI_API_KEY"></div>
+      </div>
+    </div>
+    <div class="source-notice">Registration does not prove connectivity. Verification only queries accepted local telemetry. Removing metadata or a proxy profile never deletes historical telemetry.</div>
+    <div class="source-actions"><button class="btn btn-primary" type="submit">Save source</button><button class="btn" type="button" onclick="showSourceTemplates()">Browse setup templates</button></div>
+    <div class="source-live" id="sourceWizardStatus" role="status" aria-live="polite"></div>
+  </form>
 </dialog>
 
 <div class="app">
@@ -1227,6 +1288,7 @@
       <button class="tab-btn" onclick="switchTab('sessions',this)">Sessions <span class="tab-badge" id="badgeSessions">0</span></button>
       <button class="tab-btn" onclick="switchTab('insights',this)">Agent Insights</button>
       <button class="tab-btn" onclick="switchTab('canonical',this)">Canonical Evidence <span class="tab-badge" id="badgeCanonical">0</span></button>
+      <button class="tab-btn" onclick="switchTab('sources',this)">Sources <span class="tab-badge" id="badgeSources">0</span></button>
       <button class="tab-btn" onclick="switchTab('exporters',this)">Exporters <span class="tab-badge" id="badgeExporters">0</span></button>
       <button class="tab-btn" onclick="switchTab('backups',this)">Backups <span class="tab-badge" id="badgeBackups">0</span></button>
     </div>
@@ -1376,6 +1438,25 @@
       </div>
     </div>
 
+    <!-- ── Connected Sources tab ──────────────── -->
+    <div class="tab-panel" id="tab-sources">
+      <div class="sources-heading">
+        <div><h3>Connected Sources</h3><p>Observed and configured inbound telemetry producers. Outbound destinations remain in <button class="btn btn-sm" type="button" onclick="activateTab('exporters')">Exporters</button>.</p></div>
+        <button class="btn btn-primary" type="button" onclick="openSourceWizard()"><span data-tabler-icon="plus" aria-hidden="true"></span> Add source</button>
+      </div>
+      <div class="source-summary" id="sourceSummary" aria-label="Source status summary"></div>
+      <div class="table-toolbar">
+        <label class="sr-only" for="sourceSearch">Search sources</label><input class="search-input" id="sourceSearch" placeholder="Search sources…" oninput="renderSources()">
+        <label class="sr-only" for="sourceStatusFilter">Source status</label><select class="filter-select" id="sourceStatusFilter" onchange="renderSources()"><option value="">All statuses</option><option value="active">Active</option><option value="pending">Pending</option><option value="stale">Stale</option><option value="disabled">Disabled</option><option value="error">Error</option></select>
+        <label class="sr-only" for="sourceKindFilter">Source kind</label><select class="filter-select" id="sourceKindFilter" onchange="renderSources()"><option value="">All kinds</option><option value="proxy">Proxy profile</option><option value="native_v2">Native v2</option><option value="otlp">OTLP</option><option value="legacy">Legacy</option><option value="observed">Registered observed</option></select>
+      </div>
+      <div class="table-wrap" tabindex="0" aria-label="Connected sources table">
+        <table><thead><tr><th>Name</th><th>Kind</th><th>Transport</th><th>Status</th><th>Last seen</th><th>Accepted records</th><th>Actions</th></tr></thead><tbody id="sourceBody"></tbody></table>
+      </div>
+      <div id="sourceEmpty" class="empty hidden"><div class="empty-icon" data-tabler-icon="plug-connected-x" aria-hidden="true"></div>No sources match these filters.</div>
+      <div class="source-live" id="sourceMutationStatus" role="status" aria-live="polite" style="padding:0 22px 18px"></div>
+    </div>
+
     <!-- ── Exporter health tab ───────────────── -->
     <div class="tab-panel" id="tab-exporters">
       <div class="backup-layout">
@@ -1495,6 +1576,8 @@ const state = {
   backups:    null,
   exportStatus: null,
   canonical: null,
+  sources: null,
+  sourceTemplates: null,
   backupHistoryTab: 'active',
   visibleRows: { requests: [], toolCalls: [], sessions: [] },
   sortKey:    { requests: 'created_at', sessions: 'last_seen' },
@@ -1796,6 +1879,7 @@ async function loadAll(options = {}) {
       deliveries: [],
     });
     const canonical = await fetchOptionalJSON('/api/telemetry/v2/observability?limit=100', {operations: [], diagnostics: {unresolved_parents: 0, cross_trace_conflicts: 0, identity_conflicts: 0}});
+    const sources = await fetchOptionalJSON('/api/sources', {summary:{total:0,active:0,pending:0,stale:0,disabled:0,error:0},sources:[],revision:'0'});
     const reqs = await fetchJSON(buildApiUrl('/api/requests', loadRange));
     const tools = await fetchJSON(buildApiUrl('/api/tool-calls', loadRange));
     const steps = await fetchJSON(buildApiUrl('/api/agent-steps', loadRange));
@@ -1827,6 +1911,7 @@ async function loadAll(options = {}) {
     state.backups    = backups || null;
     state.exportStatus = exportStatus || null;
     state.canonical = canonical || null;
+    state.sources = sources || null;
 
     renderStats(stats, loadRange);
     renderCharts(chartReqData, chartLatData, chartStatusData, (insights && insights.tool_effectiveness) || [], loadRange, chartStatData);
@@ -1838,6 +1923,7 @@ async function loadAll(options = {}) {
     renderSessionsTable();
     renderInsights();
     renderCanonicalObservability();
+    renderSources();
     renderExporters();
     renderBackups();
     restoreDashboardView(preservedView);
@@ -1953,6 +2039,178 @@ function renderExporters() {
     return `<tr><td class="cell-mono">${safeText(row.profile_id || '—')}</td><td><span class="badge ${statusClass}">${status}</span></td><td>${fmtNum(row.records)}</td><td>${row.oldest_ms ? fmtTs(row.oldest_ms) : '—'}</td><td>${fmtNum(row.consecutive_failures)}</td><td>${row.last_success_ms ? fmtTs(row.last_success_ms) : '—'}</td><td class="cell-truncate" title="${safeText(row.paused_reason || '')}">${safeText(row.paused_reason || '—')}</td></tr>`;
   }).join('');
   empty.classList[rows.length ? 'add' : 'remove']('hidden');
+}
+
+function renderSources() {
+  const data = state.sources || { summary: {}, sources: [] };
+  const summary = data.summary || {};
+  const summaryEl = document.getElementById('sourceSummary');
+  if (summaryEl) {
+    summaryEl.innerHTML = [
+      ['Total', summary.total || 0], ['Active', summary.active || 0], ['Pending', summary.pending || 0],
+      ['Stale', summary.stale || 0], ['Disabled / error', Number(summary.disabled || 0) + Number(summary.error || 0)],
+    ].map(([label, value]) => `<div class="source-summary-card"><span>${safeText(label)}</span><strong>${fmtNum(value)}</strong></div>`).join('');
+  }
+  setText('badgeSources', summary.total || 0);
+  if (data.registry_error) setText('sourceMutationStatus', 'Source registry error: ' + data.registry_error + '. The last valid file was not replaced.');
+  const search = String(document.getElementById('sourceSearch')?.value || '').trim().toLowerCase();
+  const status = String(document.getElementById('sourceStatusFilter')?.value || '');
+  const kind = String(document.getElementById('sourceKindFilter')?.value || '');
+  const rows = (Array.isArray(data.sources) ? data.sources : []).filter(source => {
+    const haystack = [source.name, source.kind, source.transport, source.profile_name, ...(source.producer_names || []), ...(source.source_apps || [])].join(' ').toLowerCase();
+    return (!search || haystack.includes(search)) && (!status || source.status === status) && (!kind || source.kind === kind);
+  });
+  const body = document.getElementById('sourceBody');
+  const empty = document.getElementById('sourceEmpty');
+  if (!body || !empty) return;
+  body.innerHTML = rows.map(source => {
+    const index = (data.sources || []).indexOf(source);
+    const registered = Boolean(source.registration_id);
+    const controls = [`<button class="btn btn-sm" type="button" onclick="showSourceDetails(${index})">Details</button>`];
+    controls.push(`<button class="btn btn-sm" type="button" onclick="copySourceSetup(${index})">Copy setup</button>`);
+    controls.push(`<button class="btn btn-sm" type="button" onclick="verifySource(${index})">Verify</button>`);
+    if (registered && !source.read_only) controls.push(`<button class="btn btn-sm" type="button" onclick="toggleSourceArchive(${index})">${source.archived ? 'Unarchive' : 'Archive'}</button>`);
+    if (registered && !source.read_only) controls.push(`<button class="btn btn-sm" type="button" onclick="removeSourceRegistration(${index})">Remove</button>`);
+    return `<tr><td><strong>${safeText(source.name || 'Unnamed source')}</strong>${source.archived ? '<div class="backup-help">Archived</div>' : ''}</td><td>${safeText(source.kind || 'unknown')}</td><td>${safeText(source.transport || 'unknown')}</td><td><span class="source-status ${safeText(source.status || 'pending')}">${safeText(source.status || 'pending')}</span><div class="backup-help">${safeText(source.status_evidence || '')}</div></td><td>${source.last_seen_at ? safeText(formatSourceTimestamp(source.last_seen_at)) : 'Never observed'}</td><td>${source.accepted_records == null ? 'Unknown' : fmtNum(source.accepted_records)}${source.legacy_requests ? `<div class="backup-help">${fmtNum(source.legacy_requests)} legacy</div>` : ''}</td><td><div class="source-actions">${controls.join('')}</div></td></tr>`;
+  }).join('');
+  if (rows.length) empty.classList.add('hidden'); else empty.classList.remove('hidden');
+}
+
+function formatSourceTimestamp(value) {
+  const numeric = Number(value);
+  const date = new Date(Number.isFinite(numeric) && numeric > 0 ? numeric : value);
+  return Number.isNaN(date.getTime()) ? String(value || '') : date.toLocaleString();
+}
+
+function sourceAt(index) {
+  return Array.isArray(state.sources?.sources) ? state.sources.sources[index] : null;
+}
+
+function showSourceDetails(index) {
+  const source = sourceAt(index);
+  if (!source) return;
+  setText('sourceDialogTitle', source.name || 'Connected source');
+  const body = document.getElementById('sourceDialogBody');
+  body.textContent = '';
+  const facts = [
+    ['Kind', source.kind], ['Transport', source.transport], ['Status', source.status], ['Evidence', source.status_evidence],
+    ['Observation time', source.status_observed_at || 'Never observed'], ['Accepted canonical records', source.accepted_records],
+    ['Legacy requests', source.legacy_requests], ['Producer identifiers', (source.producer_names || []).join(', ') || 'None'],
+    ['Source applications', (source.source_apps || []).join(', ') || 'None'], ['Proxy profile', source.profile_name || 'None'],
+    ['Credential state', source.credential_state], ['Configuration ownership', source.kind === 'proxy' ? 'Watchdog proxy configuration' : 'Producer-owned configuration'],
+    ['Privacy mode', 'Watchdog central policy; content capture remains off by default'],
+  ];
+  facts.forEach(([label, value]) => {
+    const field = document.createElement('div'); field.className = 'detail-field';
+    const name = document.createElement('div'); name.className = 'detail-label'; name.textContent = label;
+    const output = document.createElement('div'); output.textContent = value == null ? 'Unknown' : String(value);
+    field.append(name, output); body.appendChild(field);
+  });
+  const note = document.createElement('div'); note.className = 'source-notice'; note.textContent = 'Removing registration metadata does not disconnect another application and never deletes historical telemetry.'; body.appendChild(note);
+  const dialog = document.getElementById('sourceDialog');
+  if (dialog && typeof dialog.showModal === 'function') dialog.showModal();
+}
+
+function closeSourceDialog() { document.getElementById('sourceDialog')?.close(); }
+function closeSourceDialogFromBackdrop(event) { if (event?.target?.id === 'sourceDialog') closeSourceDialog(); }
+
+function openSourceWizard() {
+  document.getElementById('sourceWizardForm')?.reset();
+  setText('sourceWizardStatus', '');
+  renderSourceWizardFields();
+  const dialog = document.getElementById('sourceWizard');
+  if (dialog && typeof dialog.showModal === 'function') dialog.showModal();
+  document.getElementById('sourceKind')?.focus();
+}
+
+function closeSourceWizard() { document.getElementById('sourceWizard')?.close(); }
+function closeSourceWizardFromBackdrop(event) { if (event?.target?.id === 'sourceWizard') closeSourceWizard(); }
+
+function renderSourceWizardFields() {
+  const kind = document.getElementById('sourceKind')?.value || 'proxy';
+  const proxy = kind === 'proxy';
+  document.getElementById('sourceProxyFields')?.classList[proxy ? 'remove' : 'add']('hidden');
+  setText('sourceIdentifierLabel', proxy ? 'Profile name' : (kind === 'native_v2' || kind === 'otlp' ? 'Exact producer name' : 'Exact source application'));
+  ['sourceUpstreamUrl', 'sourceAuthMode'].forEach(id => { const el = document.getElementById(id); if (el) el.required = proxy; });
+}
+
+async function submitSourceWizard(event) {
+  event?.preventDefault();
+  const kind = document.getElementById('sourceKind')?.value || '';
+  const name = String(document.getElementById('sourceName')?.value || '').trim();
+  const identifier = String(document.getElementById('sourceIdentifier')?.value || '').trim();
+  const description = String(document.getElementById('sourceDescription')?.value || '').trim();
+  setText('sourceWizardStatus', 'Saving…');
+  let payload;
+  if (kind === 'proxy') {
+    payload = {type:'proxy_profile', profile_name:identifier, profile:{upstream_base_url:String(document.getElementById('sourceUpstreamUrl')?.value || '').trim(), auth_mode:document.getElementById('sourceAuthMode')?.value || 'passthrough', upstream_api_key_env:String(document.getElementById('sourceCredentialEnv')?.value || '').trim(), display_name:name, enabled:true}};
+  } else {
+    payload = {source:{name, description, kind, producer_names:(kind === 'native_v2' || kind === 'otlp') ? [identifier] : [], source_apps:kind === 'observed' ? [identifier] : [], enabled:true, archived:false, setup_template_id:kind, options:{}}, revision:state.sources?.revision || ''};
+  }
+  try {
+    const result = await fetchJSON('/api/sources', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    setText('sourceWizardStatus', result.restart_required ? 'Saved. Restart Watchdog to apply the proxy profile.' : 'Source registration saved.');
+    await refreshSources();
+    setTimeout(closeSourceWizard, 350);
+  } catch (error) { setText('sourceWizardStatus', error.message || 'Could not save source.'); }
+}
+
+async function refreshSources() {
+  state.sources = await fetchJSON('/api/sources');
+  renderSources();
+}
+
+async function verifySource(index) {
+  const source = sourceAt(index); if (!source) return;
+  setText('sourceMutationStatus', 'Checking accepted local telemetry…');
+  try {
+    const result = await fetchJSON('/api/sources/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:source.id})});
+    setText('sourceMutationStatus', result.observed ? `Observed: ${result.status_evidence}` : 'No matching accepted telemetry has been observed.');
+  } catch (error) { setText('sourceMutationStatus', error.message || 'Verification failed.'); }
+}
+
+async function toggleSourceArchive(index) {
+  const source = sourceAt(index); if (!source?.registration_id) return;
+  setText('sourceMutationStatus', source.archived ? 'Unarchiving…' : 'Archiving…');
+  try {
+    await fetchJSON('/api/sources/' + encodeURIComponent(source.registration_id), {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({revision:state.sources?.revision || '', source:{archived:!source.archived}})});
+    await refreshSources(); setText('sourceMutationStatus', source.archived ? 'Source unarchived.' : 'Source archived.');
+  } catch (error) { setText('sourceMutationStatus', error.message || 'Update failed.'); }
+}
+
+async function removeSourceRegistration(index) {
+  const source = sourceAt(index); if (!source?.registration_id) return;
+  if (typeof window.confirm === 'function' && !window.confirm('Remove this registration? Historical telemetry will be retained.')) return;
+  setText('sourceMutationStatus', 'Removing registration…');
+  try {
+    await fetchJSON('/api/sources/' + encodeURIComponent(source.registration_id), {method:'DELETE', headers:{'Content-Type':'application/json'}, body:JSON.stringify({revision:state.sources?.revision || '', retain_historical_telemetry:true})});
+    await refreshSources(); setText('sourceMutationStatus', 'Registration removed. Historical telemetry was retained.');
+  } catch (error) { setText('sourceMutationStatus', error.message || 'Removal failed.'); }
+}
+
+async function copySourceSetup(index) {
+  const source = sourceAt(index); if (!source) return;
+  const origin = typeof location === 'undefined' ? 'http://127.0.0.1:7700' : location.origin;
+  const snippet = source.kind === 'proxy' ? `${origin}/proxy/v1\nX-Watchdog-Upstream-Profile: ${source.profile_name || 'default'}` : source.kind === 'otlp' ? `${origin}/telemetry/v2/otlp/v1/traces\nAuthorization: Bearer $WDG_API_AUTH_TOKEN` : `${origin}/telemetry/v2/batches\nAuthorization: Bearer $WDG_API_AUTH_TOKEN`;
+  try { await navigator.clipboard.writeText(snippet); setText('sourceMutationStatus', 'Safe setup snippet copied.'); } catch { setText('sourceMutationStatus', snippet); }
+}
+
+async function showSourceTemplates() {
+  try {
+    if (!state.sourceTemplates) state.sourceTemplates = await fetchJSON('/api/sources/setup-templates');
+    closeSourceWizard();
+    setText('sourceDialogTitle', 'Source setup templates');
+    const body = document.getElementById('sourceDialogBody'); body.textContent = '';
+    (state.sourceTemplates.templates || []).forEach(template => {
+      const section = document.createElement('section'); section.className = 'detail-related';
+      const title = document.createElement('h3'); title.textContent = template.name || template.id;
+      const instructions = document.createElement('p'); instructions.textContent = template.instructions || '';
+      section.append(title, instructions);
+      if (template.snippet) { const pre = document.createElement('pre'); pre.textContent = template.snippet; section.appendChild(pre); }
+      body.appendChild(section);
+    });
+    document.getElementById('sourceDialog')?.showModal();
+  } catch (error) { setText('sourceWizardStatus', error.message || 'Could not load setup templates.'); }
 }
 
 /* ════════════════════════════════════════════════════════════════════
