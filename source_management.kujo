@@ -252,6 +252,21 @@ func source_proxy_endpoint_allowed(endpoint) {
 	return false
 }
 
+func source_proxy_public_profile(profile) {
+	if type(profile) != "dict" { return {} }
+	endpoint := source_exact_text(source_get(profile, "upstream_base_url", ""), 2048)
+	if source_proxy_endpoint_allowed(endpoint) == false { endpoint = "" }
+	auth_mode := source_exact_text(source_get(profile, "auth_mode", "passthrough"), 20)
+	if auth_mode != "passthrough" && auth_mode != "override" { auth_mode = "passthrough" }
+	return {
+		"upstream_base_url": endpoint,
+		"auth_mode": auth_mode,
+		"upstream_api_key_env": source_env_name(source_get(profile, "upstream_api_key_env", "")),
+		"display_name": source_exact_text(source_get(profile, "display_name", ""), 120),
+		"enabled": source_get(profile, "enabled", true) != false
+	}
+}
+
 func source_proxy_mutate(path, action, profile_name, input, expected_revision) {
 	if profile_name == "default" { return {"ok": false, "status": 403, "error": "the default proxy profile is read-only in this release"} }
 	name := source_identifier(profile_name)
@@ -326,5 +341,6 @@ export watchdog_sources_registry_version := SOURCE_REGISTRY_VERSION
 export watchdog_sources_load_registry := source_load_registry
 export watchdog_sources_registry_mutate := source_registry_mutate
 export watchdog_sources_proxy_mutate := source_proxy_mutate
+export watchdog_sources_proxy_public_profile := source_proxy_public_profile
 export watchdog_sources_setup_templates := source_setup_templates
 export watchdog_sources_active_window_ms := SOURCE_ACTIVE_WINDOW_MS

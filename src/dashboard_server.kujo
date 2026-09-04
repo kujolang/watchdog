@@ -37,6 +37,7 @@ from telemetry_otlp_protobuf import watchdog_otlp_protobuf_decode, watchdog_otlp
 from source_management import watchdog_sources_contract_version, watchdog_sources_registry_version
 from source_management import watchdog_sources_load_registry, watchdog_sources_registry_mutate
 from source_management import watchdog_sources_proxy_mutate, watchdog_sources_setup_templates
+from source_management import watchdog_sources_proxy_public_profile
 from source_management import watchdog_sources_active_window_ms
 
 DEFAULT_PORT := 7700
@@ -3765,15 +3766,15 @@ func source_inventory(req) {
 	tenant_id := request_query_text(req, "tenant_id", "")
 	project_id := request_query_text(req, "project_id", "")
 	registry_result := watchdog_sources_load_registry(SOURCES_CONFIG_PATH)
+	proxy_revision := sha256("{}")
+	if file_exists(PROXY_CONFIG_PATH) && path_is_file(PROXY_CONFIG_PATH) && path_is_symlink(PROXY_CONFIG_PATH) == false { proxy_revision = sha256(read_file(PROXY_CONFIG_PATH)) }
 	observation_revision := -1
 	if tenant_id == "" && project_id == "" {
 		revision_rows := db_query(db, "SELECT revision FROM source_observation_state WHERE id = 1", [])
 		if len(revision_rows) > 0 { observation_revision = revision_rows[0]["revision"] }
 		registry_fingerprint := safe_dict_get(registry_result, "revision", "")
 		if registry_result["ok"] == false && file_exists(SOURCES_CONFIG_PATH) && path_is_file(SOURCES_CONFIG_PATH) && path_is_symlink(SOURCES_CONFIG_PATH) == false { registry_fingerprint = sha256(read_file(SOURCES_CONFIG_PATH)) }
-		proxy_fingerprint := "missing"
-		if file_exists(PROXY_CONFIG_PATH) && path_is_file(PROXY_CONFIG_PATH) && path_is_symlink(PROXY_CONFIG_PATH) == false { proxy_fingerprint = sha256(read_file(PROXY_CONFIG_PATH)) }
-		cache_key := to_string(observation_revision) + ":" + registry_fingerprint + ":" + proxy_fingerprint
+		cache_key := to_string(observation_revision) + ":" + registry_fingerprint + ":" + proxy_revision
 		if SOURCE_INVENTORY_CACHE["result"] != null && SOURCE_INVENTORY_CACHE["key"] == cache_key && current_timestamp() < SOURCE_INVENTORY_CACHE["expires_at_ms"] { return SOURCE_INVENTORY_CACHE["result"] }
 		SOURCE_INVENTORY_CACHE["key"] = cache_key
 	}
@@ -3832,7 +3833,9 @@ func source_inventory(req) {
 		id := source_id("proxy", profile_name)
 		enabled := safe_dict_get(profile_cfg, "enabled", true) != false
 		read_only := profile_name == "default"
-		rows_by_id[id] = source_public_row(id, safe_dict_get(profile_cfg, "display_name", profile_name), "proxy", "openai-compatible /proxy/v1", true, observed_count > 0, read_only, enabled, first_seen, last_seen, 0, observed_count, [], ["watchdog-proxy"], profile_name, last_seen)
+		profile_row := source_public_row(id, safe_dict_get(profile_cfg, "display_name", profile_name), "proxy", "openai-compatible /proxy/v1", true, observed_count > 0, read_only, enabled, first_seen, last_seen, 0, observed_count, [], ["watchdog-proxy"], profile_name, last_seen)
+		profile_row["proxy_profile"] = watchdog_sources_proxy_public_profile(profile_cfg)
+		rows_by_id[id] = profile_row
 	}
 	for profile_name in sort(keys(proxy_observations)) {
 		if has_key(profiles, profile_name) == false {
@@ -3886,7 +3889,7 @@ func source_inventory(req) {
 	summary := {"total": len(items), "active": 0, "pending": 0, "stale": 0, "disabled": 0, "error": 0}
 	for item in items { status := item["status"]; if has_key(summary, status) { summary[status] = summary[status] + 1 } }
 	if registry_error != "" { summary["error"] = summary["error"] + 1 }
-	result := {"contract_version": watchdog_sources_contract_version, "registry_version": watchdog_sources_registry_version, "revision": revision, "active_window_ms": watchdog_sources_active_window_ms, "count_window_records": 50000, "summary": summary, "sources": items, "registry_error": registry_error, "capabilities": ["read_inventory", "register_metadata", "manage_proxy_profiles", "verify_local_observation"], "configuration_reload": "proxy profile changes are saved atomically and require restart"}
+	result := {"contract_version": watchdog_sources_contract_version, "registry_version": watchdog_sources_registry_version, "revision": revision, "proxy_revision": proxy_revision, "active_window_ms": watchdog_sources_active_window_ms, "count_window_records": 50000, "summary": summary, "sources": items, "registry_error": registry_error, "capabilities": ["read_inventory", "register_metadata", "manage_proxy_profiles", "verify_local_observation"], "configuration_reload": "proxy profile changes are saved atomically and require restart"}
 	if tenant_id == "" && project_id == "" {
 		expires_at_ms := 9999999999999
 		for item in items {

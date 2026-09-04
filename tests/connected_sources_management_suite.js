@@ -104,8 +104,14 @@ async function run() {
 		assert.strictEqual((await request('POST', '/api/sources', {type:'proxy_profile', profile_name:'bad', profile:{upstream_base_url:'javascript:alert(1)', auth_mode:'passthrough', upstream_api_key_env:'', display_name:'Bad'}})).status, 400);
 		assert.strictEqual((await request('POST', '/api/sources/proxy/update', {profile_name:'default', profile:{upstream_base_url:'https://example.test/v1', auth_mode:'passthrough'}})).status, 403, 'default profile must be protected');
 		const proxyConfig = JSON.parse(fs.readFileSync(PROXY, 'utf8')); proxyConfig.upstream_profiles['fixture-profile'].operator_extension = 'preserve-me'; fs.writeFileSync(PROXY, JSON.stringify(proxyConfig), {mode:0o600});
-		assert.strictEqual((await request('POST', '/api/sources/proxy/update', {profile_name:'fixture-profile', profile:{upstream_base_url:'https://api.example.test/v2', auth_mode:'passthrough', upstream_api_key_env:'', display_name:'Updated fixture', enabled:true}})).status, 200);
+		inventory = (await request('GET', '/api/sources')).json.data;
+		assert.match(inventory.proxy_revision, /^[0-9a-f]{64}$/, 'inventory must expose a race-safe proxy revision');
+		const editableProfile = inventory.sources.find(source => source.profile_name === 'fixture-profile');
+		assert.deepStrictEqual(editableProfile.proxy_profile, {upstream_base_url:'https://api.example.test/v1', auth_mode:'override', upstream_api_key_env:'FIXTURE_PROVIDER_KEY', display_name:'Fixture profile', enabled:true});
+		assert.ok(!Object.prototype.hasOwnProperty.call(editableProfile.proxy_profile, 'upstream_api_key'), 'editable proxy projection must not expose credential values');
+		assert.strictEqual((await request('POST', '/api/sources/proxy/update', {profile_name:'fixture-profile', revision:inventory.proxy_revision, profile:{upstream_base_url:'https://api.example.test/v2', auth_mode:'passthrough', upstream_api_key_env:'', display_name:'Updated fixture', enabled:true}})).status, 200);
 		assert.strictEqual(JSON.parse(fs.readFileSync(PROXY, 'utf8')).upstream_profiles['fixture-profile'].operator_extension, 'preserve-me', 'proxy updates must preserve unknown valid fields');
+		assert.strictEqual((await request('POST', '/api/sources/proxy/update', {profile_name:'fixture-profile', revision:inventory.proxy_revision, profile:{upstream_base_url:'https://api.example.test/v3', auth_mode:'passthrough', upstream_api_key_env:'', display_name:'Stale update', enabled:true}})).status, 409, 'stale proxy revisions must conflict');
 
 		const verify = await request('POST', '/api/sources/verify', {id:observed.id});
 		assert.strictEqual(verify.status, 200, verify.text); assert.strictEqual(verify.json.data.observed, true, verify.text); assert.strictEqual(verify.json.data.network_contacted, false, verify.text);
@@ -131,6 +137,9 @@ async function run() {
 		assert.strictEqual((await request('POST', '/api/sources/proxy/update', {profile_name:'fixture-profile', profile:{upstream_base_url:'https://api.example.test/v3',auth_mode:'passthrough'}})).status, 409);
 		assert.strictEqual(fs.readFileSync(PROXY, 'utf8'), '{malformed', 'malformed proxy config must not be overwritten');
 		fs.writeFileSync(PROXY, validProxy, {mode:0o600});
+		inventory = (await request('GET', '/api/sources')).json.data;
+		assert.strictEqual((await request('POST', '/api/sources/proxy/delete', {profile_name:'fixture-profile', revision:inventory.proxy_revision, retain_historical_telemetry:true})).status, 200, 'named proxy profiles must be deletable');
+		assert.ok(!JSON.parse(fs.readFileSync(PROXY, 'utf8')).upstream_profiles['fixture-profile'], 'deleted proxy profile must be removed from configuration');
 
 		const validRegistry = fs.readFileSync(REGISTRY);
 		const tooMany = {schema_version:'watchdog.sources.v1',revision:1,sources:Array.from({length:257},(_,index)=>({id:'src_'+String(index).padStart(24,'0'),name:'Source '+index,description:'',kind:'observed',producer_names:[],source_apps:[],profile_name:'',enabled:true,archived:false,setup_template_id:'',options:{},created_at:'2026-09-04T00:00:00Z',updated_at:'2026-09-04T00:00:00Z'}))};
