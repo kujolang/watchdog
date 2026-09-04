@@ -26,6 +26,7 @@ const statDithers = [
   { id: "statDitherSessions", metric: "sessions", color: "orange", variant: "dotted" },
   { id: "statDitherTools", metric: "tools", color: "purple", variant: "dotted" },
   { id: "statDitherTraces", metric: "traces", color: "blue", variant: "gradient" },
+  { id: "statDitherCanonical", metric: "canonical", color: "green", variant: "gradient" },
 ] as const
 
 type StatMetric = typeof statDithers[number]["metric"]

@@ -10,6 +10,11 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 
 - Add immutable canonical observability evidence for source identity, terminal outcomes, retries/fallbacks/recovery, truthful timing, context capacity, and billing provenance.
 - Add canonical logical-request queries, lineage diagnostics, dashboard evidence views, and lossless JSONL/OTLP projections.
+- Add a Dither Kit trend sparkline to the canonical-records dashboard card.
+
+### Changed
+
+- Balance the nine overview cards into four- and five-card desktop rows and replace data-view emoji decorations with local Tabler SVG icons.
 
 ### Fixed
 

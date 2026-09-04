@@ -367,7 +367,8 @@ function testToolCallsErrorsSessionsAndTracesContracts() {
 	elements.traceKindFilter.value = 'persistence';
 	context.renderAgentTraces();
 	assert.ok(elements.traceContainer.innerHTML.includes('trace-waterfall'), 'granular traces should render as a waterfall');
-	assert.ok(elements.traceContainer.innerHTML.includes('Persisted ✓'), 'persistence events should remain filterable and visible');
+	assert.ok(elements.traceContainer.innerHTML.includes('database-check') || elements.traceContainer.innerHTML.includes('<svg'), 'persistence events should use a Tabler status icon');
+	assert.ok(elements.traceContainer.innerHTML.includes('Persisted'), 'persistence events should remain filterable and visible');
 	assert.ok(elements.traceContainer.innerHTML.includes('interactive_chat'), 'trace name should remain visible');
 	assert.ok(!elements.traceContainer.innerHTML.includes('◫ interactive_chat'), 'trace name should not have a decorative prefix');
 	assert.ok(elements.traceContainer.innerHTML.includes('m6 9 6 6 6-6'), 'trace disclosure should use a Tabler chevron');
@@ -439,6 +440,7 @@ function testStatCardSparklinesUseMetricTrends() {
 		],
 		tool_metrics: [{ bucket_start_ms: 10 * day, bucket_size_ms: day, total_tool_calls: 7 }],
 		trace_span_metrics: [{ bucket_start_ms: 16 * day, bucket_size_ms: day, total_trace_spans: 9 }],
+		canonical_metrics: [{ bucket_start_ms: 10 * day, bucket_size_ms: day, total_canonical_records: 11 }],
 	});
 
 	const sparklines = JSON.parse(JSON.stringify(renderedCharts.value.statSparklines));
@@ -450,6 +452,7 @@ function testStatCardSparklinesUseMetricTrends() {
 	assert.deepStrictEqual(sparklines.sessions, [2, 0, 0, 0, 0, 0, 1]);
 	assert.deepStrictEqual(sparklines.tools, [7, 0, 0, 0, 0, 0, 0]);
 	assert.deepStrictEqual(sparklines.traces, [0, 0, 0, 0, 0, 0, 9]);
+	assert.deepStrictEqual(sparklines.canonical, [11, 0, 0, 0, 0, 0, 0]);
 }
 
 function testBackgroundRefreshPreservesInteractiveView() {

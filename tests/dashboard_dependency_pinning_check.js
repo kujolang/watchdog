@@ -28,6 +28,9 @@ assertContains('__WATCHDOG_DEPARTURE_MONO_WOFF2__', 'dashboard should expose the
 assertContains('.page-title { color: #031b4e; font-family: var(--font-display)', 'page title should use the Departure-compatible display stack');
 assertContains('.stat-value { color: #031b4e !important; font-family: var(--font-display)', 'metric numbers should use the Departure-compatible display stack');
 assertContains('border-top-color: var(--stat-accent)', 'stat-card hover top borders should use the card chart color');
+assertContains('.stats-grid { grid-template-columns: repeat(20, minmax(0, 1fr));', 'desktop stat cards should use a shared grid that supports a four-card first row and five-card second row');
+assertContains('.stats-grid .stat-card:nth-child(-n+4) { grid-column: span 5; }', 'the first stat row should contain four equal cards');
+assertContains('.stats-grid .stat-card:nth-child(n+5) { grid-column: span 4; }', 'the second stat row should contain five equal cards');
 assertContains('<option value="24h" selected>Last 24 hours</option>', 'dashboard should default to the 24-hour range');
 assertContains("rangePreset: '24h'", 'dashboard state should default to the 24-hour range');
 assertContains('stat-card orange"><div class="stat-copy"><div class="stat-label">Avg Latency', 'latency stat card should match the orange sparkline');
@@ -35,7 +38,7 @@ assertContains('stat-card purple"><div class="stat-copy"><div class="stat-label"
 assertContains('.logo-copy,', 'Watchdog wordmark should use the Departure-compatible mono stack');
 assertContains('.header-right .btn {', 'header buttons should use the Departure-compatible mono stack');
 assertContains('font-family: var(--font-mono);', 'header typography should resolve to the mono stack');
-for (const id of ['Requests', 'Cost', 'Latency', 'Errors', 'Tokens', 'Sessions', 'Tools', 'Traces']) {
+for (const id of ['Requests', 'Cost', 'Latency', 'Errors', 'Tokens', 'Sessions', 'Tools', 'Traces', 'Canonical']) {
 	assertContains(`id="statDither${id}"`, `stat card ${id} should include a decorative Dither Kit mount`);
 	if (!chartSource.includes(`id: "statDither${id}"`)) {
 		throw new Error(`Dither Kit chart entry should render the ${id} stat-card sparkline`);
@@ -44,5 +47,10 @@ for (const id of ['Requests', 'Cost', 'Latency', 'Errors', 'Tokens', 'Sessions',
 if (!chartSource.includes('import { Sparkline } from "../components/dither-kit/sparkline"')) {
 	throw new Error('stat-card decorations should use the installed Dither Kit Sparkline component');
 }
+if (/[\u{1F300}-\u{1FAFF}]/u.test(source)) {
+	throw new Error('dashboard data views should use local Tabler SVG icons instead of emoji');
+}
+assertContains('data-tabler-icon="search"', 'empty states should declare local Tabler icon names');
+assertContains("planning:    'map'", 'agent trace steps should map to Tabler icons');
 
 console.log('dashboard_dependency_pinning_check: PASS');

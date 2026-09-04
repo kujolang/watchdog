@@ -4823,10 +4823,20 @@ server := server.route("GET", "/api/charts/stat-trends", func(req) {
 	span_sql := span_sql + " GROUP BY bucket_start_ms ORDER BY bucket_start_ms ASC"
 	span_rows := db_query(db, span_sql, span_params)
 
+	canonical_filter := append_time_range_conditions(req, [], [], "tr.created_at")
+	canonical_conditions := canonical_filter["conditions"]
+	canonical_params := canonical_filter["params"]
+	canonical_bucket := "CAST(((CAST(tr.created_at AS INTEGER) - " + to_string(bucket_origin_ms) + ") / " + to_string(bucket_size_ms) + ") AS INTEGER) * " + to_string(bucket_size_ms) + " + " + to_string(bucket_origin_ms)
+	canonical_sql := "SELECT " + canonical_bucket + " AS bucket_start_ms, " + to_string(bucket_size_ms) + " AS bucket_size_ms, COUNT(*) AS total_canonical_records FROM telemetry_records_v2 tr"
+	canonical_sql := canonical_sql + where_clause_from_conditions(canonical_conditions)
+	canonical_sql := canonical_sql + " GROUP BY bucket_start_ms ORDER BY bucket_start_ms ASC"
+	canonical_rows := db_query(db, canonical_sql, canonical_params)
+
 	return api_ok({
 		"request_metrics": request_rows,
 		"tool_metrics": tool_rows,
-		"trace_span_metrics": span_rows
+		"trace_span_metrics": span_rows,
+		"canonical_metrics": canonical_rows
 	})
 })
 
