@@ -16,6 +16,7 @@ const ENTRYPOINTS = [
 	{ src: 'src/export_worker.kujo', root: 'export_worker.kujo' },
 	{ src: 'src/telemetry_otlp_ingest.kujo', root: 'telemetry_otlp_ingest.kujo' },
 	{ src: 'src/telemetry_native_adapter.kujo', root: 'telemetry_native_adapter.kujo' },
+	{ src: 'src/source_management.kujo', root: 'source_management.kujo' },
 	{ src: 'src/watchdog.kujo', root: 'watchdog.kujo' },
 	{ src: 'src/dashboard.html', root: 'dashboard.html' },
 ];

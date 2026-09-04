@@ -34,10 +34,15 @@ from telemetry_delivery import watchdog_delivery_resume_profile
 from telemetry_delivery import watchdog_delivery_backfill
 from telemetry_otlp_ingest import watchdog_otlp_ingest_map
 from telemetry_otlp_protobuf import watchdog_otlp_protobuf_decode, watchdog_otlp_protobuf_encode_response
+from source_management import watchdog_sources_contract_version, watchdog_sources_registry_version
+from source_management import watchdog_sources_load_registry, watchdog_sources_registry_mutate
+from source_management import watchdog_sources_proxy_mutate, watchdog_sources_setup_templates
+from source_management import watchdog_sources_active_window_ms
 
 DEFAULT_PORT := 7700
 DEFAULT_DB_PATH := "data/watchdog.db"
 DEFAULT_PROXY_CONFIG_PATH := "watchdog_proxy_config.json"
+DEFAULT_SOURCES_CONFIG_PATH := "watchdog_sources.json"
 DEFAULT_UPSTREAM_BASE_URL := "https://api.openai.com/v1"
 DEFAULT_AUTH_MODE := "passthrough"
 DEFAULT_PROXY_CONFIG_VISIBILITY := "safe"
@@ -1431,6 +1436,7 @@ func resolve_override_api_key(cfg) {
 PORT := parse_int_env_many(["WDG_PORT"], DEFAULT_PORT)
 DB_PATH := env_or_many(["WDG_DB_PATH"], DEFAULT_DB_PATH)
 PROXY_CONFIG_PATH := env_or_many(["WDG_PROXY_CONFIG_PATH"], DEFAULT_PROXY_CONFIG_PATH)
+SOURCES_CONFIG_PATH := env_or_many(["WDG_SOURCES_CONFIG_PATH"], DEFAULT_SOURCES_CONFIG_PATH)
 PROXY_CONFIG_VISIBILITY := to_lower(env_or_many(["WDG_PROXY_CONFIG_VISIBILITY"], DEFAULT_PROXY_CONFIG_VISIBILITY))
 API_AUTH_MODE := normalize_api_auth_mode(env_or_many(["WDG_API_AUTH_MODE"], DEFAULT_API_AUTH_MODE))
 API_AUTH_TOKEN := trim(env_or_many(["WDG_API_AUTH_TOKEN"], ""))
@@ -1481,6 +1487,7 @@ CONTEXT_CRITICAL_RATIO := parse_ratio_env(["WDG_CONTEXT_CRITICAL_RATIO"], parse_
 if CONTEXT_CRITICAL_RATIO < CONTEXT_WARNING_RATIO { CONTEXT_CRITICAL_RATIO = CONTEXT_WARNING_RATIO }
 EXPORTER_PROFILES := watchdog_delivery_load_profiles(EXPORTERS_CONFIG_PATH)
 EXPORTER_PROFILE_IDS := watchdog_delivery_profile_ids(EXPORTER_PROFILES)
+SOURCE_INVENTORY_CACHE := {"key": "", "result": null, "expires_at_ms": 0}
 
 func print_lines(line_values) {
 	for line in line_values {
@@ -1496,6 +1503,7 @@ print_lines(["=== Watchdog ===", ""])
 kv("Port", PORT)
 kv("Database", DB_PATH)
 kv("Proxy config", PROXY_CONFIG_PATH)
+kv("Sources config", SOURCES_CONFIG_PATH)
 kv("API auth mode", API_AUTH_MODE)
 kv("Proxy auth mode", PROXY_AUTHZ_MODE)
 kv("Deployment profile", DEPLOYMENT_PROFILE)
@@ -3714,6 +3722,220 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 # HTTP Server + Routes
 # ---------------------------------------------------------------------------
 
+func source_timestamp_ms(value) {
+	text := trim(to_string(value))
+	if text == "" { return 0 }
+	try {
+		numeric := parse_int(text)
+		if numeric > 0 { return numeric }
+	} except err {}
+	if len(text) >= 19 {
+		try { return parse_date(substring(text, 0, 19), "YYYY-MM-DDTHH:mm:ss") * 1000 } except err {}
+	}
+	return 0
+}
+
+func source_status(configured, enabled, observed, last_seen_at) {
+	if configured && enabled == false { return {"status": "disabled", "evidence": "local configuration is disabled"} }
+	if observed == false { return {"status": "pending", "evidence": "configured or registered; no matching accepted telemetry observed"} }
+	last_ms := source_timestamp_ms(last_seen_at)
+	if last_ms > 0 && current_timestamp() - last_ms <= watchdog_sources_active_window_ms { return {"status": "active", "evidence": "accepted telemetry observed inside the 5-minute active window"} }
+	return {"status": "stale", "evidence": "accepted telemetry was observed, but not inside the 5-minute active window"}
+}
+
+func source_capabilities(configured, read_only, kind) {
+	items := ["copy_setup", "verify_observation"]
+	if read_only == false { items = push(items, "edit_metadata"); items = push(items, "archive"); items = push(items, "remove_registration") }
+	if kind == "proxy" { items = push(items, "copy_proxy_header") }
+	return items
+}
+
+func source_public_row(id, name, kind, transport, configured, observed, read_only, enabled, first_seen_at, last_seen_at, accepted_records, legacy_requests, producer_names, source_apps, profile_name, updated_at) {
+	status_info := source_status(configured, enabled, observed, last_seen_at)
+	credential_state := "server-token-required"
+	if kind == "proxy" { credential_state = "upstream-credential-not-exposed" }
+	return {"id": id, "name": name, "kind": kind, "transport": transport, "status": status_info["status"], "status_evidence": status_info["evidence"], "status_observed_at": last_seen_at, "configured": configured, "observed": observed, "read_only": read_only, "enabled": enabled, "first_seen_at": first_seen_at, "last_seen_at": last_seen_at, "accepted_records": accepted_records, "legacy_requests": legacy_requests, "producer_names": producer_names, "source_apps": source_apps, "profile_name": profile_name, "credential_state": credential_state, "capabilities": source_capabilities(configured, read_only, kind), "updated_at": updated_at}
+}
+
+func source_id(kind, identity) {
+	return "src_" + substring(sha256(kind + ":" + identity), 0, 24)
+}
+
+func source_inventory(req) {
+	tenant_id := request_query_text(req, "tenant_id", "")
+	project_id := request_query_text(req, "project_id", "")
+	registry_result := watchdog_sources_load_registry(SOURCES_CONFIG_PATH)
+	observation_revision := -1
+	if tenant_id == "" && project_id == "" {
+		revision_rows := db_query(db, "SELECT revision FROM source_observation_state WHERE id = 1", [])
+		if len(revision_rows) > 0 { observation_revision = revision_rows[0]["revision"] }
+		registry_fingerprint := safe_dict_get(registry_result, "revision", "")
+		if registry_result["ok"] == false && file_exists(SOURCES_CONFIG_PATH) && path_is_file(SOURCES_CONFIG_PATH) && path_is_symlink(SOURCES_CONFIG_PATH) == false { registry_fingerprint = sha256(read_file(SOURCES_CONFIG_PATH)) }
+		proxy_fingerprint := "missing"
+		if file_exists(PROXY_CONFIG_PATH) && path_is_file(PROXY_CONFIG_PATH) && path_is_symlink(PROXY_CONFIG_PATH) == false { proxy_fingerprint = sha256(read_file(PROXY_CONFIG_PATH)) }
+		cache_key := to_string(observation_revision) + ":" + registry_fingerprint + ":" + proxy_fingerprint
+		if SOURCE_INVENTORY_CACHE["result"] != null && SOURCE_INVENTORY_CACHE["key"] == cache_key && current_timestamp() < SOURCE_INVENTORY_CACHE["expires_at_ms"] { return SOURCE_INVENTORY_CACHE["result"] }
+		SOURCE_INVENTORY_CACHE["key"] = cache_key
+	}
+	registry_error := ""
+	registrations := []
+	revision := "0"
+	if registry_result["ok"] { registrations = registry_result["registry"]["sources"]; revision = registry_result["revision"] } else { registry_error = registry_result["error"] }
+	rows_by_id := {}
+	observation_rows := []
+	if tenant_id == "" && project_id == "" { observation_rows = db_query(db, "SELECT source_kind, source_identity, first_seen_at, last_seen_at, accepted_records, legacy_requests, is_otlp FROM source_observations ORDER BY source_kind, source_identity LIMIT 1536", []) }
+	canonical_rows := []
+	for observation in observation_rows { if observation["source_kind"] == "canonical" { canonical_rows = push(canonical_rows, {"producer_name": observation["source_identity"], "first_seen_at": observation["first_seen_at"], "last_seen_at": observation["last_seen_at"], "accepted_records": observation["accepted_records"], "is_otlp": observation["is_otlp"]}) } }
+	for row in canonical_rows {
+		producer := truncate_str(to_string(row["producer_name"]), 80)
+		kind := "native_v2"
+		transport := "watchdog.telemetry.v2"
+		if row["is_otlp"] == 1 { kind = "otlp"; transport = "otlp/http" }
+		id := source_id(kind, producer)
+		rows_by_id[id] = source_public_row(id, producer, kind, transport, false, true, true, true, row["first_seen_at"], row["last_seen_at"], row["accepted_records"], 0, [producer], [], "", row["last_seen_at"])
+	}
+	legacy_conditions := ["source_app <> ''", "source_app <> 'watchdog-proxy'"]
+	legacy_params := []
+	if tenant_id != "" { legacy_conditions = push(legacy_conditions, "tenant_id = ?"); legacy_params = push(legacy_params, tenant_id) }
+	if project_id != "" { legacy_conditions = push(legacy_conditions, "project_id = ?"); legacy_params = push(legacy_params, project_id) }
+	legacy_rows := []
+	if tenant_id == "" && project_id == "" {
+		for observation in observation_rows { if observation["source_kind"] == "legacy" { legacy_rows = push(legacy_rows, {"source_app": observation["source_identity"], "first_seen_at": observation["first_seen_at"], "last_seen_at": observation["last_seen_at"], "legacy_requests": observation["legacy_requests"]}) } }
+	} else {
+		legacy_rows = db_query(db, "SELECT source_app, MIN(created_at) AS first_seen_at, MAX(created_at) AS last_seen_at, COUNT(*) AS legacy_requests FROM (SELECT source_app, created_at, tenant_id, project_id FROM requests ORDER BY id DESC LIMIT 50000)" + where_clause_from_conditions(legacy_conditions) + " GROUP BY source_app ORDER BY source_app LIMIT 512", legacy_params)
+	}
+	for row in legacy_rows {
+		app := truncate_str(to_string(row["source_app"]), 80)
+		id := source_id("legacy", app)
+		rows_by_id[id] = source_public_row(id, app, "legacy", "watchdog.telemetry.v1", false, true, true, true, row["first_seen_at"], row["last_seen_at"], 0, row["legacy_requests"], [], [app], "", row["last_seen_at"])
+	}
+	proxy_conditions := ["source_app = 'watchdog-proxy'"]
+	proxy_params := []
+	if tenant_id != "" { proxy_conditions = push(proxy_conditions, "tenant_id = ?"); proxy_params = push(proxy_params, tenant_id) }
+	if project_id != "" { proxy_conditions = push(proxy_conditions, "project_id = ?"); proxy_params = push(proxy_params, project_id) }
+	proxy_observation_rows := []
+	if tenant_id == "" && project_id == "" {
+		for observation in observation_rows { if observation["source_kind"] == "proxy" { proxy_observation_rows = push(proxy_observation_rows, {"provider": observation["source_identity"], "first_seen_at": observation["first_seen_at"], "last_seen_at": observation["last_seen_at"], "legacy_requests": observation["legacy_requests"]}) } }
+	} else {
+		proxy_observation_rows = db_query(db, "SELECT provider, MIN(created_at) AS first_seen_at, MAX(created_at) AS last_seen_at, COUNT(*) AS legacy_requests FROM (SELECT source_app, provider, created_at, tenant_id, project_id FROM requests ORDER BY id DESC LIMIT 50000)" + where_clause_from_conditions(proxy_conditions) + " GROUP BY provider ORDER BY provider LIMIT 512", proxy_params)
+	}
+	proxy_observations := {}
+	for observation in proxy_observation_rows { proxy_observations[to_string(observation["provider"])] = observation }
+	profiles := effective_upstream_profiles(PROXY_CONFIG_PATH)
+	for profile_name in sort(keys(profiles)) {
+		profile_cfg := profiles[profile_name]
+		observation := {"first_seen_at": null, "last_seen_at": null, "legacy_requests": 0}
+		if has_key(proxy_observations, profile_name) { observation = proxy_observations[profile_name] }
+		observed_count := observation["legacy_requests"]
+		last_seen := observation["last_seen_at"]
+		first_seen := observation["first_seen_at"]
+		id := source_id("proxy", profile_name)
+		enabled := safe_dict_get(profile_cfg, "enabled", true) != false
+		read_only := profile_name == "default"
+		rows_by_id[id] = source_public_row(id, safe_dict_get(profile_cfg, "display_name", profile_name), "proxy", "openai-compatible /proxy/v1", true, observed_count > 0, read_only, enabled, first_seen, last_seen, 0, observed_count, [], ["watchdog-proxy"], profile_name, last_seen)
+	}
+	for profile_name in sort(keys(proxy_observations)) {
+		if has_key(profiles, profile_name) == false {
+			observation := proxy_observations[profile_name]
+			id := source_id("proxy", profile_name)
+			rows_by_id[id] = source_public_row(id, profile_name, "proxy", "openai-compatible /proxy/v1", false, true, true, true, observation["first_seen_at"], observation["last_seen_at"], 0, observation["legacy_requests"], [], ["watchdog-proxy"], profile_name, observation["last_seen_at"])
+		}
+	}
+	for registration in registrations {
+		match_id := ""
+		if registration["kind"] == "proxy" { match_id = source_id("proxy", registration["profile_name"]) }
+		if match_id == "" {
+			for producer in registration["producer_names"] {
+				for candidate_kind in ["native_v2", "otlp"] { candidate := source_id(candidate_kind, producer); if has_key(rows_by_id, candidate) { match_id = candidate } }
+			}
+		}
+		if match_id == "" {
+			for app in registration["source_apps"] { candidate := source_id("legacy", app); if has_key(rows_by_id, candidate) { match_id = candidate } }
+		}
+		if match_id != "" && has_key(rows_by_id, match_id) {
+			row := rows_by_id[match_id]
+			row["registration_id"] = registration["id"]
+			row["name"] = registration["name"]
+			row["description"] = registration["description"]
+			row["configured"] = true
+			row["read_only"] = false
+			row["archived"] = registration["archived"]
+			row["enabled"] = registration["enabled"]
+			row["setup_template_id"] = registration["setup_template_id"]
+			row["updated_at"] = registration["updated_at"]
+			status_info := source_status(true, registration["enabled"], row["observed"], row["last_seen_at"])
+			row["status"] = status_info["status"]
+			row["status_evidence"] = status_info["evidence"]
+			row["capabilities"] = source_capabilities(true, false, row["kind"])
+			rows_by_id[match_id] = row
+		} else {
+			kind := registration["kind"]
+			transport := "watchdog.telemetry.v2"
+			if kind == "otlp" { transport = "otlp/http" }
+			if kind == "observed" { transport = "registered metadata" }
+			row := source_public_row(registration["id"], registration["name"], kind, transport, true, false, false, registration["enabled"], null, null, null, null, registration["producer_names"], registration["source_apps"], registration["profile_name"], registration["updated_at"])
+			row["registration_id"] = registration["id"]
+			row["description"] = registration["description"]
+			row["archived"] = registration["archived"]
+			row["setup_template_id"] = registration["setup_template_id"]
+			rows_by_id[registration["id"]] = row
+		}
+	}
+	items := []
+	for id in sort(keys(rows_by_id)) { items = push(items, rows_by_id[id]) }
+	summary := {"total": len(items), "active": 0, "pending": 0, "stale": 0, "disabled": 0, "error": 0}
+	for item in items { status := item["status"]; if has_key(summary, status) { summary[status] = summary[status] + 1 } }
+	if registry_error != "" { summary["error"] = summary["error"] + 1 }
+	result := {"contract_version": watchdog_sources_contract_version, "registry_version": watchdog_sources_registry_version, "revision": revision, "active_window_ms": watchdog_sources_active_window_ms, "count_window_records": 50000, "summary": summary, "sources": items, "registry_error": registry_error, "capabilities": ["read_inventory", "register_metadata", "manage_proxy_profiles", "verify_local_observation"], "configuration_reload": "proxy profile changes are saved atomically and require restart"}
+	if tenant_id == "" && project_id == "" {
+		expires_at_ms := 9999999999999
+		for item in items {
+			if item["status"] == "active" {
+				transition_ms := source_timestamp_ms(item["last_seen_at"]) + watchdog_sources_active_window_ms + 1
+				if transition_ms < expires_at_ms { expires_at_ms = transition_ms }
+			}
+		}
+		SOURCE_INVENTORY_CACHE["result"] = result
+		SOURCE_INVENTORY_CACHE["expires_at_ms"] = expires_at_ms
+	}
+	return result
+}
+
+func source_find(inventory, id) {
+	for item in inventory["sources"] { if item["id"] == id || safe_dict_get(item, "registration_id", "") == id { return item } }
+	return null
+}
+
+func source_request_body(req) {
+	parsed := parse_json_with_limit(to_string(safe_dict_get(req, "body", "{}")), MAX_PARSE_BODY_BYTES)
+	if parsed["ok"] == false || type(parsed["data"]) != "dict" { return {"ok": false, "data": {}, "error": "Request body must be a JSON object"} }
+	return {"ok": true, "data": parsed["data"], "error": ""}
+}
+
+func source_registration_response(req, action, source_id_value) {
+	parsed := source_request_body(req)
+	if parsed["ok"] == false { return api_error(400, parsed["error"]) }
+	body := parsed["data"]
+	expected_revision := trim(to_string(safe_dict_get(body, "revision", "")))
+	payload := safe_dict_get(body, "source", body)
+	result := watchdog_sources_registry_mutate(SOURCES_CONFIG_PATH, action, source_id_value, payload, expected_revision)
+	if result["ok"] == false { insert_audit_event("source_registry_" + action, resolve_audit_actor_key(req, "api"), "denied", {"source_id": truncate_str(source_id_value, 80), "reason": result["error"]}); return api_error(result["status"], result["error"]) }
+	insert_audit_event("source_registry_" + action, resolve_audit_actor_key(req, "api"), "success", {"source_id": safe_dict_get(result["source"], "id", source_id_value), "historical_telemetry_retained": safe_dict_get(result, "historical_telemetry_retained", false)})
+	return api_ok(result)
+}
+
+func source_proxy_response(req, action, profile_name) {
+	parsed := source_request_body(req)
+	if parsed["ok"] == false { return api_error(400, parsed["error"]) }
+	body := parsed["data"]
+	expected_revision := trim(to_string(safe_dict_get(body, "revision", "")))
+	payload := safe_dict_get(body, "profile", body)
+	result := watchdog_sources_proxy_mutate(PROXY_CONFIG_PATH, action, profile_name, payload, expected_revision)
+	if result["ok"] == false { insert_audit_event("source_proxy_profile_" + action, resolve_audit_actor_key(req, "api"), "denied", {"profile_name": truncate_str(profile_name, 80), "reason": result["error"]}); return api_error(result["status"], result["error"]) }
+	insert_audit_event("source_proxy_profile_" + action, resolve_audit_actor_key(req, "api"), "success", {"profile_name": profile_name, "restart_required": true, "historical_telemetry_retained": safe_dict_get(result, "historical_telemetry_retained", false)})
+	return api_ok(result)
+}
+
 maybe_run_scheduled_backup()
 server := http_server(PORT)
 
@@ -3820,6 +4042,117 @@ server := server.route("GET", "/api/proxy-config", func(req) {
 	}
 
 	return api_ok(payload)
+})
+
+# Connected Sources management API. The contract is versioned independently
+# from the legacy dashboard API, and all verification remains local.
+server := server.route("GET", "/api/sources", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	return api_ok(source_inventory(req))
+})
+
+server := server.route("GET", "/api/sources/setup-templates", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	return api_ok({"contract_version": watchdog_sources_contract_version, "templates": watchdog_sources_setup_templates()})
+})
+
+server := server.route("GET", "/api/sources/:id", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	requested_source_id := truncate_str(trim(to_string(safe_dict_get(safe_dict_get(req, "params", {}), "id", ""))), 80)
+	inventory := source_inventory(req)
+	item := source_find(inventory, requested_source_id)
+	if type(item) == "null" { return api_error(404, "Source not found") }
+	return api_ok({"contract_version": watchdog_sources_contract_version, "source": item, "recent_evidence": [{"status": item["status"], "basis": item["status_evidence"], "observed_at": item["status_observed_at"], "accepted_records": item["accepted_records"], "legacy_requests": item["legacy_requests"]}], "historical_telemetry_mutable": false})
+})
+
+server := server.route("POST", "/api/sources", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	parsed := source_request_body(req)
+	if parsed["ok"] == false { return api_error(400, parsed["error"]) }
+	body := parsed["data"]
+	if safe_dict_get(body, "type", "registration") == "proxy_profile" {
+		profile_name := trim(to_string(safe_dict_get(body, "profile_name", "")))
+		return source_proxy_response(req, "create_proxy", profile_name)
+	}
+	return source_registration_response(req, "create", "")
+})
+
+server := server.route("PATCH", "/api/sources/:id", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	id := truncate_str(trim(to_string(safe_dict_get(safe_dict_get(req, "params", {}), "id", ""))), 80)
+	return source_registration_response(req, "update", id)
+})
+
+server := server.route("DELETE", "/api/sources/:id", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	id := truncate_str(trim(to_string(safe_dict_get(safe_dict_get(req, "params", {}), "id", ""))), 80)
+	return source_registration_response(req, "delete", id)
+})
+
+server := server.route("POST", "/api/sources/verify", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	parsed := source_request_body(req)
+	if parsed["ok"] == false { return api_error(400, parsed["error"]) }
+	requested_source_id := truncate_str(trim(to_string(safe_dict_get(parsed["data"], "id", ""))), 80)
+	inventory := source_inventory(req)
+	item := source_find(inventory, requested_source_id)
+	if type(item) == "null" { return api_error(404, "Source not found") }
+	insert_audit_event("source_verify_observation", resolve_audit_actor_key(req, "api"), "success", {"source_id": requested_source_id, "observed": item["observed"]})
+	return api_ok({"contract_version": watchdog_sources_contract_version, "source_id": item["id"], "observed": item["observed"], "status": item["status"], "status_evidence": item["status_evidence"], "observed_at": item["status_observed_at"], "accepted_records": item["accepted_records"], "legacy_requests": item["legacy_requests"], "network_contacted": false})
+})
+
+server := server.route("POST", "/api/sources/:id/verify", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	requested_source_id := truncate_str(trim(to_string(safe_dict_get(safe_dict_get(req, "params", {}), "id", ""))), 80)
+	inventory := source_inventory(req)
+	item := source_find(inventory, requested_source_id)
+	if type(item) == "null" { return api_error(404, "Source not found") }
+	insert_audit_event("source_verify_observation", resolve_audit_actor_key(req, "api"), "success", {"source_id": requested_source_id, "observed": item["observed"]})
+	return api_ok({"contract_version": watchdog_sources_contract_version, "source_id": item["id"], "observed": item["observed"], "status": item["status"], "status_evidence": item["status_evidence"], "observed_at": item["status_observed_at"], "accepted_records": item["accepted_records"], "legacy_requests": item["legacy_requests"], "network_contacted": false})
+})
+
+server := server.route("POST", "/api/sources/update", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	parsed := source_request_body(req)
+	if parsed["ok"] == false { return api_error(400, parsed["error"]) }
+	id := truncate_str(trim(to_string(safe_dict_get(parsed["data"], "id", ""))), 80)
+	return source_registration_response(req, "update", id)
+})
+
+server := server.route("POST", "/api/sources/delete", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	parsed := source_request_body(req)
+	if parsed["ok"] == false { return api_error(400, parsed["error"]) }
+	id := truncate_str(trim(to_string(safe_dict_get(parsed["data"], "id", ""))), 80)
+	return source_registration_response(req, "delete", id)
+})
+
+server := server.route("POST", "/api/sources/proxy/update", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	parsed := source_request_body(req)
+	if parsed["ok"] == false { return api_error(400, parsed["error"]) }
+	profile_name := trim(to_string(safe_dict_get(parsed["data"], "profile_name", "")))
+	return source_proxy_response(req, "update_proxy", profile_name)
+})
+
+server := server.route("POST", "/api/sources/proxy/delete", func(req) {
+	auth := require_api_auth(req)
+	if !auth["allowed"] { return api_error(auth["status"], auth["error"]) }
+	parsed := source_request_body(req)
+	if parsed["ok"] == false { return api_error(400, parsed["error"]) }
+	profile_name := trim(to_string(safe_dict_get(parsed["data"], "profile_name", "")))
+	return source_proxy_response(req, "delete_proxy", profile_name)
 })
 
 server := server.route("GET", "/api/version", func(req) {

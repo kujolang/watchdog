@@ -1,0 +1,330 @@
+# Connected Sources read model and private configuration registry.
+# This module owns operator metadata only. It never writes telemetry tables.
+
+SOURCE_CONTRACT_VERSION := "watchdog.sources-panel.v1"
+SOURCE_REGISTRY_VERSION := "watchdog.sources.v1"
+SOURCE_ACTIVE_WINDOW_MS := 300000
+SOURCE_MAX_REGISTRATIONS := 256
+SOURCE_MAX_FILE_BYTES := 262144
+
+func source_get(value, key, fallback_value) {
+	if type(value) != "dict" || has_key(value, key) == 0 { return fallback_value }
+	return value[key]
+}
+
+func source_text(value, max_len) {
+	text := trim(to_string(value))
+	if len(text) <= max_len { return text }
+	return substring(text, 0, max_len)
+}
+
+func source_exact_text(value, max_len) {
+	text := trim(to_string(value))
+	if text == "" || len(text) > max_len || contains(text, "\n") || contains(text, "\r") { return "" }
+	return text
+}
+
+func source_identifier(value) {
+	text := source_exact_text(value, 80)
+	if text == "" { return "" }
+	for ch in split(text, "") {
+		if contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-", ch) == false { return "" }
+	}
+	return text
+}
+
+func source_env_name(value) {
+	text := source_exact_text(value, 120)
+	if text == "" { return "" }
+	first := substring(text, 0, 1)
+	if contains("ABCDEFGHIJKLMNOPQRSTUVWXYZ_", first) == false { return "" }
+	for ch in split(text, "") {
+		if contains("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_", ch) == false { return "" }
+	}
+	return text
+}
+
+func source_forbidden_key(key) {
+	lower := to_lower(to_string(key))
+	for marker in ["secret", "token", "password", "cookie", "authorization", "api_key", "header", "prompt", "response", "payload", "content", "tenant", "retention", "exporter", "privacy", "config_path"] {
+		if contains(lower, marker) { return true }
+	}
+	return false
+}
+
+func source_object_has_forbidden_key(value) {
+	if type(value) == "dict" {
+		for key in keys(value) {
+			if source_forbidden_key(key) { return true }
+			if source_object_has_forbidden_key(value[key]) { return true }
+		}
+	}
+	if type(value) == "array" {
+		for item in value { if source_object_has_forbidden_key(item) { return true } }
+	}
+	return false
+}
+
+func source_sensitive_value(value) {
+	if type(value) != "string" { return false }
+	lower := to_lower(to_string(value))
+	for marker in ["bearer ", "sk-", "api_key=", "apikey=", "token=", "password=", "secret-canary", "authorization:"] { if contains(lower, marker) { return true } }
+	return false
+}
+
+func source_object_has_sensitive_value(value) {
+	if source_sensitive_value(value) { return true }
+	if type(value) == "dict" { for key in keys(value) { if source_object_has_sensitive_value(value[key]) { return true } } }
+	if type(value) == "array" { for item in value { if source_object_has_sensitive_value(item) { return true } } }
+	return false
+}
+
+func source_default_registry() {
+	return {"schema_version": SOURCE_REGISTRY_VERSION, "revision": 0, "sources": []}
+}
+
+func source_ensure_private_dir(path) {
+	if path == "" || path == "." { return true }
+	parts := split(path, "/")
+	current := ""
+	if starts_with(path, "/") { current = "/" }
+	for part in parts {
+		if part != "" && part != "." {
+			if current == "/" { current = "/" + part } else if current == "" { current = part } else { current = current + "/" + part }
+			if file_exists(current) {
+				if path_is_symlink(current) || path_is_dir(current) == false { return false }
+			} else {
+				create_dir(current)
+				if path_is_symlink(current) || path_is_dir(current) == false { return false }
+				permission_result := io_set_permissions(current, 448)
+				if type(permission_result) != "dict" || source_get(permission_result, "verified", false) == false { return false }
+			}
+		}
+	}
+	return true
+}
+
+func source_validate_registration(raw) {
+	if type(raw) != "dict" { return {"ok": false, "error": "source registration must be an object"} }
+	if source_object_has_forbidden_key(raw) { return {"ok": false, "error": "source registration contains a reserved or secret-bearing field"} }
+	if source_object_has_sensitive_value(raw) { return {"ok": false, "error": "source registration contains a credential-like value"} }
+	allowed := ["id", "name", "description", "kind", "producer_names", "source_apps", "profile_name", "enabled", "archived", "setup_template_id", "options", "created_at", "updated_at"]
+	for key in keys(raw) { if contains(allowed, to_string(key)) == false { return {"ok": false, "error": "unsupported source registration field: " + to_string(key)} } }
+	kind := source_exact_text(source_get(raw, "kind", ""), 40)
+	if contains(["native_v2", "otlp", "observed", "proxy"], kind) == false { return {"ok": false, "error": "invalid source kind"} }
+	name := source_exact_text(source_get(raw, "name", ""), 120)
+	if name == "" { return {"ok": false, "error": "source name is required and must be at most 120 characters"} }
+	description := source_exact_text(source_get(raw, "description", ""), 500)
+	producer_names := source_get(raw, "producer_names", [])
+	source_apps := source_get(raw, "source_apps", [])
+	if type(producer_names) != "array" || type(source_apps) != "array" || len(producer_names) > 16 || len(source_apps) > 16 { return {"ok": false, "error": "source identifiers must be bounded arrays"} }
+	clean_producers := []
+	for value in producer_names {
+		identifier := source_identifier(value)
+		if identifier == "" { return {"ok": false, "error": "invalid producer identifier"} }
+		if contains(clean_producers, identifier) == false { clean_producers = push(clean_producers, identifier) }
+	}
+	clean_apps := []
+	for value in source_apps {
+		identifier := source_identifier(value)
+		if identifier == "" { return {"ok": false, "error": "invalid source application identifier"} }
+		if contains(clean_apps, identifier) == false { clean_apps = push(clean_apps, identifier) }
+	}
+	profile_name := source_identifier(source_get(raw, "profile_name", ""))
+	if kind == "proxy" && profile_name == "" { return {"ok": false, "error": "proxy registrations require a profile name"} }
+	if kind != "proxy" && profile_name != "" { return {"ok": false, "error": "profile name is only valid for proxy registrations"} }
+	if kind != "proxy" && len(clean_producers) == 0 && len(clean_apps) == 0 { return {"ok": false, "error": "an exact producer or source application identifier is required"} }
+	template_id := source_identifier(source_get(raw, "setup_template_id", kind))
+	options := source_get(raw, "options", {})
+	if type(options) != "dict" || len(keys(options)) > 16 { return {"ok": false, "error": "source options must be a bounded object"} }
+	clean_options := {}
+	for key in keys(options) {
+		if source_forbidden_key(key) { return {"ok": false, "error": "source option is reserved"} }
+		option_key := source_identifier(key)
+		option_value := source_exact_text(options[key], 160)
+		if option_key == "" || option_value == "" { return {"ok": false, "error": "source option must be a bounded string"} }
+		clean_options[option_key] = option_value
+	}
+	now_text := format_date(current_timestamp() / 1000.0, "YYYY-MM-DDTHH:mm:ss") + "Z"
+	id := source_identifier(source_get(raw, "id", ""))
+	if id == "" {
+		identity := kind + ":" + profile_name + ":" + join(clean_producers, ",") + ":" + join(clean_apps, ",") + ":" + name
+		id = "src_" + substring(sha256(identity), 0, 24)
+	}
+	created_at := source_exact_text(source_get(raw, "created_at", now_text), 80)
+	updated_at := source_exact_text(source_get(raw, "updated_at", now_text), 80)
+	return {"ok": true, "source": {"id": id, "name": name, "description": description, "kind": kind, "producer_names": clean_producers, "source_apps": clean_apps, "profile_name": profile_name, "enabled": source_get(raw, "enabled", true) != false, "archived": source_get(raw, "archived", false) == true, "setup_template_id": template_id, "options": clean_options, "created_at": created_at, "updated_at": updated_at}}
+}
+
+func source_load_registry(path) {
+	if file_exists(path) == false { return {"ok": true, "registry": source_default_registry(), "revision": "0", "error": ""} }
+	if path_is_symlink(path) || path_is_file(path) == false { return {"ok": false, "registry": source_default_registry(), "revision": "", "error": "source registry must be a regular non-symlink file"} }
+	if file_size(path) > SOURCE_MAX_FILE_BYTES { return {"ok": false, "registry": source_default_registry(), "revision": "", "error": "source registry exceeds 256 KiB"} }
+	text := read_file(path)
+	parsed := null
+	try { parsed = parse_json(text) } except err { return {"ok": false, "registry": source_default_registry(), "revision": "", "error": "source registry is malformed JSON"} }
+	if type(parsed) != "dict" || source_get(parsed, "schema_version", "") != SOURCE_REGISTRY_VERSION || type(source_get(parsed, "sources", null)) != "array" { return {"ok": false, "registry": source_default_registry(), "revision": "", "error": "source registry schema is invalid"} }
+	if len(parsed["sources"]) > SOURCE_MAX_REGISTRATIONS { return {"ok": false, "registry": source_default_registry(), "revision": "", "error": "source registry exceeds registration limit"} }
+	clean := []
+	seen := {}
+	for raw in parsed["sources"] {
+		validated := source_validate_registration(raw)
+		if validated["ok"] == false { return {"ok": false, "registry": source_default_registry(), "revision": "", "error": validated["error"]} }
+		id := validated["source"]["id"]
+		if has_key(seen, id) { return {"ok": false, "registry": source_default_registry(), "revision": "", "error": "duplicate source registration ID"} }
+		seen[id] = true
+		clean = push(clean, validated["source"])
+	}
+	revision_number := source_get(parsed, "revision", 0)
+	registry := {"schema_version": SOURCE_REGISTRY_VERSION, "revision": revision_number, "sources": clean}
+	return {"ok": true, "registry": registry, "revision": sha256(to_json(registry)), "error": ""}
+}
+
+func source_write_registry(path, registry) {
+	if file_exists(path) && (path_is_symlink(path) || path_is_file(path) == false) { return {"ok": false, "error": "source registry target is unsafe"} }
+	parent := dirname(path)
+	if path_is_dir(parent) == false {
+		if source_ensure_private_dir(parent) == false { return {"ok": false, "error": "source registry parent could not be created"} }
+	}
+	if path_is_symlink(parent) || path_is_dir(parent) == false { return {"ok": false, "error": "source registry parent is unsafe"} }
+	payload := to_json(registry) + "\n"
+	if len(payload) > SOURCE_MAX_FILE_BYTES { return {"ok": false, "error": "source registry exceeds 256 KiB"} }
+	write_file_atomic(path, payload, true)
+	io_set_permissions(path, 384)
+	return {"ok": true, "error": "", "revision": sha256(to_json(registry))}
+}
+
+func source_registry_mutate(path, action, source_id, input, expected_revision) {
+	loaded := source_load_registry(path)
+	if loaded["ok"] == false { return {"ok": false, "status": 409, "error": loaded["error"]} }
+	if expected_revision != "" && expected_revision != loaded["revision"] { return {"ok": false, "status": 409, "error": "source registry revision conflict"} }
+	registry := loaded["registry"]
+	sources := registry["sources"]
+	result_source := null
+	if action == "create" {
+		if len(sources) >= SOURCE_MAX_REGISTRATIONS { return {"ok": false, "status": 400, "error": "source registration limit reached"} }
+		validated := source_validate_registration(input)
+		if validated["ok"] == false { return {"ok": false, "status": 400, "error": validated["error"]} }
+		for existing in sources { if existing["id"] == validated["source"]["id"] { return {"ok": false, "status": 409, "error": "source registration already exists"} } }
+		result_source = validated["source"]
+		sources = push(sources, result_source)
+	} else if action == "update" {
+		if type(input) != "dict" { return {"ok": false, "status": 400, "error": "source update must be an object"} }
+		for key in keys(input) { if contains(["name", "description", "enabled", "archived", "setup_template_id", "options"], to_string(key)) == false { return {"ok": false, "status": 400, "error": "unsupported source update field"} } }
+		found := false
+		next_sources := []
+		for existing in sources {
+			if existing["id"] == source_id {
+				merged := existing
+				for key in ["name", "description", "enabled", "archived", "setup_template_id", "options"] { if has_key(input, key) { merged[key] = input[key] } }
+				merged["updated_at"] = format_date(current_timestamp() / 1000.0, "YYYY-MM-DDTHH:mm:ss") + "Z"
+				validated := source_validate_registration(merged)
+				if validated["ok"] == false { return {"ok": false, "status": 400, "error": validated["error"]} }
+				result_source = validated["source"]
+				next_sources = push(next_sources, result_source)
+				found = true
+			} else { next_sources = push(next_sources, existing) }
+		}
+		if found == false { return {"ok": false, "status": 404, "error": "source registration not found"} }
+		sources = next_sources
+	} else if action == "delete" {
+		if source_get(input, "retain_historical_telemetry", false) != true { return {"ok": false, "status": 400, "error": "deletion requires retain_historical_telemetry acknowledgement"} }
+		found := false
+		next_sources := []
+		for existing in sources {
+			if existing["id"] == source_id { result_source = existing; found = true } else { next_sources = push(next_sources, existing) }
+		}
+		if found == false { return {"ok": false, "status": 404, "error": "source registration not found"} }
+		sources = next_sources
+	} else { return {"ok": false, "status": 400, "error": "unsupported source mutation"} }
+	registry["sources"] = sources
+	registry["revision"] = source_get(registry, "revision", 0) + 1
+	written := source_write_registry(path, registry)
+	if written["ok"] == false { return {"ok": false, "status": 500, "error": written["error"]} }
+	return {"ok": true, "status": 200, "source": result_source, "revision": written["revision"], "restart_required": false, "historical_telemetry_retained": action == "delete"}
+}
+
+func source_proxy_endpoint_allowed(endpoint) {
+	text := to_lower(source_exact_text(endpoint, 2048))
+	if text == "" || contains(text, "@") || contains(text, "#") || contains(text, "?") || contains(text, "\\") { return false }
+	if starts_with(text, "https://") { return true }
+	if starts_with(text, "http://127.0.0.1:") || starts_with(text, "http://localhost:") || starts_with(text, "http://[::1]:") { return true }
+	return false
+}
+
+func source_proxy_mutate(path, action, profile_name, input, expected_revision) {
+	if profile_name == "default" { return {"ok": false, "status": 403, "error": "the default proxy profile is read-only in this release"} }
+	name := source_identifier(profile_name)
+	if name == "" { return {"ok": false, "status": 400, "error": "invalid proxy profile name"} }
+	if file_exists(path) && (path_is_symlink(path) || path_is_file(path) == false || file_size(path) > SOURCE_MAX_FILE_BYTES) { return {"ok": false, "status": 409, "error": "proxy configuration target is unsafe"} }
+	parent := dirname(path)
+	if path_is_dir(parent) == false {
+		if source_ensure_private_dir(parent) == false { return {"ok": false, "status": 500, "error": "proxy configuration parent could not be created"} }
+	}
+	if path_is_symlink(parent) || path_is_dir(parent) == false { return {"ok": false, "status": 409, "error": "proxy configuration parent is unsafe"} }
+	text := "{}"
+	if file_exists(path) { text = read_file(path) }
+	current_revision := sha256(text)
+	if expected_revision != "" && expected_revision != current_revision { return {"ok": false, "status": 409, "error": "proxy configuration revision conflict"} }
+	cfg := null
+	try { cfg = parse_json(text) } except err { return {"ok": false, "status": 409, "error": "proxy configuration is malformed JSON"} }
+	if type(cfg) != "dict" { return {"ok": false, "status": 409, "error": "proxy configuration must be an object"} }
+	profiles := source_get(cfg, "upstream_profiles", {})
+	if type(profiles) != "dict" { return {"ok": false, "status": 409, "error": "upstream_profiles must be an object"} }
+	if action == "delete_proxy" {
+		if source_get(input, "retain_historical_telemetry", false) != true { return {"ok": false, "status": 400, "error": "deletion requires retain_historical_telemetry acknowledgement"} }
+		if has_key(profiles, name) == false { return {"ok": false, "status": 404, "error": "proxy profile not found"} }
+		next_profiles := {}
+		for existing_name in keys(profiles) { if existing_name != name { next_profiles[existing_name] = profiles[existing_name] } }
+		profiles = next_profiles
+	} else {
+		allowed := ["upstream_base_url", "auth_mode", "upstream_api_key_env", "enabled", "display_name"]
+		for key in keys(input) { if contains(allowed, to_string(key)) == false { return {"ok": false, "status": 400, "error": "unsupported proxy profile field"} } }
+		endpoint := source_exact_text(source_get(input, "upstream_base_url", ""), 2048)
+		if source_sensitive_value(endpoint) || source_sensitive_value(source_get(input, "display_name", "")) { return {"ok": false, "status": 400, "error": "proxy profile contains a credential-like value"} }
+		if source_proxy_endpoint_allowed(endpoint) == false { return {"ok": false, "status": 400, "error": "proxy upstream URL must be HTTPS or explicit loopback HTTP without credentials, query, or fragment"} }
+		auth_mode := source_exact_text(source_get(input, "auth_mode", "passthrough"), 20)
+		if auth_mode != "passthrough" && auth_mode != "override" { return {"ok": false, "status": 400, "error": "proxy auth_mode must be passthrough or override"} }
+		env_name := source_env_name(source_get(input, "upstream_api_key_env", ""))
+		if auth_mode == "override" && env_name == "" { return {"ok": false, "status": 400, "error": "override mode requires an environment-variable name"} }
+		profile := {}
+		if has_key(profiles, name) && type(profiles[name]) == "dict" { profile = profiles[name] }
+		profile["upstream_base_url"] = endpoint
+		profile["auth_mode"] = auth_mode
+		profile["upstream_api_key_env"] = env_name
+		profile["enabled"] = source_get(input, "enabled", true) != false
+		profile["display_name"] = source_exact_text(source_get(input, "display_name", name), 120)
+		profiles[name] = profile
+	}
+	cfg["upstream_profiles"] = profiles
+	payload := to_json(cfg) + "\n"
+	write_file_atomic(path, payload, true)
+	io_set_permissions(path, 384)
+	return {"ok": true, "status": 200, "profile_name": name, "revision": sha256(payload), "restart_required": true, "historical_telemetry_retained": action == "delete_proxy"}
+}
+
+func source_setup_templates() {
+	return [
+		{"id": "proxy", "kind": "proxy", "name": "OpenAI-compatible proxy", "endpoint": "/proxy/v1", "instructions": "Set the application base URL to this Watchdog origin plus /proxy/v1. Select a named profile with X-Watchdog-Upstream-Profile.", "snippet": "OPENAI_BASE_URL=$WATCHDOG_URL/proxy/v1\nX-Watchdog-Upstream-Profile: PROFILE_NAME"},
+		{"id": "native_v2_js", "kind": "native_v2", "name": "JavaScript native v2 client", "endpoint": "/telemetry/v2/batches", "instructions": "Use clients/javascript/watchdog-telemetry.mjs in the producer process. Authentication uses the Watchdog API token at runtime.", "snippet": "WATCHDOG_URL=http://127.0.0.1:7700\nWDG_API_AUTH_TOKEN=$WDG_API_AUTH_TOKEN"},
+		{"id": "native_v2_curl", "kind": "native_v2", "name": "Canonical v2 curl", "endpoint": "/telemetry/v2/batches", "instructions": "POST a watchdog.telemetry.v2 metadata-only batch. Run this from the producer environment.", "snippet": "curl -X POST $WATCHDOG_URL/telemetry/v2/batches -H 'Authorization: Bearer <runtime-token>' -H 'Content-Type: application/json' --data @metadata-only-batch.json"},
+		{"id": "otlp", "kind": "otlp", "name": "OTLP/OpenInference", "endpoint": "/telemetry/v2/otlp/v1/traces", "instructions": "Send AI-relevant OTLP/HTTP JSON to the guarded receiver. Protobuf is not accepted by this runtime; use an OpenTelemetry Collector to translate when needed.", "snippet": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=$WATCHDOG_URL/telemetry/v2/otlp/v1/traces\nOTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer-<runtime-token>"},
+		{"id": "pi", "kind": "native_v2", "name": "Kujo Pi", "instructions": "Enable Pi's repository-owned src/telemetry.mjs adapter and point its host-owned delivery client at Watchdog."},
+		{"id": "agents_sdk", "kind": "native_v2", "name": "Agents SDK", "instructions": "Use the repository-owned src/agents/tracing/watchdog.kujo adapter and host delivery callback."},
+		{"id": "ai_sdk", "kind": "native_v2", "name": "AI SDK", "instructions": "Use the repository-owned src/watchdog_telemetry.kujo adapter."},
+		{"id": "mcp", "kind": "native_v2", "name": "MCP", "instructions": "Use the repository-owned src/telemetry/watchdog.kujo adapter."},
+		{"id": "dispatch", "kind": "native_v2", "name": "Dispatch", "instructions": "Use Dispatch's repository-owned src/core/trace.kujo lifecycle adapter."},
+		{"id": "relay", "kind": "native_v2", "name": "Relay", "instructions": "Use Relay's repository-owned src/watchdog.kujo lifecycle adapter."},
+		{"id": "eval", "kind": "native_v2", "name": "Eval", "instructions": "Use Eval's repository-owned src/watchdog_telemetry.kujo adapter."},
+		{"id": "runledger", "kind": "observed", "name": "RunLedger", "instructions": "Use RunLedger correlation references; RunLedger does not deliver telemetry itself."},
+		{"id": "kujo_workflows", "kind": "native_v2", "name": "Kujo Workflows", "instructions": "Use the ai-sdk-watchdog-showcase distribution workflow."}
+	]
+}
+
+export watchdog_sources_contract_version := SOURCE_CONTRACT_VERSION
+export watchdog_sources_registry_version := SOURCE_REGISTRY_VERSION
+export watchdog_sources_load_registry := source_load_registry
+export watchdog_sources_registry_mutate := source_registry_mutate
+export watchdog_sources_proxy_mutate := source_proxy_mutate
+export watchdog_sources_setup_templates := source_setup_templates
+export watchdog_sources_active_window_ms := SOURCE_ACTIVE_WINDOW_MS
