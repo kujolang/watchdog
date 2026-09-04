@@ -22,6 +22,7 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 
 ### Fixed
 
+- Refine Connected Sources spacing and Departure Mono typography, restore the local add icon, and expose accessible icon controls for editing or deleting manageable connections.
 - Reject negative token telemetry and non-finite provider-reported costs before persistence.
 - Preserve safe dotted proxy resource identifiers, streamed `data:` content, and upstream retry/request-id headers.
 - Apply tenant and project export scopes to related tool, step, trace, span, and event rows.
