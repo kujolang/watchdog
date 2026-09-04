@@ -12,10 +12,13 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 - Add canonical logical-request queries, lineage diagnostics, dashboard evidence views, and lossless JSONL/OTLP projections.
 - Add a Dither Kit trend sparkline to the canonical-records dashboard card.
 - Add a phase-gated implementation prompt for a secure, evidence-backed Connected Sources management panel.
+- Add the `watchdog.sources-panel.v1` API, private `watchdog.sources.v1` registry, exact source aggregation, evidence-backed verification, and safe named proxy-profile management.
+- Add a responsive, keyboard-accessible Sources dashboard with filters, detail/setup dialogs, non-secret copy actions, and registration lifecycle controls.
 
 ### Changed
 
 - Balance the nine overview cards into four- and five-card desktop rows and replace data-view emoji decorations with local Tabler SVG icons.
+- Keep source registrations separate from exporter destinations and report proxy configuration writes as restart-required.
 
 ### Fixed
 

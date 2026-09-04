@@ -134,6 +134,7 @@ Environment variables:
 | `WDG_PORT` | `7700` | HTTP port for Watchdog + proxy |
 | `WDG_DB_PATH` | `data/watchdog.db` | SQLite path for logs |
 | `WDG_PROXY_CONFIG_PATH` | `watchdog_proxy_config.json` | JSON config file path |
+| `WDG_SOURCES_CONFIG_PATH` | `watchdog_sources.json` | Private, versioned Connected Sources metadata registry path |
 | `WDG_UPSTREAM_BASE_URL` | `https://api.openai.com/v1` | Upstream OpenAI-compatible base URL |
 | `WDG_PROXY_AUTH_MODE` | `passthrough` | `passthrough` or `override` |
 | `WDG_UPSTREAM_API_KEY` | empty | API key used when auth mode is `override` |
@@ -509,6 +510,13 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `GET` | `/readyz` | Readiness probe (DB connectivity) |
 | `GET` | `/api/version` | API compatibility/version metadata |
 | `GET` | `/api/proxy-config` | Effective proxy config summary |
+| `GET` | `/api/sources` | Merged, evidence-backed inbound source inventory |
+| `GET` | `/api/sources/:id` | Safe Connected Source detail and bounded evidence |
+| `GET` | `/api/sources/setup-templates` | Non-secret, checked-in source setup templates |
+| `POST` | `/api/sources` | Register source metadata or create a safe named proxy profile |
+| `PATCH` | `/api/sources/:id` | Update allowlisted registration metadata with revision protection |
+| `DELETE` | `/api/sources/:id` | Remove registration metadata while retaining telemetry |
+| `POST` | `/api/sources/:id/verify` | Verify accepted local telemetry without network contact |
 | `GET` | `/api/stats` | Overview stats |
 | `GET` | `/api/requests` | Latest request logs; filter by `source_app`, `data_class`, or `pricing_kind` |
 | `POST` | `/api/telemetry/requests` | Authenticated, idempotent intake for telemetry from trusted local apps |
@@ -540,6 +548,13 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `GET` | `/api/export` | Full export (`json` default or `jsonl`/`ndjson`) |
 
 The granular contract is optional and producer-neutral. Watchdog is a passive collector: applications, model providers, and tool executors remain independently usable, and a tool can append its own telemetry without importing or depending on another tool. New producers should send `schema_version: "kujo.telemetry.v1"`; the checked-in contract is [`schemas/telemetry-trace-v1.schema.json`](schemas/telemetry-trace-v1.schema.json). Trace metrics are cumulative absolute values, and trace/span/event/tool identities are replay-safe for durable at-least-once delivery. See [Granular Tracing](docs/GRANULAR_TRACING.md).
+
+The Sources tab and `watchdog.sources-panel.v1` API report inbound producers
+without conflating them with exporter destinations. Status is based only on
+configuration and accepted local telemetry. Native/OTLP registration changes
+manage display/setup metadata; they do not start, stop, or disconnect another
+application. Named proxy profile changes are saved to the existing proxy
+configuration and require a Watchdog restart. See [Connected Sources](docs/CONNECTED_SOURCES.md).
 
 `/api/insights` is intentionally labeled as observed legacy telemetry: runs are grouped by task ID, workflow ID, or session ID; a success signal means no request error was recorded; retry signals are inferred from retry-named trace events; and its token-volume section does not measure context capacity. The Canonical Evidence dashboard tab uses explicit terminal events, typed relations, nullable timing, versioned context limits, and distinct cost kinds instead.
 

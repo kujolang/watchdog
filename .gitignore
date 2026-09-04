@@ -5,6 +5,7 @@
 
 # Local proxy configuration
 watchdog_proxy_config.json
+watchdog_sources.json
 
 # Temporary workspace outputs
 tmp/*

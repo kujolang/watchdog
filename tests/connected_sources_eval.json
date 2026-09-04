@@ -1,0 +1,46 @@
+{
+  "name": "watchdog-connected-sources",
+  "description": "Deterministic Connected Sources outcome gate.",
+  "version": "1.0.0",
+  "output_dir": "./eval_results/connected-sources",
+  "stop_on_failure": false,
+  "artifact_checksums": true,
+  "policy_profile": "strict-ci",
+  "command_pattern_match_mode": "token",
+  "require_command_policy": true,
+  "path_policy_mode": "allowlist-required",
+  "allowed_commands": ["node"],
+  "allowed_command_patterns": ["node tests/"],
+  "blocked_arg_patterns": ["rm -rf", "curl | sh", "watchdog.db"],
+  "redact_output_patterns": ["(?i)token", "(?i)api[_-]?key", "(?i)password", "(?i)secret"],
+  "redaction_audit_mode": true,
+  "allowed_paths": ["./src", "./tests", "./docs", "./README.md", "./CHANGELOG.md", "./dashboard.html", "./dashboard_server.kujo", "./source_management.kujo", "./scripts", "./eval_results"],
+  "policy_stage_overlays": {
+    "ci": {
+      "require_command_policy": true,
+      "path_policy_mode": "allowlist-required",
+      "allowed_commands": ["node"],
+      "allowed_command_patterns": ["node tests/"],
+      "blocked_arg_patterns": ["rm -rf", "curl | sh", "watchdog.db"],
+      "redact_output_patterns": ["(?i)token", "(?i)api[_-]?key", "(?i)password", "(?i)secret"],
+      "redaction_audit_mode": true,
+      "allowed_paths": ["./src", "./tests", "./docs", "./README.md", "./CHANGELOG.md", "./dashboard.html", "./dashboard_server.kujo", "./source_management.kujo", "./scripts", "./eval_results"]
+    }
+  },
+  "tests": [
+    {"name":"API authentication, aggregation, registry persistence, proxy profiles, privacy canaries, atomic writes, conflicts, rollback, and verification","check":"command_succeeds","timeout_seconds":60,"params":{"command":"node tests/connected_sources_management_suite.js"}},
+    {"name":"Dashboard XSS and detail escaping","check":"command_succeeds","timeout_seconds":30,"params":{"command":"node tests/dashboard_xss_regression_check.js"}},
+    {"name":"Connected Sources frontend, accessibility, responsive, and local-asset contract","check":"command_succeeds","timeout_seconds":30,"params":{"command":"node tests/connected_sources_frontend_contract_check.js"}},
+    {"name":"Source inventory stays within the 25 ms p95 budget on the 50000-row reference fixture","check":"command_succeeds","timeout_seconds":90,"params":{"command":"node tests/connected_sources_query_benchmark.js"}},
+    {"name":"Tenant and project isolation regression","check":"command_succeeds","timeout_seconds":60,"params":{"command":"node tests/tenant_project_partitioning_check.js"}},
+    {"name":"Canonical v2 and OTLP source contracts","check":"command_succeeds","timeout_seconds":90,"params":{"command":"node tests/telemetry_v2_api_suite.js"}},
+    {"name":"Authentication failures remain enforced","check":"command_succeeds","timeout_seconds":60,"params":{"command":"node tests/api_auth_mode_check.js"}},
+    {"name":"Proxy behavior and unknown-profile pre-egress rejection","check":"command_succeeds","timeout_seconds":90,"params":{"command":"node tests/proxy_integration_stub_suite.js"}},
+    {"name":"Compatibility mirrors remain synchronized","check":"command_succeeds","timeout_seconds":30,"params":{"command":"node tests/src_layout_compatibility_check.js"}},
+    {"name":"Documentation links remain valid","check":"command_succeeds","timeout_seconds":30,"params":{"command":"node tests/docs_link_check.js"}},
+    {"name":"Sources API contract is present","check":"file_contains","params":{"path":"./src/source_management.kujo","expected":"watchdog.sources-panel.v1"}},
+    {"name":"Sources registry rejects secret-bearing fields","check":"file_contains","params":{"path":"./src/source_management.kujo","expected":"source registration contains a reserved or secret-bearing field"}},
+    {"name":"Sources dashboard uses local Tabler icons","check":"file_contains","params":{"path":"./src/dashboard.html","expected":"data-tabler-icon=\"plus\""}},
+    {"name":"Connected Sources documentation exists","check":"file_exists","params":{"path":"./docs/CONNECTED_SOURCES.md"}}
+  ]
+}
