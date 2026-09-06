@@ -44,7 +44,7 @@ curl -s 'http://127.0.0.1:7700/api/requests?source_app=ai-chat&pricing_kind=cata
 Common `pricing_source` patterns:
 
 - `openai-api-pricing:2026-07-19`
-- `anthropic-pricing:2026-07-19:intro-through-2026-08-31-assume-5m-cache-write`
+- `anthropic-pricing:2026-09-06:launch-rate-confirmed-standard-assume-5m-cache-write`
 - `google-gemini-pricing:2026-07-19`
 - `moonshot-kimi-pricing:2026-07-19`
 - `ollama-cloud-equivalent:*`
@@ -52,7 +52,7 @@ Common `pricing_source` patterns:
 - `openai-api-pricing:2026-08-23:standard-short-context`
 - `openai-api-pricing:2026-08-30:promotional-through-at-least-2026-11-21:standard-short-context`
 - `xai-api-pricing:2026-08-30:standard-short-context`
-- `openrouter-public-catalog:2026-08-30`
+- `openrouter-public-catalog:2026-09-06`
 - `watchdog-fallback-estimate:v1`
 
 ## Reprice historical records
@@ -109,11 +109,11 @@ Apply the same command with `--apply` once the dry-run output looks correct.
 
 ## Provider catalog coverage
 
-The local provider catalog is intentionally versioned and explicit. As of August 30, 2026 it includes:
+The local provider catalog is intentionally versioned and explicit. As of September 6, 2026 it includes:
 
-- direct OpenAI text-token models used by AI Chat such as `gpt-4.1`, `gpt-4.1-mini`, and `o4-mini`, plus the current Codex inventory models `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini`; `gpt-5.6-sol` and the `gpt-daybreak-blue-latest` equivalent use OpenAI's current promotional $4/$0.40/$20 short-context rates through at least November 21, 2026, while non-public-API `gpt-5.3-codex-spark` remains explicitly `unknown`
-- direct Anthropic models such as `claude-sonnet-5`, `claude-opus-4.8`, and `claude-haiku-4.5`
-- direct Google Gemini models such as `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-3.5-flash`, and `gemini-3.5-flash-lite`
+- direct OpenAI text-token models used by AI Chat such as `gpt-4.1`, `gpt-4.1-mini`, and `o4-mini`, plus the current Codex inventory models `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini`; `gpt-5.6-sol` and the `gpt-daybreak-blue-latest` equivalent use OpenAI's current promotional $4/$0.40/$20 rates through at least November 21, 2026, while non-public-API `gpt-5.3-codex-spark` remains explicitly `unknown`
+- direct Anthropic models such as `claude-sonnet-5`, `claude-opus-4.8`, and `claude-haiku-4.5`; Anthropic confirmed the launch $2/$10 Sonnet 5 token rate as its standard rate, so the previously announced September increase did not occur
+- direct Google Gemini models such as `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, and `gemini-3.8-flash`; the Gemini 3.8 Flash row records its introductory rate through December 31, 2026
 - direct Moonshot Kimi models such as `kimi-k2.7-code`, `kimi-k2.6`, and `kimi-k2.5`
 - direct Z.AI, MiniMax, and DeepSeek model IDs already surfaced by AI Chat; deprecated DeepSeek `deepseek-chat` and `deepseek-reasoner` now resolve to the public `deepseek-v4-flash` non-thinking and thinking compatibility modes, while `deepseek-v4-pro` uses the current $0.435/M cache-miss input rate
 - direct xAI equivalents for the active AI Chat OAuth inventory (`grok-4.20-0309-*`, `grok-4.20-multi-agent-0309`, `grok-4.3`, `grok-4.5`, `grok-4.6`, and `grok-build-0.1`) using xAI's public standard short-context token rates; these are direct-API value estimates, not OAuth subscription invoices
@@ -149,7 +149,7 @@ rather than generic paid fallbacks.
 
 - Catalog pricing is still an estimate, not an invoice.
 - Some direct-provider features still cannot be priced exactly from token counts alone. Examples include OpenAI audio-minute billing, Anthropic cache-write TTL selection, and provider pages that publish prompt-length breakpoints Watchdog's static snapshot cannot yet encode. The GPT-5.4, GPT-5.5, GPT-5.6, and xAI Grok rows therefore use standard short-context rates; requests above a provider's documented long-context threshold can cost more than Watchdog estimates.
-- Claude Sonnet 5's introductory direct rate is documented only through August 31, 2026. Refresh the direct provider catalog after that date before treating the current $2/$10 row as authoritative for new telemetry.
+- Gemini 3.8 Flash's introductory direct rate is documented through December 31, 2026. Refresh the direct provider catalog after that date before treating the current $0.75/$3.75 row as authoritative for new telemetry.
 - OpenRouter routing, workspace discounts, negotiated rates, and future price changes may differ from the snapshot Watchdog used at ingest time.
 - Ollama Cloud usage is measured by Ollama infrastructure utilization, not a public per-token invoice schedule, so `ollama-cloud-equivalent:*` rows are best-effort comparability estimates.
 - Pricing resolution currently receives the model ID but not the selected upstream profile. For bare Ollama model IDs that also exist as direct-provider IDs, provenance can identify the underlying provider price without identifying the Ollama route; the stored request `provider` field remains the route-level source of truth.

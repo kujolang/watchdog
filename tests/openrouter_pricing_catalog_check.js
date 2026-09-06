@@ -25,6 +25,13 @@ assert.equal(gpt54.input_rate_per_million, 2.5);
 assert.equal(gpt54.output_rate_per_million, 15);
 assert.equal(gpt54.cached_input_rate_per_million, 0.25);
 
+const astra = resolvePricing('gpt-6-astra', { providerCatalog, openrouterCatalog });
+assert.equal(astra.pricing_kind, 'catalog');
+assert.equal(astra.input_rate_per_million, 10);
+assert.equal(astra.cached_input_rate_per_million, 1);
+assert.equal(astra.cache_write_input_rate_per_million, 12.5);
+assert.equal(astra.output_rate_per_million, 50);
+
 const opus5 = resolvePricing('anthropic/claude-opus-5', { providerCatalog, openrouterCatalog });
 assert.equal(opus5.pricing_kind, 'catalog');
 assert.equal(opus5.input_rate_per_million, 5);
@@ -32,9 +39,9 @@ assert.equal(opus5.output_rate_per_million, 25);
 assert.equal(opus5.cache_write_input_rate_per_million, 6.25);
 
 const glm52 = resolvePricing('z-ai/glm-5.2', { providerCatalog, openrouterCatalog });
-assert.equal(glm52.input_rate_per_million, 1.19);
-assert.equal(glm52.output_rate_per_million, 3.74);
-assert.equal(glm52.cached_input_rate_per_million, 0.221);
+assert.equal(glm52.input_rate_per_million, 0.966);
+assert.equal(glm52.output_rate_per_million, 3.036);
+assert.equal(glm52.cached_input_rate_per_million, 0.1932);
 
 const alias = resolvePricing('~anthropic/claude-haiku-latest', { providerCatalog, openrouterCatalog });
 assert.equal(alias.pricing_kind, 'catalog');
@@ -104,6 +111,15 @@ assert.equal(sonnetBreakdown.input_cost_usd, 0.002);
 assert.equal(sonnetBreakdown.output_cost_usd, 0.002);
 assert.equal(sonnetBreakdown.cached_input_cost_usd, 0.0001);
 assert.equal(sonnetBreakdown.cache_write_input_cost_usd, 0.000625);
+
+const directSonnet = resolvePricing('claude-sonnet-5', { providerCatalog, openrouterCatalog });
+assert.match(directSonnet.pricing_source, /launch-rate-confirmed-standard/);
+
+const gemini38 = resolvePricing('gemini-3.8-flash', { providerCatalog, openrouterCatalog });
+assert.equal(gemini38.pricing_kind, 'catalog');
+assert.equal(gemini38.input_rate_per_million, 0.75);
+assert.equal(gemini38.cached_input_rate_per_million, 0.075);
+assert.equal(gemini38.output_rate_per_million, 3.75);
 
 const unpricedAudio = resolvePricing('whisper-1', { providerCatalog, openrouterCatalog });
 assert.equal(unpricedAudio.pricing_kind, 'unknown');

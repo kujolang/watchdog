@@ -34,7 +34,7 @@ contains(server, 'excluded.cached_input_tokens > traces.cached_input_tokens', 'T
 contains(server, 'excluded.input_cost_usd > traces.input_cost_usd', 'Trace persistence should keep replay-safe cumulative cost components');
 contains(dashboard, 'Est. API Value', 'Dashboard summary label should remain present');
 
-assert(providerCatalog.catalog_id === 'watchdog-provider-catalog:2026-08-30', 'Provider catalog snapshot should be versioned with the refresh date');
+assert(providerCatalog.catalog_id === 'watchdog-provider-catalog:2026-09-06', 'Provider catalog snapshot should be versioned with the refresh date');
 assert(providerCatalog.models['gpt-4.1'].cached_input_rate_per_million === 0.5, 'Direct OpenAI prompt caching should come from the provider catalog');
 assert(providerCatalog.models['gpt-5.6-sol'].cache_write_input_rate_per_million === 5, 'Current promotional Codex model cache-write pricing should come from OpenAI');
 assert(providerCatalog.models['gpt-daybreak-blue-latest'].priced_model === 'gpt-5.6-sol', 'Daybreak Blue should use its documented GPT-5.6 Sol alias basis');
@@ -51,7 +51,7 @@ assert(providerCatalog.models['stealth/ox-alpha'].has_pricing === false, 'Unconf
 assert(providerCatalog.models['kimi-k3'].has_pricing === false, 'Kimi K3 should remain explicitly unknown without a current direct per-token rate');
 assert(providerCatalog.aliases['ollama-cloud/kimi-k3:cloud'].target_model_id === 'kimi-k3', 'Ollama Cloud Kimi K3 should resolve to explicit unknown pricing');
 assert(providerCatalog.aliases['ollama-cloud/kimi-k2.6'].target_model_id === 'kimi-k2.6', 'Ollama cloud aliases should point at their pricing basis');
-assert(catalog.catalog_id === 'openrouter-public-catalog:2026-08-30', 'Catalog snapshot should be versioned with the refresh date');
+assert(catalog.catalog_id === 'openrouter-public-catalog:2026-09-06', 'Catalog snapshot should be versioned with the refresh date');
 assert(catalog.models['openai/gpt-5.4'].input_rate_per_million === 2.5, 'GPT-5.4 prompt pricing should come from the catalog');
 assert(catalog.models['anthropic/claude-sonnet-5'].cache_write_input_rate_per_million === 2.5, 'Claude Sonnet 5 cache write pricing should come from the catalog');
 assert(catalog.aliases['~anthropic/claude-haiku-latest'].target_model_id === 'anthropic/claude-haiku-4.5', 'Alias map should normalize Claude Haiku latest');
