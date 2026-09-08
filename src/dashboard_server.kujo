@@ -4357,16 +4357,16 @@ server := server.route("POST", "/telemetry/v2/batches", func(req) {
 		if type(record) != "dict" { return api_error(400, "each record must be an object") }
 	}
 	approved := canonical_policy_batch(body)
-	validation := watchdog_telemetry_repository_validate(approved)
-	if validation["ok"] == false {
-		if safe_dict_get(validation, "error_code", "") == "invalid_semantics" { return api_error_code(400, "invalid_semantics", validation["error"]) }
-		return api_error(400, validation["error"])
-	}
 	try {
 		result := persist_approved_canonical_batch(approved)
 		if result["ok"] == false && safe_dict_get(result, "error_code", "") == "record_identity_conflict" {
 			insert_audit_event("canonical_telemetry_intake", resolve_audit_actor_key(req, "api"), "conflict", {"batch_id": external_text(body, "batch_id", "", 160), "producer": external_text(safe_dict_get(body, "producer", {}), "name", "external", 80), "error_code": "record_identity_conflict"})
 			return api_error(409, "record_identity_conflict")
+		}
+		# The repository validates before opening its transaction. Reuse that result.
+		if result["ok"] == false {
+			if safe_dict_get(result, "error_code", "") == "invalid_semantics" { return api_error_code(400, "invalid_semantics", result["error"]) }
+			return api_error(400, result["error"])
 		}
 		insert_audit_event("canonical_telemetry_intake", resolve_audit_actor_key(req, "api"), "success", {
 			"batch_id": external_text(body, "batch_id", "", 160),

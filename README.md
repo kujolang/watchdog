@@ -670,3 +670,8 @@ records across requests or bypass privacy, validation, or transactional conflict
 rejection. Legacy rows without stored hashes still backfill from their canonical
 JSON. The identity-conflict fixture covers mixed duplicate/new batches and this
 legacy retry path.
+
+Canonical HTTP intake relies on the repository's structural validation before
+its transaction rather than repeating the same full validation in the route.
+Raw container bounds and authoritative privacy projection still precede it;
+validation failures return HTTP 400 and identity conflicts return HTTP 409.
