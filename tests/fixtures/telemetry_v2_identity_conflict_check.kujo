@@ -40,6 +40,22 @@ mixed_result := watchdog_telemetry_repository_insert(db, mixed)
 assert(mixed_result["ok"] == false, "mixed conflicting batch was accepted")
 assert(len(db_query(db, "SELECT id FROM telemetry_records_v2 WHERE record_id = 'trace:fixture:atomic-new'", [])) == 0, "conflicting batch partially persisted")
 
+# A duplicate and a new record in one batch must preserve per-record hashes.
+accepted_mixed := parse_json(to_json(batch))
+accepted_mixed["batch_id"] = "fixture:identity:accepted-mixed"
+accepted_mixed["records"] = [batch["records"][0], new_record]
+accepted_result := watchdog_telemetry_repository_insert(db, accepted_mixed)
+assert(accepted_result["ok"] == true && accepted_result["records"] == 1, "mixed duplicate/new count drift")
+stored_new := db_query(db, "SELECT canonical_json, canonical_sha256 FROM telemetry_records_v2 WHERE record_id = ?", [new_record["record_id"]])[0]
+assert(stored_new["canonical_json"] == watchdog_telemetry_repository_canonical_json(new_record), "stored canonical bytes drift")
+assert(stored_new["canonical_sha256"] == watchdog_telemetry_repository_record_hash(new_record), "stored hash differs from canonical evidence")
+# Legacy rows without a stored digest must still backfill and deduplicate.
+db_execute(db, "UPDATE telemetry_records_v2 SET canonical_sha256 = '' WHERE record_id = ?", [new_record["record_id"]])
+legacy_retry := watchdog_telemetry_repository_insert(db, accepted_mixed)
+assert(legacy_retry["ok"] == true && legacy_retry["deduplicated"] == true, "legacy digest backfill changed retry semantics")
+backfilled := db_query(db, "SELECT canonical_sha256 FROM telemetry_records_v2 WHERE record_id = ?", [new_record["record_id"]])[0]
+assert(backfilled["canonical_sha256"] == stored_new["canonical_sha256"], "legacy backfill hash drift")
+
 ordered_a := {"z": [null, 0, false], "a": {"second": 2, "first": 1}}
 ordered_b := {"a": {"first": 1, "second": 2}, "z": [null, 0, false]}
 assert(watchdog_telemetry_repository_canonical_json(ordered_a) == watchdog_telemetry_repository_canonical_json(ordered_b), "canonical JSON depends on object key order")

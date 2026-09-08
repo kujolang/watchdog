@@ -663,3 +663,10 @@ Oversized arrays and non-object entries return HTTP 400 before privacy filtering
 they are never silently reduced to a successful partial batch. Valid batches are
 privacy-filtered once, then retain repository validation, identity-conflict checks
 and transactional persistence.
+
+Canonical repository intake reuses each validated record's stable JSON and SHA-256
+within its bounded batch for conflict checks and insertion. It does not cache
+records across requests or bypass privacy, validation, or transactional conflict
+rejection. Legacy rows without stored hashes still backfill from their canonical
+JSON. The identity-conflict fixture covers mixed duplicate/new batches and this
+legacy retry path.
