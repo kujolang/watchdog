@@ -22,3 +22,8 @@ assert(contains(encoded, "runledger-1"), "RunLedger correlation missing")
 assert(contains(encoded, "eval-result-1"), "evaluation correlation missing")
 assert(contains(encoded, "tool_args") == 0 && contains(encoded, "tool_result") == 0, "native adapter captured tool content")
 print("telemetry_native_adapter_check: PASS")
+
+integer_batch := watchdog_native_batch_normalize("integer-test", "1", "integer-test", [{"event_id": "start", "trace_id": "run", "event_kind": "retrieval", "instantaneous": true, "attributes": {"kujo.operation.attempt": 1, "kujo.source.occurred_at_ms": 1788836289375}}])
+assert(integer_batch["batch"]["records"][0]["attributes"]["kujo.operation.attempt"] == 1, "native integer attempt lost")
+assert(integer_batch["batch"]["records"][0]["attributes"]["kujo.source.occurred_at_ms"] == 1788836289375, "native occurrence time lost")
+print("native integer metadata: PASS")

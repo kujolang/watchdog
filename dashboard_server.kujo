@@ -1699,7 +1699,7 @@ func canonical_policy_privacy(record) {
 
 func canonical_policy_scalar(value) {
 	if type(value) == "string" { return redact_sensitive_text(value) }
-	if type(value) == "integer" || type(value) == "float" || type(value) == "bool" || type(value) == "boolean" || type(value) == "null" { return value }
+	if type(value) == "int" || type(value) == "integer" || type(value) == "float" || type(value) == "bool" || type(value) == "boolean" || type(value) == "null" { return value }
 	return null
 }
 

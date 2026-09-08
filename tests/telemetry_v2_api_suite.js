@@ -66,6 +66,8 @@ async function run() {
 		server = await startServer();
 		const batch = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/telemetry-v2/canonical-minimal.json'), 'utf8'));
 		batch.batch_id = 'fixture:api:privacy';
+		batch.records[0].attributes['kujo.operation.attempt'] = 1;
+		batch.records[0].attributes['kujo.source.occurred_at_ms'] = 1788836289375;
 		batch.records[0].attributes.authorization = 'Bearer secret-canary-value';
 		batch.records[0].content = [{class: 'prompt', media_type: 'text/plain', value: 'raw-content-canary', truncated: false}];
 		batch.records[0].privacy = {content_mode: 'full', policy_version: 'producer-policy', transformations: []};
@@ -88,6 +90,8 @@ async function run() {
 		const records = JSON.parse(recordsResponse.body).data.records;
 		assert.strictEqual(records.length, 1, 'canonical replay duplicated persisted records');
 		const stored = records[0].record;
+		assert.strictEqual(stored.attributes['kujo.operation.attempt'], 1, 'integer attempt erased by intake privacy policy');
+		assert.strictEqual(stored.attributes['kujo.source.occurred_at_ms'], 1788836289375, 'source occurrence erased by intake privacy policy');
 		assert.deepStrictEqual(stored.content, [], 'authoritative policy retained raw content');
 		assert.strictEqual(stored.privacy.content_mode, 'off');
 		assert.ok(stored.privacy.transformations.includes('content_dropped_by_watchdog_policy'));
