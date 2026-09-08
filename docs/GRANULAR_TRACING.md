@@ -97,3 +97,18 @@ Trace rows participate in `/api/export`, `/api/admin/prune`, `/api/admin/prune-f
 ## Dashboard
 
 The Traces view renders a searchable waterfall with model/tool timing, event markers, time to first token, output throughput, token and inferred cost components, errors, and persistence confirmation. Legacy proxy lifecycle steps are grouped in a collapsible transport section so they do not obscure application-level work.
+
+### JSONL cursor continuity metadata
+
+Canonical `/telemetry/v2/jsonl` manifests additionally expose `store_epoch`,
+`retained_first_sequence`, `store_last_sequence`, `cursor_anchor`, and
+`next_anchor`. The epoch is an opaque random identity persisted in the telemetry
+SQLite store; restarting the server preserves it, while a new store gets a new
+identity. A restored copy retains its epoch, so consumers must also compare the
+high-water mark and the SHA-256 anchor of their last acknowledged canonical
+record. Empty anchors mean that record is unavailable (including retention).
+
+The signed v2 cursor format is unchanged. Consumers persist the next cursor,
+next anchor and store epoch together. Epoch changes, rollback, or missing/changed
+anchors require an explicit partial-history reset rather than a continuity claim.
+These fields describe observation storage, not source execution success.

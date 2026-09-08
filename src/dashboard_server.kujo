@@ -1576,6 +1576,9 @@ print("")
 
 db := db_connect("sqlite", DB_PATH)
 watchdog_ensure_schema(db)
+# Stable identity belongs to this telemetry store, not its path or API credential.
+db_execute(db, "CREATE TABLE IF NOT EXISTS telemetry_store_identity (id INTEGER PRIMARY KEY CHECK(id=1), epoch TEXT NOT NULL)", [])
+db_execute(db, "INSERT OR IGNORE INTO telemetry_store_identity(id,epoch) VALUES(1,lower(hex(randomblob(16))))", [])
 db_execute(db, "INSERT OR IGNORE INTO backup_settings (id, enabled, interval_minutes, backup_dir, retention_count, encryption_enabled, updated_at_ms) VALUES (1, ?, ?, ?, ?, ?, ?)", [BACKUP_DEFAULT_ENABLED, BACKUP_DEFAULT_INTERVAL_MINUTES, BACKUP_DEFAULT_DIR, BACKUP_DEFAULT_RETENTION_COUNT, BACKUP_DEFAULT_ENCRYPTION_ENABLED, current_timestamp()])
 
 print("Database ready: " + DB_PATH)
@@ -1949,7 +1952,20 @@ func jsonl_v2_response(rows, exported_at, start_cursor) {
 	}
 	body := join(lines, "\n")
 	next_cursor := jsonl_v2_cursor(last_sequence)
+	identity_rows := db_query(db, "SELECT epoch FROM telemetry_store_identity WHERE id=1", [])
+	bounds_rows := db_query(db, "SELECT COALESCE(MIN(id),0) AS first_id, COALESCE(MAX(id),0) AS last_id FROM telemetry_records_v2", [])
+	anchor_rows := db_query(db, "SELECT canonical_json FROM telemetry_records_v2 WHERE id=?", [start_cursor])
+	next_anchor_rows := db_query(db, "SELECT canonical_json FROM telemetry_records_v2 WHERE id=?", [last_sequence])
+	anchor_hash := ""
+	next_anchor_hash := ""
+	if len(anchor_rows) > 0 { anchor_hash = sha256(anchor_rows[0]["canonical_json"]) }
+	if len(next_anchor_rows) > 0 { next_anchor_hash = sha256(next_anchor_rows[0]["canonical_json"]) }
 	manifest := {
+		"store_epoch": identity_rows[0]["epoch"],
+		"retained_first_sequence": bounds_rows[0]["first_id"],
+		"store_last_sequence": bounds_rows[0]["last_id"],
+		"cursor_anchor": anchor_hash,
+		"next_anchor": next_anchor_hash,
 		"jsonl_version": JSONL_V2_VERSION,
 		"schema_version": CANONICAL_TELEMETRY_SCHEMA_VERSION,
 		"exported_at": exported_at,

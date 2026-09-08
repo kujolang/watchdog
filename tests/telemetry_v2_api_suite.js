@@ -104,6 +104,9 @@ async function run() {
 		const jsonl = await request('GET', '/telemetry/v2/jsonl?limit=10');
 		assert.strictEqual(jsonl.status, 200, jsonl.body);
 		assert.strictEqual(jsonl.headers['x-watchdog-jsonl-version'], 'watchdog.jsonl.v2');
+		const initialManifest = JSON.parse(Buffer.from(jsonl.headers['x-watchdog-manifest'], 'base64').toString());
+		assert.match(initialManifest.store_epoch, /^[a-f0-9]{32}$/);
+		assert.match(initialManifest.next_anchor, /^[a-f0-9]{64}$/);
 		const jsonlLines = jsonl.body.trim().split('\n').filter(Boolean);
 		assert.strictEqual(jsonlLines.length, 1, 'JSONL v2 export count drift');
 		const envelope = JSON.parse(jsonlLines[0]);
@@ -204,6 +207,26 @@ async function run() {
 		const backupPath = JSON.parse(backup.stdout).path;
 		const backupBytes = fs.readFileSync(backupPath);
 		for (const canary of ['raw-content-canary', 'secret-canary-value', 'otlp-raw-prompt-canary', 'sensitive-document-canary']) assert.ok(!backupBytes.includes(Buffer.from(canary)), `backup retained ${canary}`);
+		await stopServer(server.child);
+		server = await startServer();
+		const resumed = await request('GET', '/telemetry/v2/jsonl?cursor=' + initialManifest.next_cursor);
+		assert.strictEqual(resumed.status, 200, resumed.body);
+		const resumedManifest = JSON.parse(Buffer.from(resumed.headers['x-watchdog-manifest'], 'base64').toString());
+		assert.strictEqual(resumedManifest.store_epoch, initialManifest.store_epoch, 'restart changed store epoch');
+		assert.strictEqual(resumedManifest.cursor_anchor, initialManifest.next_anchor, 'restart lost cursor anchor');
+		const retentionDb = new DatabaseSync(dbPath);
+		retentionDb.exec('DELETE FROM telemetry_records_v2 WHERE id=1');
+		retentionDb.close();
+		const retained = await request('GET', '/telemetry/v2/jsonl?cursor=' + initialManifest.next_cursor);
+		assert.strictEqual(JSON.parse(Buffer.from(retained.headers['x-watchdog-manifest'], 'base64').toString()).cursor_anchor, '', 'retention must expose missing anchor');
+		await stopServer(server.child);
+		const restoreDb = new DatabaseSync(dbPath); restoreDb.exec('PRAGMA wal_checkpoint(TRUNCATE)'); restoreDb.close();
+		fs.renameSync(dbPath, dbPath + '.replaced');
+		server = await startServer();
+		const replaced = await request('GET', '/telemetry/v2/jsonl');
+		const replacedManifest = JSON.parse(Buffer.from(replaced.headers['x-watchdog-manifest'], 'base64').toString());
+		assert.notStrictEqual(replacedManifest.store_epoch, initialManifest.store_epoch, 'new store reused epoch');
+		assert.strictEqual(replacedManifest.store_last_sequence, 0);
 	} catch (error) {
 		if (server) error.message += `\nServer output:\n${server.output().slice(-4000)}`;
 		throw error;
