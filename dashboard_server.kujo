@@ -1435,6 +1435,7 @@ func resolve_override_api_key(cfg) {
 }
 
 PORT := parse_int_env_many(["WDG_PORT"], DEFAULT_PORT)
+BIND_HOST := env_or("WDG_HOST", "0.0.0.0")
 DB_PATH := env_or_many(["WDG_DB_PATH"], DEFAULT_DB_PATH)
 PROXY_CONFIG_PATH := env_or_many(["WDG_PROXY_CONFIG_PATH"], DEFAULT_PROXY_CONFIG_PATH)
 SOURCES_CONFIG_PATH := env_or_many(["WDG_SOURCES_CONFIG_PATH"], DEFAULT_SOURCES_CONFIG_PATH)
@@ -1501,6 +1502,7 @@ func kv(label, value) {
 }
 
 print_lines(["=== Watchdog ===", ""])
+kv("Host", BIND_HOST)
 kv("Port", PORT)
 kv("Database", DB_PATH)
 kv("Proxy config", PROXY_CONFIG_PATH)
@@ -1535,7 +1537,7 @@ kv("Backup default directory", BACKUP_DEFAULT_DIR)
 kv("Backup encryption key configured", BACKUP_ENCRYPTION_KEY_FILE != "")
 if API_AUTH_MODE != "token" {
 	print_lines([
-		"Warning: API auth is disabled and Kujo http_server listens on all interfaces.",
+		"Warning: API auth is disabled. Review the configured bind host and network exposure.",
 		"Use local-only networking, firewall rules, or a reverse proxy before non-local exposure."
 	])
 }
@@ -3956,7 +3958,7 @@ func source_proxy_response(req, action, profile_name) {
 }
 
 maybe_run_scheduled_backup()
-server := http_server(PORT)
+server := http_listen(BIND_HOST, PORT)
 
 server := server.route("GET", "/healthz", func(req) {
 	return api_ok({

@@ -35,7 +35,7 @@ function request(method, pathname, payload, extraHeaders = {}) {
 async function startServer() {
 	const child = spawn(kujoBin, ['run', '--interpreter', 'dashboard_server.kujo'], {
 		cwd: root,
-		env: {...process.env, WDG_DB_PATH: dbPath, WDG_PORT: String(port), WDG_API_AUTH_MODE: 'off', WDG_PROXY_AUTHZ_MODE: 'off', WDG_MAX_PARSE_BODY_BYTES: '65536', WDG_EXPORTERS_CONFIG_PATH: exportersPath},
+		env: {...process.env, WDG_DB_PATH: dbPath, WDG_PORT: String(port), WDG_HOST: '127.0.0.1', WDG_API_AUTH_MODE: 'off', WDG_PROXY_AUTHZ_MODE: 'off', WDG_MAX_PARSE_BODY_BYTES: '65536', WDG_EXPORTERS_CONFIG_PATH: exportersPath},
 		stdio: ['ignore', 'pipe', 'pipe'],
 	});
 	let output = '';
@@ -64,6 +64,7 @@ async function run() {
 	let server;
 	try {
 		server = await startServer();
+		assert(server.output().includes(`Server listening on http://127.0.0.1:${port}`), 'configured loopback bind must be used');
 		const batch = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/telemetry-v2/canonical-minimal.json'), 'utf8'));
 		batch.batch_id = 'fixture:api:privacy';
 		batch.records[0].attributes['kujo.operation.attempt'] = 1;

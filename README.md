@@ -131,6 +131,7 @@ Environment variables:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
+| `WDG_HOST` | `0.0.0.0` | Bind address; use `127.0.0.1` for a local-only instance |
 | `WDG_PORT` | `7700` | HTTP port for Watchdog + proxy |
 | `WDG_DB_PATH` | `data/watchdog.db` | SQLite path for logs |
 | `WDG_PROXY_CONFIG_PATH` | `watchdog_proxy_config.json` | JSON config file path |
