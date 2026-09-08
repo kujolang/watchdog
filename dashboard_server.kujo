@@ -4348,6 +4348,14 @@ server := server.route("POST", "/telemetry/v2/batches", func(req) {
 	if external_text(body, "schema_version", "", 80) != CANONICAL_TELEMETRY_SCHEMA_VERSION {
 		return api_error(400, "Unsupported canonical telemetry schema_version")
 	}
+	# Validate the raw container before privacy projection can drop any records.
+	raw_records := safe_dict_get(body, "records", null)
+	if type(raw_records) != "array" || len(raw_records) == 0 || len(raw_records) > 100 {
+		return api_error(400, "records must contain between 1 and 100 items")
+	}
+	for record in raw_records {
+		if type(record) != "dict" { return api_error(400, "each record must be an object") }
+	}
 	approved := canonical_policy_batch(body)
 	validation := watchdog_telemetry_repository_validate(approved)
 	if validation["ok"] == false {
@@ -4355,7 +4363,7 @@ server := server.route("POST", "/telemetry/v2/batches", func(req) {
 		return api_error(400, validation["error"])
 	}
 	try {
-		result := persist_canonical_batch(body)
+		result := persist_approved_canonical_batch(approved)
 		if result["ok"] == false && safe_dict_get(result, "error_code", "") == "record_identity_conflict" {
 			insert_audit_event("canonical_telemetry_intake", resolve_audit_actor_key(req, "api"), "conflict", {"batch_id": external_text(body, "batch_id", "", 160), "producer": external_text(safe_dict_get(body, "producer", {}), "name", "external", 80), "error_code": "record_identity_conflict"})
 			return api_error(409, "record_identity_conflict")

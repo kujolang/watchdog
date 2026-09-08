@@ -655,3 +655,11 @@ Keep root compatibility entrypoints synced from `src/`:
 - OpenSSL when encrypted backups are enabled
 - No API key required to run the dashboard itself
 - API key required only when proxying to an authenticated upstream
+
+### Canonical batch intake bounds
+
+`POST /telemetry/v2/batches` requires 1–100 record objects in the raw request.
+Oversized arrays and non-object entries return HTTP 400 before privacy filtering;
+they are never silently reduced to a successful partial batch. Valid batches are
+privacy-filtered once, then retain repository validation, identity-conflict checks
+and transactional persistence.

@@ -86,6 +86,12 @@ async function run() {
 		invalid.records[0].trace_id = '00000000000000000000000000000000';
 		assert.strictEqual((await request('POST', '/telemetry/v2/batches', invalid)).status, 400, 'zero trace ID must be rejected');
 
+		// Filtering must not silently accept only the usable subset of a batch.
+		for (const records of [[batch.records[0], null], [batch.records[0], "invalid"], [batch.records[0], ...Array(100).fill(null)]]) {
+			const rejected = await request('POST', '/telemetry/v2/batches', {...batch, records});
+			assert.strictEqual(rejected.status, 400, 'malformed or oversized raw batch was silently reduced');
+		}
+
 		const recordsResponse = await request('GET', '/api/telemetry/v2/records?producer=fixture');
 		assert.strictEqual(recordsResponse.status, 200, recordsResponse.body);
 		const records = JSON.parse(recordsResponse.body).data.records;
