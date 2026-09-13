@@ -21,6 +21,13 @@ node scripts/refresh_openrouter_pricing_catalog.js
 
 This fetches `https://openrouter.ai/api/v1/models`, applies the checked-in alias overrides from [`config/openrouter_pricing_aliases.json`](../config/openrouter_pricing_aliases.json), and rewrites the versioned catalog snapshot.
 
+The September 13, 2026 snapshot contains 445 models. It adds public routes such
+as `deepseek/deepseek-v4.1-flash` and OpenAI's explicit latest aliases, removes
+eight routes no longer advertised by the catalog, and preserves the current
+route-specific prices exactly as returned by OpenRouter. Notable changes include
+`z-ai/glm-5.2` at $0.60 input, $0.15 cached input, and $2.00 output per million
+tokens. These are OpenRouter route estimates, not direct-provider prices.
+
 ## Inspect pricing provenance
 
 `GET /api/requests` and `GET /api/traces` now expose:
@@ -52,7 +59,7 @@ Common `pricing_source` patterns:
 - `openai-api-pricing:2026-08-23:standard-short-context`
 - `openai-api-pricing:2026-08-30:promotional-through-at-least-2026-11-21:standard-short-context`
 - `xai-api-pricing:2026-08-30:standard-short-context`
-- `openrouter-public-catalog:2026-09-06`
+- `openrouter-public-catalog:2026-09-13`
 - `watchdog-fallback-estimate:v1`
 
 ## Reprice historical records

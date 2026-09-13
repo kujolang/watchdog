@@ -39,9 +39,9 @@ assert.equal(opus5.output_rate_per_million, 25);
 assert.equal(opus5.cache_write_input_rate_per_million, 6.25);
 
 const glm52 = resolvePricing('z-ai/glm-5.2', { providerCatalog, openrouterCatalog });
-assert.equal(glm52.input_rate_per_million, 0.966);
-assert.equal(glm52.output_rate_per_million, 3.036);
-assert.equal(glm52.cached_input_rate_per_million, 0.1932);
+assert.equal(glm52.input_rate_per_million, 0.6);
+assert.equal(glm52.output_rate_per_million, 2);
+assert.equal(glm52.cached_input_rate_per_million, 0.15);
 
 const alias = resolvePricing('~anthropic/claude-haiku-latest', { providerCatalog, openrouterCatalog });
 assert.equal(alias.pricing_kind, 'catalog');

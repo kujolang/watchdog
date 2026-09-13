@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_id": "watchdog-provider-catalog:2026-09-06",
+  "catalog_id": "watchdog-provider-catalog:2026-09-13",
   "models": {
     "gpt-4.1": {
       "model_id": "gpt-4.1",
