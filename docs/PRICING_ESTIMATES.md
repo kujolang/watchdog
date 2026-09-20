@@ -21,12 +21,13 @@ node scripts/refresh_openrouter_pricing_catalog.js
 
 This fetches `https://openrouter.ai/api/v1/models`, applies the checked-in alias overrides from [`config/openrouter_pricing_aliases.json`](../config/openrouter_pricing_aliases.json), and rewrites the versioned catalog snapshot.
 
-The September 13, 2026 snapshot contains 445 models. It adds public routes such
-as `deepseek/deepseek-v4.1-flash` and OpenAI's explicit latest aliases, removes
-eight routes no longer advertised by the catalog, and preserves the current
-route-specific prices exactly as returned by OpenRouter. Notable changes include
-`z-ai/glm-5.2` at $0.60 input, $0.15 cached input, and $2.00 output per million
-tokens. These are OpenRouter route estimates, not direct-provider prices.
+The September 20, 2026 snapshot contains 446 models. It adds seven public routes,
+including `z-ai/glm-5.3-flashx` and DeepSeek's latest aliases, removes six routes
+no longer advertised by the catalog, and preserves the current route-specific
+prices exactly as returned by OpenRouter. Several existing routes changed price,
+including `z-ai/glm-5.2`, `deepseek/deepseek-v4-pro`, and
+`moonshotai/kimi-k3`. These are OpenRouter route estimates, not direct-provider
+prices.
 
 ## Inspect pricing provenance
 
@@ -55,11 +56,11 @@ Common `pricing_source` patterns:
 - `google-gemini-pricing:2026-07-19`
 - `moonshot-kimi-pricing:2026-07-19`
 - `ollama-cloud-equivalent:*`
-- `deepseek-pricing:2026-08-16`
+- `deepseek-pricing:2026-09-20:*`
 - `openai-api-pricing:2026-08-23:standard-short-context`
 - `openai-api-pricing:2026-08-30:promotional-through-at-least-2026-11-21:standard-short-context`
 - `xai-api-pricing:2026-08-30:standard-short-context`
-- `openrouter-public-catalog:2026-09-13`
+- `openrouter-public-catalog:2026-09-20`
 - `watchdog-fallback-estimate:v1`
 
 ## Reprice historical records
@@ -116,13 +117,13 @@ Apply the same command with `--apply` once the dry-run output looks correct.
 
 ## Provider catalog coverage
 
-The local provider catalog is intentionally versioned and explicit. As of September 6, 2026 it includes:
+The local provider catalog is intentionally versioned and explicit. As of September 20, 2026 it includes:
 
 - direct OpenAI text-token models used by AI Chat such as `gpt-4.1`, `gpt-4.1-mini`, and `o4-mini`, plus the current Codex inventory models `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini`; `gpt-5.6-sol` and the `gpt-daybreak-blue-latest` equivalent use OpenAI's current promotional $4/$0.40/$20 rates through at least November 21, 2026, while non-public-API `gpt-5.3-codex-spark` remains explicitly `unknown`
 - direct Anthropic models such as `claude-sonnet-5`, `claude-opus-4.8`, and `claude-haiku-4.5`; Anthropic confirmed the launch $2/$10 Sonnet 5 token rate as its standard rate, so the previously announced September increase did not occur
 - direct Google Gemini models such as `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, and `gemini-3.8-flash`; the Gemini 3.8 Flash row records its introductory rate through December 31, 2026
 - direct Moonshot Kimi models such as `kimi-k2.7-code`, `kimi-k2.6`, and `kimi-k2.5`
-- direct Z.AI, MiniMax, and DeepSeek model IDs already surfaced by AI Chat; deprecated DeepSeek `deepseek-chat` and `deepseek-reasoner` now resolve to the public `deepseek-v4-flash` non-thinking and thinking compatibility modes, while `deepseek-v4-pro` uses the current $0.435/M cache-miss input rate
+- direct Z.AI, MiniMax, and DeepSeek model IDs already surfaced by AI Chat; DeepSeek's current `deepseek-flash` and `deepseek-v4.1-flash` IDs plus the legacy `deepseek-chat`, `deepseek-reasoner`, and `deepseek-v4-flash` IDs resolve to the current V4.1 Flash pricing basis. Because DeepSeek varies rates by UTC schedule and Watchdog does not store a pricing-time tier, these rows use the documented peak rates ($0.30 cache-miss input, $0.006 cache-hit input, and $1.20 output per million tokens); `deepseek-v4-pro` likewise uses its peak $1.32/$0.044/$3.96 rates rather than understating requests made during peak hours
 - direct xAI equivalents for the active AI Chat OAuth inventory (`grok-4.20-0309-*`, `grok-4.20-multi-agent-0309`, `grok-4.3`, `grok-4.5`, `grok-4.6`, and `grok-build-0.1`) using xAI's public standard short-context token rates; these are direct-API value estimates, not OAuth subscription invoices
 - Ollama Cloud aliases only when there is a defensible public per-token equivalent from the underlying model provider
 
