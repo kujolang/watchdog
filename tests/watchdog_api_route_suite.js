@@ -90,7 +90,7 @@ function parseJson(text, context) {
 async function startServer() {
 	const child = spawn(KUJO_BIN, ['run', '--interpreter', 'dashboard_server.kujo'], {
 		cwd: ROOT,
-		env: { ...process.env, WDG_DB_PATH: DB_PATH, WDG_PORT: String(PORT), WDG_API_AUTH_MODE: 'off', WDG_PROXY_AUTHZ_MODE: 'off', WDG_MAX_PARSE_BODY_BYTES: '4096' },
+		env: { ...process.env, WDG_DB_PATH: DB_PATH, WDG_PORT: String(PORT), WDG_API_AUTH_MODE: 'off', WDG_PROXY_AUTHZ_MODE: 'off', WDG_RATE_LIMIT_MODE: 'off', WDG_MAX_PARSE_BODY_BYTES: '4096' },
 		stdio: ['ignore', 'pipe', 'pipe'],
 	});
 
