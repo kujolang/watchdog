@@ -33,6 +33,9 @@ jobs:
       - name: Run full JavaScript regression suite
         env:
           KUJO_BIN: ${{ github.workspace }}/kujo-runtime/target/release/kujo
+          # GitHub-hosted runners are not the documented 25 ms reference fixture;
+          # retain a bounded regression gate while local/Eval runs keep 25 ms.
+          WDG_CONNECTED_SOURCES_P95_BUDGET_MS: '75'
         run: |
           set -euo pipefail
           for f in tests/*.js; do

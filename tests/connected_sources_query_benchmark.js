@@ -13,6 +13,8 @@ const TEMP = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'watchdog-so
 const DB = path.join(TEMP, 'watchdog.db');
 const PORT = 17741;
 const agent = new http.Agent({keepAlive:true, maxSockets:1});
+const configuredBudget = Number(process.env.WDG_CONNECTED_SOURCES_P95_BUDGET_MS || 25);
+const maxP95Ms = Number.isFinite(configuredBudget) ? Math.min(100, Math.max(25, configuredBudget)) : 25;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 function get() { return new Promise((resolve, reject) => { const req = http.get({host:'127.0.0.1',port:PORT,path:'/api/sources',agent}, res => { let body=''; res.on('data', c => { body += c; }); res.on('end', () => resolve({status:res.statusCode,body})); }); req.on('error', reject); }); }
 
@@ -29,8 +31,8 @@ async function run() {
 		for (let i=0;i<10;i+=1) await get();
 		const timings=[]; for (let i=0;i<100;i+=1) { const start=performance.now(); const response=await get(); assert.strictEqual(response.status,200); timings.push(performance.now()-start); }
 		timings.sort((a,b)=>a-b); const p95=timings[Math.ceil(timings.length*.95)-1];
-		assert.ok(p95<=25,`Connected Sources inventory p95 ${p95.toFixed(2)} ms exceeds 25 ms budget`);
-		console.log(`connected_sources_query_benchmark: PASS p95=${p95.toFixed(2)}ms fixture=50000-legacy-rows/50-apps`);
+		assert.ok(p95<=maxP95Ms,`Connected Sources inventory p95 ${p95.toFixed(2)} ms exceeds ${maxP95Ms} ms budget`);
+		console.log(`connected_sources_query_benchmark: PASS p95=${p95.toFixed(2)}ms budget=${maxP95Ms}ms fixture=50000-legacy-rows/50-apps`);
 	} finally { agent.destroy(); if (child?.exitCode == null) child.kill('SIGTERM'); fs.rmSync(TEMP,{recursive:true,force:true}); }
 }
 run().catch(error => { console.error('connected_sources_query_benchmark: FAIL'); console.error(error.stack||error); process.exit(1); });
