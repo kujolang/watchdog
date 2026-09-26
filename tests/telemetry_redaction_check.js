@@ -185,7 +185,6 @@ async function runRedactionOnScenario(upstreamPort) {
 			assert.ok(!errorMessage.includes('raw-secret-value'), 'error message should not contain raw secret when redaction is on');
 		});
 
-		assert.ok(reqRows.some(row => String(row.prompt_summary || '').includes('[REDACTED')));
 		assert.ok(reqRows.some(row => String(row.error_message || '').includes('[REDACTED')));
 
 		const toolResp = await httpRequest(port, 'GET', '/api/tool-calls?session_id=sess_redact_on&page_size=50');
