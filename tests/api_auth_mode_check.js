@@ -77,6 +77,7 @@ async function startServer(port, dbPath, extraEnv = {}) {
 			...process.env,
 			WDG_PORT: String(port),
 			WDG_DB_PATH: dbPath,
+			WDG_RATE_LIMIT_MODE: 'off',
 			...extraEnv,
 		},
 		stdio: ['ignore', 'pipe', 'pipe'],
