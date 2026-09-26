@@ -18,7 +18,7 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 ### Changed
 
 - Balance the nine overview cards into four- and five-card desktop rows and replace data-view emoji decorations with local Tabler SVG icons.
-- Keep source registrations separate from exporter destinations and report proxy configuration writes as restart-required.
+- Keep source registrations separate from exporter destinations and apply named proxy-profile creates, updates, disables, and deletes to new requests without restarting Watchdog.
 
 ### Fixed
 

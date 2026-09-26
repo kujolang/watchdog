@@ -41,10 +41,12 @@ requires measured p95 latency at or below 25 ms.
 - Mutation semantics: authenticated allowlisted changes, revision conflicts,
   atomic mode-`0600` writes, symlink refusal, retained history on delete, and
   bounded redacted audit events.
-- Runtime reload: existing proxy profile selection reads configuration during
-  requests, but environment ownership and all startup state cannot be proven
-  safely reloadable as one transaction. Management responses therefore say
-  `restart_required: true`; no activation claim is made.
+- Runtime reload: named proxy-profile selection reads configuration at the
+  start of every request. Validated atomic creates, updates, disables, and
+  deletes therefore apply to new requests without a process restart; an
+  in-flight request retains its starting snapshot. Disabled and deleted named
+  profiles fail closed before egress. Environment-owned startup state remains
+  unchanged and is not presented as hot-reloadable.
 
 The dashboard adds exactly one sequential inventory request to its existing
 refresh chain. Setup templates load only when the operator opens them.

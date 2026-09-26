@@ -555,7 +555,8 @@ without conflating them with exporter destinations. Status is based only on
 configuration and accepted local telemetry. Native/OTLP registration changes
 manage display/setup metadata; they do not start, stop, or disconnect another
 application. Named proxy profile changes are saved to the existing proxy
-configuration and require a Watchdog restart. See [Connected Sources](docs/CONNECTED_SOURCES.md).
+configuration and apply to new requests without restarting Watchdog. In-flight
+requests retain the profile snapshot they started with. See [Connected Sources](docs/CONNECTED_SOURCES.md).
 
 `/api/insights` is intentionally labeled as observed legacy telemetry: runs are grouped by task ID, workflow ID, or session ID; a success signal means no request error was recorded; retry signals are inferred from retry-named trace events; and its token-volume section does not measure context capacity. The Canonical Evidence dashboard tab uses explicit terminal events, typed relations, nullable timing, versioned context limits, and distinct cost kinds instead.
 

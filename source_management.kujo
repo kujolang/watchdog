@@ -315,7 +315,7 @@ func source_proxy_mutate(path, action, profile_name, input, expected_revision) {
 	payload := to_json(cfg) + "\n"
 	write_file_atomic(path, payload, true)
 	io_set_permissions(path, 384)
-	return {"ok": true, "status": 200, "profile_name": name, "revision": sha256(payload), "restart_required": true, "historical_telemetry_retained": action == "delete_proxy"}
+	return {"ok": true, "status": 200, "profile_name": name, "revision": sha256(payload), "restart_required": false, "configuration_reload": "applies_to_new_requests", "historical_telemetry_retained": action == "delete_proxy"}
 }
 
 func source_setup_templates() {

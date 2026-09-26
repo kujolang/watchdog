@@ -46,9 +46,10 @@ Proxy-profile changes reuse `watchdog_proxy_config.json` and preserve unknown
 valid profile fields. Only profile name, normalized upstream base URL,
 `passthrough`/`override` mode, an environment-variable name, display name, and
 enabled state are accepted. Credential values are never accepted or returned.
-The `default` profile is read-only. Profile writes are atomic and private, but
-the running server does not safely hot-reload all configuration ownership; the
-API therefore returns `restart_required: true` and does not claim activation.
+The `default` profile is read-only. Profile writes are atomic and private. The
+proxy reads the configured named profile at the start of each new request, so
+create, update, disable, and delete changes apply without restarting Watchdog.
+An in-flight request keeps the configuration snapshot it started with.
 
 ## API
 
@@ -76,7 +77,8 @@ access to another tenant or project.
 
 ## Rollback
 
-Stop Watchdog, restore the prior private registry or proxy configuration, and
-restart. Removing `watchdog_sources.json` removes only operator registrations.
+Restore the prior private registry or proxy configuration. Named proxy-profile
+changes apply to new requests; restarting Watchdog is optional. Removing
+`watchdog_sources.json` removes only operator registrations.
 It does not modify the database. Never replace the telemetry database as part
 of Connected Sources rollback.

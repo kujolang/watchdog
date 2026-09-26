@@ -2200,7 +2200,7 @@ async function submitSourceWizard(event) {
   }
   try {
     const result = await fetchJSON(endpoint, {method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-    setText('sourceWizardStatus', result.restart_required ? 'Saved. Restart Watchdog to apply the proxy profile.' : 'Connection saved.');
+    setText('sourceWizardStatus', result.restart_required ? 'Saved. Restart Watchdog to apply the proxy profile.' : (kind === 'proxy' ? 'Connection saved and active for new requests.' : 'Connection saved.'));
     await refreshSources();
     setTimeout(closeSourceWizard, 350);
   } catch (error) { setText('sourceWizardStatus', error.message || 'Could not save source.'); }
@@ -2246,7 +2246,7 @@ async function deleteSourceConnection(index) {
   setText('sourceMutationStatus', 'Deleting connection…');
   try {
     await fetchJSON('/api/sources/proxy/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({profile_name:source.profile_name, revision:state.sources?.proxy_revision || '', retain_historical_telemetry:true})});
-    await refreshSources(); setText('sourceMutationStatus', 'Connection deleted. Historical telemetry was retained. Restart Watchdog to apply the change.');
+    await refreshSources(); setText('sourceMutationStatus', 'Connection deleted for new requests. Historical telemetry was retained.');
   } catch (error) { setText('sourceMutationStatus', error.message || 'Deletion failed.'); }
 }
 

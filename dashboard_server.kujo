@@ -3241,6 +3241,13 @@ func proxy_forward_named_upstream(req, resource, action, profile_name) {
 		})
 		return api_error(400, error_message)
 	}
+	if safe_dict_get(profile_cfg, "enabled", true) == false {
+		error_message := "Watchdog upstream profile is disabled: " + profile_name
+		insert_audit_event("proxy_profile_rejected", resolve_audit_actor_key(req, "proxy"), "denied", {
+			"reason": error_message
+		})
+		return api_error(400, error_message)
+	}
 	cfg := merge_config_maps({"upstream_base_url": DEFAULT_UPSTREAM_BASE_URL, "auth_mode": DEFAULT_AUTH_MODE, "upstream_api_key": "", "upstream_api_key_env": ""}, profile_cfg)
 	cfg["upstream_base_url"] := normalize_base_url(string_dict_get(cfg, "upstream_base_url", DEFAULT_UPSTREAM_BASE_URL))
 	return proxy_forward_with_config(req, resource, action, cfg, profile_name)
@@ -3907,7 +3914,7 @@ func source_inventory(req) {
 	summary := {"total": len(items), "active": 0, "pending": 0, "stale": 0, "disabled": 0, "error": 0}
 	for item in items { status := item["status"]; if has_key(summary, status) { summary[status] = summary[status] + 1 } }
 	if registry_error != "" { summary["error"] = summary["error"] + 1 }
-	result := {"contract_version": watchdog_sources_contract_version, "registry_version": watchdog_sources_registry_version, "revision": revision, "proxy_revision": proxy_revision, "active_window_ms": watchdog_sources_active_window_ms, "count_window_records": 50000, "summary": summary, "sources": items, "registry_error": registry_error, "capabilities": ["read_inventory", "register_metadata", "manage_proxy_profiles", "verify_local_observation"], "configuration_reload": "proxy profile changes are saved atomically and require restart"}
+	result := {"contract_version": watchdog_sources_contract_version, "registry_version": watchdog_sources_registry_version, "revision": revision, "proxy_revision": proxy_revision, "active_window_ms": watchdog_sources_active_window_ms, "count_window_records": 50000, "summary": summary, "sources": items, "registry_error": registry_error, "capabilities": ["read_inventory", "register_metadata", "manage_proxy_profiles", "verify_local_observation"], "configuration_reload": "proxy profile changes apply to new requests without restart"}
 	if tenant_id == "" && project_id == "" {
 		expires_at_ms := 9999999999999
 		for item in items {
@@ -3953,7 +3960,7 @@ func source_proxy_response(req, action, profile_name) {
 	payload := safe_dict_get(body, "profile", body)
 	result := watchdog_sources_proxy_mutate(PROXY_CONFIG_PATH, action, profile_name, payload, expected_revision)
 	if result["ok"] == false { insert_audit_event("source_proxy_profile_" + action, resolve_audit_actor_key(req, "api"), "denied", {"profile_name": truncate_str(profile_name, 80), "reason": result["error"]}); return api_error(result["status"], result["error"]) }
-	insert_audit_event("source_proxy_profile_" + action, resolve_audit_actor_key(req, "api"), "success", {"profile_name": profile_name, "restart_required": true, "historical_telemetry_retained": safe_dict_get(result, "historical_telemetry_retained", false)})
+	insert_audit_event("source_proxy_profile_" + action, resolve_audit_actor_key(req, "api"), "success", {"profile_name": profile_name, "restart_required": safe_dict_get(result, "restart_required", false), "configuration_reload": safe_dict_get(result, "configuration_reload", "applies_to_new_requests"), "historical_telemetry_retained": safe_dict_get(result, "historical_telemetry_retained", false)})
 	return api_ok(result)
 }
 

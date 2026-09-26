@@ -13,13 +13,30 @@ const DB = path.join(TEMP, 'watchdog.db');
 const REGISTRY = path.join(TEMP, 'source-config', 'sources.json');
 const PROXY = path.join(TEMP, 'proxy-config', 'proxy.json');
 const PORT = 17740;
+const UPSTREAM_A_PORT = 17741;
+const UPSTREAM_B_PORT = 17742;
 const TOKEN = 'sources-test-auth-token';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-function request(method, pathname, payload, token = TOKEN) {
+function createUpstream(port, label) {
+	const server = http.createServer((req, res) => {
+		const chunks = [];
+		req.on('data', chunk => chunks.push(chunk));
+		req.on('end', () => {
+			res.writeHead(200, {'Content-Type':'application/json'});
+			res.end(JSON.stringify({id:label, object:'chat.completion', choices:[]}));
+		});
+	});
+	return new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(port, '127.0.0.1', () => resolve(server));
+	});
+}
+
+function request(method, pathname, payload, token = TOKEN, extraHeaders = {}) {
 	return new Promise((resolve, reject) => {
 		const body = payload == null ? '' : JSON.stringify(payload);
-		const headers = body ? {'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body)} : {};
+		const headers = {...extraHeaders, ...(body ? {'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body)} : {})};
 		if (token) headers['X-Watchdog-Token'] = token;
 		const req = http.request({host: '127.0.0.1', port: PORT, path: pathname, method, headers}, res => {
 			let text = '';
@@ -46,7 +63,11 @@ async function start() {
 
 async function run() {
 	let server;
+	let upstreamA;
+	let upstreamB;
 	try {
+		upstreamA = await createUpstream(UPSTREAM_A_PORT, 'upstream-a');
+		upstreamB = await createUpstream(UPSTREAM_B_PORT, 'upstream-b');
 		server = await start();
 		assert.strictEqual((await request('GET', '/api/sources', null, '')).status, 401, 'inventory must require API authentication');
 		assert.strictEqual((await request('GET', '/api/sources', null, 'wrong')).status, 403, 'inventory must reject invalid authentication');
@@ -95,23 +116,32 @@ async function run() {
 		inventory = (await request('GET', '/api/sources')).json.data;
 		assert.strictEqual(inventory.sources.find(source => source.registration_id === registrationId).status, 'disabled', 'disabled configuration must not claim connectivity');
 
-		const profile = await request('POST', '/api/sources', {type:'proxy_profile', profile_name:'fixture-profile', profile:{upstream_base_url:'https://api.example.test/v1', auth_mode:'override', upstream_api_key_env:'FIXTURE_PROVIDER_KEY', display_name:'Fixture profile', enabled:true}});
-		assert.strictEqual(profile.status, 200, profile.text); assert.strictEqual(profile.json.data.restart_required, true);
+		const profile = await request('POST', '/api/sources', {type:'proxy_profile', profile_name:'fixture-profile', profile:{upstream_base_url:`http://127.0.0.1:${UPSTREAM_A_PORT}/v1`, auth_mode:'passthrough', upstream_api_key_env:'', display_name:'Fixture profile', enabled:true}});
+		assert.strictEqual(profile.status, 200, profile.text); assert.strictEqual(profile.json.data.restart_required, false); assert.strictEqual(profile.json.data.configuration_reload, 'applies_to_new_requests');
+		const createdProxyCall = await request('POST', '/proxy/v1/chat/completions', {model:'fixture',messages:[]}, TOKEN, {'X-Watchdog-Upstream-Profile':'fixture-profile'});
+		assert.strictEqual(createdProxyCall.status, 200, createdProxyCall.text); assert.strictEqual(createdProxyCall.json.id, 'upstream-a', 'new proxy profile must apply without restart');
 		assert.strictEqual(fs.statSync(PROXY).mode & 0o777, 0o600, 'proxy config must be owner-only');
 		assert.strictEqual(fs.statSync(path.dirname(PROXY)).mode & 0o777, 0o700, 'created proxy parent must be private');
 		const proxyText = fs.readFileSync(PROXY, 'utf8');
-		assert.ok(proxyText.includes('FIXTURE_PROVIDER_KEY')); assert.ok(!proxyText.includes(canary));
+		assert.ok(proxyText.includes('"upstream_api_key_env":""')); assert.ok(!proxyText.includes(canary));
 		assert.strictEqual((await request('POST', '/api/sources', {type:'proxy_profile', profile_name:'bad', profile:{upstream_base_url:'javascript:alert(1)', auth_mode:'passthrough', upstream_api_key_env:'', display_name:'Bad'}})).status, 400);
 		assert.strictEqual((await request('POST', '/api/sources/proxy/update', {profile_name:'default', profile:{upstream_base_url:'https://example.test/v1', auth_mode:'passthrough'}})).status, 403, 'default profile must be protected');
 		const proxyConfig = JSON.parse(fs.readFileSync(PROXY, 'utf8')); proxyConfig.upstream_profiles['fixture-profile'].operator_extension = 'preserve-me'; fs.writeFileSync(PROXY, JSON.stringify(proxyConfig), {mode:0o600});
 		inventory = (await request('GET', '/api/sources')).json.data;
 		assert.match(inventory.proxy_revision, /^[0-9a-f]{64}$/, 'inventory must expose a race-safe proxy revision');
 		const editableProfile = inventory.sources.find(source => source.profile_name === 'fixture-profile');
-		assert.deepStrictEqual(editableProfile.proxy_profile, {upstream_base_url:'https://api.example.test/v1', auth_mode:'override', upstream_api_key_env:'FIXTURE_PROVIDER_KEY', display_name:'Fixture profile', enabled:true});
+		assert.deepStrictEqual(editableProfile.proxy_profile, {upstream_base_url:`http://127.0.0.1:${UPSTREAM_A_PORT}/v1`, auth_mode:'passthrough', upstream_api_key_env:'', display_name:'Fixture profile', enabled:true});
 		assert.ok(!Object.prototype.hasOwnProperty.call(editableProfile.proxy_profile, 'upstream_api_key'), 'editable proxy projection must not expose credential values');
-		assert.strictEqual((await request('POST', '/api/sources/proxy/update', {profile_name:'fixture-profile', revision:inventory.proxy_revision, profile:{upstream_base_url:'https://api.example.test/v2', auth_mode:'passthrough', upstream_api_key_env:'', display_name:'Updated fixture', enabled:true}})).status, 200);
+		assert.strictEqual((await request('POST', '/api/sources/proxy/update', {profile_name:'fixture-profile', revision:inventory.proxy_revision, profile:{upstream_base_url:`http://127.0.0.1:${UPSTREAM_B_PORT}/v1`, auth_mode:'passthrough', upstream_api_key_env:'', display_name:'Updated fixture', enabled:true}})).status, 200);
+		const updatedProxyCall = await request('POST', '/proxy/v1/chat/completions', {model:'fixture',messages:[]}, TOKEN, {'X-Watchdog-Upstream-Profile':'fixture-profile'});
+		assert.strictEqual(updatedProxyCall.status, 200, updatedProxyCall.text); assert.strictEqual(updatedProxyCall.json.id, 'upstream-b', 'updated proxy profile must apply to the next request without restart');
 		assert.strictEqual(JSON.parse(fs.readFileSync(PROXY, 'utf8')).upstream_profiles['fixture-profile'].operator_extension, 'preserve-me', 'proxy updates must preserve unknown valid fields');
 		assert.strictEqual((await request('POST', '/api/sources/proxy/update', {profile_name:'fixture-profile', revision:inventory.proxy_revision, profile:{upstream_base_url:'https://api.example.test/v3', auth_mode:'passthrough', upstream_api_key_env:'', display_name:'Stale update', enabled:true}})).status, 409, 'stale proxy revisions must conflict');
+		inventory = (await request('GET', '/api/sources')).json.data;
+		assert.strictEqual((await request('POST', '/api/sources/proxy/update', {profile_name:'fixture-profile', revision:inventory.proxy_revision, profile:{upstream_base_url:`http://127.0.0.1:${UPSTREAM_B_PORT}/v1`, auth_mode:'passthrough', upstream_api_key_env:'', display_name:'Updated fixture', enabled:false}})).status, 200);
+		assert.strictEqual((await request('POST', '/proxy/v1/chat/completions', {model:'fixture',messages:[]}, TOKEN, {'X-Watchdog-Upstream-Profile':'fixture-profile'})).status, 400, 'disabled proxy profile must reject the next request without restart');
+		inventory = (await request('GET', '/api/sources')).json.data;
+		assert.strictEqual((await request('POST', '/api/sources/proxy/update', {profile_name:'fixture-profile', revision:inventory.proxy_revision, profile:{upstream_base_url:`http://127.0.0.1:${UPSTREAM_B_PORT}/v1`, auth_mode:'passthrough', upstream_api_key_env:'', display_name:'Updated fixture', enabled:true}})).status, 200);
 
 		const verify = await request('POST', '/api/sources/verify', {id:observed.id});
 		assert.strictEqual(verify.status, 200, verify.text); assert.strictEqual(verify.json.data.observed, true, verify.text); assert.strictEqual(verify.json.data.network_contacted, false, verify.text);
@@ -140,6 +170,7 @@ async function run() {
 		inventory = (await request('GET', '/api/sources')).json.data;
 		assert.strictEqual((await request('POST', '/api/sources/proxy/delete', {profile_name:'fixture-profile', revision:inventory.proxy_revision, retain_historical_telemetry:true})).status, 200, 'named proxy profiles must be deletable');
 		assert.ok(!JSON.parse(fs.readFileSync(PROXY, 'utf8')).upstream_profiles['fixture-profile'], 'deleted proxy profile must be removed from configuration');
+		assert.strictEqual((await request('POST', '/proxy/v1/chat/completions', {model:'fixture',messages:[]}, TOKEN, {'X-Watchdog-Upstream-Profile':'fixture-profile'})).status, 400, 'deleted proxy profile must be rejected on the next request without restart');
 
 		const validRegistry = fs.readFileSync(REGISTRY);
 		const tooMany = {schema_version:'watchdog.sources.v1',revision:1,sources:Array.from({length:257},(_,index)=>({id:'src_'+String(index).padStart(24,'0'),name:'Source '+index,description:'',kind:'observed',producer_names:[],source_apps:[],profile_name:'',enabled:true,archived:false,setup_template_id:'',options:{},created_at:'2026-09-04T00:00:00Z',updated_at:'2026-09-04T00:00:00Z'}))};
@@ -164,6 +195,8 @@ async function run() {
 		console.log('connected_sources_management_suite: PASS');
 	} finally {
 		if (server?.child && server.child.exitCode == null) server.child.kill('SIGTERM');
+		if (upstreamA) await new Promise(resolve => upstreamA.close(resolve));
+		if (upstreamB) await new Promise(resolve => upstreamB.close(resolve));
 		fs.rmSync(TEMP, {recursive:true, force:true});
 	}
 }
