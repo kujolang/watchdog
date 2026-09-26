@@ -6,6 +6,8 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-26
+
 ### Added
 
 - Add immutable canonical observability evidence for source identity, terminal outcomes, retries/fallbacks/recovery, truthful timing, context capacity, and billing provenance.
