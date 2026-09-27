@@ -6,7 +6,7 @@ from telemetry_v2 import watchdog_telemetry_v2_timestamp
 
 root := env("WDG_MEASUREMENT_TEST_ROOT")
 cases := parse_json(read_file_beneath(root, "cases.json", 1048576))
-observation := {"schema_version": "watchdog.native-event.v1", "event_kind": "execution", "event_id": "execution-1", "trace_id": "wave-a-trace", "span_id": "execution-1", "started_at_ms": 1000, "ended_at_ms": 2000, "status": "ok", "usage": null, "costs": [], "references": [{"type": "run", "id": env_or("WDG_MEASUREMENT_RECEIPT", "wave-a-receipt"), "namespace": "runledger", "relation": "groups"}]}
+observation := parse_json(read_file_beneath(root, "caller-observation.json", 8192))
 for item in cases {
     result := watchdog_runtime_measurements_attach(root, item["file"], item["artifact"], observation)
     assert(result["ok"] == item["ok"], "case failed: " + item["name"])
@@ -61,7 +61,7 @@ report := parse_json(raw)
 assert(record["attributes"]["kujo.runtime.wall_ns"] == report["wall_ns"], "wall unit/value drift")
 assert(record["usage"] == null && record["costs"] == [], "unknown usage/cost invented")
 assert(record["content"] == [], "content copied")
-assert(record["started_at"] == watchdog_telemetry_v2_timestamp(1000, 1000), "caller timing changed")
+assert(record["started_at"] == watchdog_telemetry_v2_timestamp(observation["started_at_ms"], 0), "caller timing changed")
 db := db_connect("sqlite", join_path(root, "watchdog.db"))
 watchdog_ensure_schema(db)
 first := watchdog_telemetry_repository_insert(db, batch)

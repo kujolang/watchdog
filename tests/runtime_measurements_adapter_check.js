@@ -30,7 +30,10 @@ try {
         id = fs.readdirSync(path.join(ledger,'runs'))[0].replace(/\.json$/, '');
     }
     fs.writeFileSync(path.join(temp, 'workload.kujo'), `func factory(value) { func captured() { return value } return captured } let private_value := factory("${secret}") assert(len(private_value()) > 0) func* private_values() { yield "${secret}" } for value in private_values() { assert(len(value) > 0) } async func private_task() { return "${secret}" } assert(len(await private_task()) > 0) func plus(n) { return n + 1 } print(plus(1))`);
+    const startedAt = Date.now();
     run(['run', '--measurements', path.join(temp, 'report.json'), path.join(temp, 'workload.kujo')]);
+    const endedAt = Date.now();
+    fs.writeFileSync(path.join(temp,'caller-observation.json'), JSON.stringify({schema_version:'watchdog.native-event.v1',event_kind:'execution',event_id:'execution-1',trace_id:'wave-a-trace',span_id:'execution-1',started_at_ms:startedAt,ended_at_ms:endedAt,status:'ok',usage:null,costs:[],references:[{type:'run',id,namespace:'runledger',relation:'groups'}]}));
     const raw = fs.readFileSync(path.join(temp, 'report.json'), 'utf8');
     const report = JSON.parse(raw);
     assert.equal(report.schema, 'kujo.runtime-measurements/v1');
@@ -79,7 +82,7 @@ try {
     cases.push({name:'absolute', file:path.join(temp,'report.json'), artifact:hash(raw), ok:false});
     cases.push({name:'directory', file:'.', artifact:hash(raw), ok:false});
     fs.writeFileSync(path.join(temp, 'cases.json'), JSON.stringify(cases));
-    const logs = run(['run', '--interpreter', 'tests/fixtures/runtime_measurements_check.kujo'], root, {WDG_MEASUREMENT_TEST_ROOT:temp, WDG_MEASUREMENT_RECEIPT:id});
+    const logs = run(['run', '--interpreter', 'tests/fixtures/runtime_measurements_check.kujo'], root, {WDG_MEASUREMENT_TEST_ROOT:temp});
     assert(!logs.includes(secret));
     const storedRaw = fs.readFileSync(path.join(temp, 'stored.json'), 'utf8');
     const stored = JSON.parse(storedRaw);
