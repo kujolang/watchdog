@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_id": "watchdog-provider-catalog:2026-09-20",
+  "catalog_id": "watchdog-provider-catalog:2026-09-27",
   "models": {
     "gpt-4.1": {
       "model_id": "gpt-4.1",
@@ -71,6 +71,26 @@
       "output_rate_per_million": 50.0,
       "cached_input_rate_per_million": 1.0,
       "cache_write_input_rate_per_million": 12.5
+    },
+    "gpt-6-sol": {
+      "model_id": "gpt-6-sol",
+      "priced_model": "gpt-6-sol",
+      "has_pricing": true,
+      "pricing_source": "openai-api-pricing:2026-09-27:standard-short-context",
+      "input_rate_per_million": 2.0,
+      "output_rate_per_million": 10.0,
+      "cached_input_rate_per_million": 0.2,
+      "cache_write_input_rate_per_million": 2.5
+    },
+    "gpt-6-luna": {
+      "model_id": "gpt-6-luna",
+      "priced_model": "gpt-6-luna",
+      "has_pricing": true,
+      "pricing_source": "openai-api-pricing:2026-09-27:standard-short-context",
+      "input_rate_per_million": 0.1,
+      "output_rate_per_million": 0.5,
+      "cached_input_rate_per_million": 0.01,
+      "cache_write_input_rate_per_million": 0.125
     },
     "gpt-5.6-sol": {
       "model_id": "gpt-5.6-sol",
@@ -181,6 +201,16 @@
       "output_rate_per_million": 10.0,
       "cached_input_rate_per_million": 0.2,
       "cache_write_input_rate_per_million": 2.5
+    },
+    "claude-opus-5.5": {
+      "model_id": "claude-opus-5.5",
+      "priced_model": "claude-opus-5.5",
+      "has_pricing": true,
+      "pricing_source": "anthropic-pricing:2026-09-27:standard-assume-5m-cache-write",
+      "input_rate_per_million": 4.0,
+      "output_rate_per_million": 20.0,
+      "cached_input_rate_per_million": 0.2,
+      "cache_write_input_rate_per_million": 5.0
     },
     "claude-opus-4.8": {
       "model_id": "claude-opus-4.8",
@@ -527,6 +557,16 @@
       "priced_model": "poolside/laguna-m1:free",
       "has_pricing": false,
       "pricing_source": "openrouter-public-catalog:2026-09-06:not-listed-in-current-catalog",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "anthropic/claude-opus-4.8-fast": {
+      "model_id": "anthropic/claude-opus-4.8-fast",
+      "priced_model": "anthropic/claude-opus-4.8-fast",
+      "has_pricing": false,
+      "pricing_source": "openrouter-public-catalog:2026-09-27:not-listed-in-current-catalog",
       "input_rate_per_million": 0.0,
       "output_rate_per_million": 0.0,
       "cached_input_rate_per_million": 0.0,
