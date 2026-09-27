@@ -676,3 +676,7 @@ Canonical HTTP intake relies on the repository's structural validation before
 its transaction rather than repeating the same full validation in the route.
 Raw container bounds and authoritative privacy projection still precede it;
 validation failures return HTTP 400 and identity conflicts return HTTP 409.
+
+## Kujo runtime measurements (unreleased)
+
+Attach bounded runtime summaries to existing execution observations; retain their exact-byte artifact references. See [adapter contract and offline proof](docs/runtime-measurements.md).

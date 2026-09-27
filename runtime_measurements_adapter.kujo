@@ -1,0 +1,123 @@
+# Kujo runtime summaries enrich caller-owned execution observations.
+# No report text, path, extension key, runtime_version, or unsupported label is
+# ever copied into telemetry. SHA-256 addresses exact UTF-8 bytes, not re-JSON.
+
+func measurement_failure() {
+    return {"ok": false, "error": "invalid runtime measurement artifact or observation", "event": null}
+}
+
+func measurement_uint(value) {
+    # Cross-consumer exactness: refuse values JavaScript/OTLP consumers round.
+    return type(value) == "int" && value >= 0 && value <= 9007199254740991
+}
+
+func measurement_keys() {
+    return [
+        "vm_entries", "vm_inclusive_wall_ns", "vm_call_opcodes",
+        "vm_return_opcodes", "vm_native_call_opcodes", "scheduler_rounds",
+        "vm_closures_created", "vm_capture_cells_created", "vm_capture_value_shallow_bytes",
+        "vm_generator_states_created", "vm_generator_state_drops", "vm_generator_state_shallow_bytes",
+        "vm_generator_resume_attempts", "tasks_admitted", "tasks_admission_rejected",
+        "tasks_started", "task_bodies_exited", "task_completions_published",
+        "task_cancellations_published", "task_queue_wall_ns", "detached_tasks_observed",
+        "promise_polls", "promise_pending_polls", "promise_ready_polls",
+        "jit_compile_entries", "jit_compile_inclusive_wall_ns", "jit_cache_lookup_hits",
+        "jit_cache_lookup_misses", "jit_type_guard_passes", "jit_type_guard_failures"
+    ]
+}
+
+func measurement_valid(report) {
+    if type(report) != "dict" || len(keys(report)) > 32 { return false }
+    for key in ["schema", "scope", "runtime", "runtime_version", "outcome", "wall_ns", "counters", "snapshot_consistency", "waited_for_detached", "unsupported", "cpu_seconds", "process_peak_rss_bytes"] {
+        if has_key(report, key) == 0 { return false }
+    }
+    if report["schema"] != "kujo.runtime-measurements/v1" || report["scope"] != "process" || report["runtime"] != "vm" { return false }
+    if type(report["runtime_version"]) != "string" || len(report["runtime_version"]) > 64 { return false }
+    if contains(["success", "runtime_error", "compile_error", "internal_error"], report["outcome"]) == 0 { return false }
+    if report["snapshot_consistency"] != "independent_counters" || type(report["waited_for_detached"]) != "bool" || report["waited_for_detached"] != false { return false }
+    if measurement_uint(report["wall_ns"]) == false { return false }
+    counters := report["counters"]
+    if type(counters) != "dict" || len(keys(counters)) > 64 { return false }
+    for key in measurement_keys() { if has_key(counters, key) == 0 { return false } }
+    # v1 permits additional numeric counters. Validate but never project them.
+    for key in keys(counters) { if measurement_uint(counters[key]) == false { return false } }
+    unsupported := report["unsupported"]
+    if type(unsupported) != "array" || len(unsupported) > 32 { return false }
+    seen := []
+    for item in unsupported {
+        if type(item) != "string" || len(item) > 64 || contains(seen, item) { return false }
+        seen = push(seen, item)
+    }
+    cpu := report["cpu_seconds"]
+    if type(cpu) != "null" {
+        if type(cpu) != "int" && type(cpu) != "float" { return false }
+        if cpu < 0 || cpu > 9007199254740991 { return false }
+    }
+    rss := report["process_peak_rss_bytes"]
+    if type(rss) != "null" && measurement_uint(rss) == false { return false }
+    return true
+}
+
+export func watchdog_runtime_measurements_attach_bytes(raw, expected_artifact, observation) {
+    try {
+        if type(raw) != "string" || byte_length(raw) > 8192 { return measurement_failure() }
+        artifact := "sha256:" + sha256(raw)
+        if type(expected_artifact) != "string" || expected_artifact != artifact { return measurement_failure() }
+        report := parse_json(raw)
+        if measurement_valid(report) == false { return measurement_failure() }
+        if type(observation) != "dict" { return measurement_failure() }
+        for key in ["schema_version", "event_kind", "event_id", "trace_id", "span_id", "started_at_ms", "ended_at_ms"] {
+            if has_key(observation, key) == 0 { return measurement_failure() }
+        }
+        if observation["schema_version"] != "watchdog.native-event.v1" || observation["event_kind"] != "execution" { return measurement_failure() }
+        for key in ["event_id", "trace_id", "span_id"] {
+            if type(observation[key]) != "string" || len(observation[key]) == 0 || len(observation[key]) > 160 { return measurement_failure() }
+        }
+        if measurement_uint(observation["started_at_ms"]) == false || measurement_uint(observation["ended_at_ms"]) == false { return measurement_failure() }
+        if observation["ended_at_ms"] < observation["started_at_ms"] { return measurement_failure() }
+        if has_key(observation, "instantaneous") && observation["instantaneous"] != false { return measurement_failure() }
+        event := observation
+        attributes := {}
+        if has_key(event, "attributes") { attributes = event["attributes"] }
+        if type(attributes) != "dict" { return measurement_failure() }
+        # Reserved prefix prevents overwriting conflicting measurements.
+        projected := {"kujo.runtime.wall_ns": report["wall_ns"], "kujo.runtime.cpu_seconds": report["cpu_seconds"], "kujo.runtime.process_peak_rss_bytes": report["process_peak_rss_bytes"]}
+        for key in measurement_keys() { projected["kujo.runtime." + key] = report["counters"][key] }
+        for key in keys(attributes) {
+            if starts_with(key, "kujo.runtime.") {
+                if has_key(projected, key) == 0 || attributes[key] != projected[key] { return measurement_failure() }
+            }
+        }
+        for key in keys(projected) { attributes[key] = projected[key] }
+        # Native normalization adds one attribute; never allow silent truncation.
+        if len(keys(attributes)) > 127 { return measurement_failure() }
+        references := []
+        if has_key(event, "references") { references = event["references"] }
+        if type(references) != "array" { return measurement_failure() }
+        found := false
+        for reference in references {
+            if type(reference) != "dict" { return measurement_failure() }
+            if has_key(reference, "namespace") && reference["namespace"] == "kujo.runtime-measurements/v1" {
+                if reference != {"type": "artifact", "id": artifact, "namespace": "kujo.runtime-measurements/v1", "relation": "evidence"} { return measurement_failure() }
+                if found { return measurement_failure() }
+                found = true
+            }
+        }
+        if found == false { references = push(references, {"type": "artifact", "id": artifact, "namespace": "kujo.runtime-measurements/v1", "relation": "evidence"}) }
+        if len(references) > 24 { return measurement_failure() }
+        event["attributes"] = attributes
+        event["references"] = references
+        return {"ok": true, "error": "", "event": event}
+    } except ignored {
+        # Do not expose JSON excerpts, exception paths or input-derived labels.
+        return measurement_failure()
+    }
+}
+
+export func watchdog_runtime_measurements_attach(root, relative_path, expected_artifact, observation) {
+    try {
+        return watchdog_runtime_measurements_attach_bytes(read_file_beneath(root, relative_path, 8192), expected_artifact, observation)
+    } except ignored {
+        return measurement_failure()
+    }
+}

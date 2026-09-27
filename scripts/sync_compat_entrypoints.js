@@ -6,6 +6,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 
 const ENTRYPOINTS = [
+	{ src: 'src/runtime_measurements_adapter.kujo', root: 'runtime_measurements_adapter.kujo' },
 	{ src: 'src/dashboard_server.kujo', root: 'dashboard_server.kujo' },
 	{ src: 'src/watchdog_shared.kujo', root: 'watchdog_shared.kujo' },
 	{ src: 'src/telemetry_v2.kujo', root: 'telemetry_v2.kujo' },

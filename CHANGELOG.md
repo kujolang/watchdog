@@ -55,3 +55,7 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 
 - Initial Watchdog release with a local dashboard, SQLite telemetry storage, and an OpenAI-compatible proxy.
 - Added the first release documentation set and operational checks for the project.
+
+## Unreleased — runtime measurement evidence
+
+Added a bounded Kujo runtime-summary adapter for existing native execution observations, fixed numeric attributes and verified content-addressed artifact references. Includes negative/privacy tests and an offline HTTP/restart/RunLedger fixture; no new event envelope or pricing policy.

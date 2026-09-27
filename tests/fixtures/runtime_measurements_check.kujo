@@ -1,0 +1,75 @@
+from runtime_measurements_adapter import watchdog_runtime_measurements_attach, watchdog_runtime_measurements_attach_bytes
+from telemetry_native_adapter import watchdog_native_batch_normalize
+from telemetry_repository import watchdog_telemetry_repository_insert
+from watchdog_shared import watchdog_ensure_schema
+from telemetry_v2 import watchdog_telemetry_v2_timestamp
+
+root := env("WDG_MEASUREMENT_TEST_ROOT")
+cases := parse_json(read_file_beneath(root, "cases.json", 1048576))
+observation := {"schema_version": "watchdog.native-event.v1", "event_kind": "execution", "event_id": "execution-1", "trace_id": "wave-a-trace", "span_id": "execution-1", "started_at_ms": 1000, "ended_at_ms": 2000, "status": "ok", "usage": null, "costs": [], "references": [{"type": "run", "id": env_or("WDG_MEASUREMENT_RECEIPT", "wave-a-receipt"), "namespace": "runledger", "relation": "groups"}]}
+for item in cases {
+    result := watchdog_runtime_measurements_attach(root, item["file"], item["artifact"], observation)
+    assert(result["ok"] == item["ok"], "case failed: " + item["name"])
+    if result["ok"] {
+        assert(contains(to_json(result["event"]), "PRIVATE_PAYLOAD") == 0, "extension payload leaked")
+        attrs := result["event"]["attributes"]
+        if item["name"] == "nulls" {
+            assert(attrs["kujo.runtime.cpu_seconds"] == null && attrs["kujo.runtime.process_peak_rss_bytes"] == null, "unavailable converted to zero")
+            null_batch := watchdog_native_batch_normalize("runtime-fixture", "1", "null-projection", [result["event"]])
+            null_record := null_batch["batch"]["records"][0]
+            assert(null_record["attributes"]["kujo.runtime.cpu_seconds"] == null && null_record["usage"] == null && null_record["costs"] == [], "native null provenance lost")
+        }
+    }
+    if result["ok"] == false { assert(result["error"] == "invalid runtime measurement artifact or observation", "input-derived diagnostic") }
+}
+raw := read_file_beneath(root, "report.json", 8192)
+artifact := "sha256:" + sha256(raw)
+attached := watchdog_runtime_measurements_attach_bytes(raw, artifact, observation)
+assert(attached["ok"], "real report rejected")
+again := watchdog_runtime_measurements_attach_bytes(raw, artifact, attached["event"])
+assert(again["ok"] && again["event"] == attached["event"], "attachment not idempotent")
+bad := observation
+bad["span_id"] = null
+assert(watchdog_runtime_measurements_attach_bytes(raw, artifact, bad)["ok"] == false, "fabricated span identity")
+conflict := attached["event"]
+conflict_attributes := conflict["attributes"]
+conflict_attributes["kujo.runtime.wall_ns"] = -1
+conflict["attributes"] = conflict_attributes
+assert(watchdog_runtime_measurements_attach_bytes(raw, artifact, conflict)["ok"] == false, "conflicting measurement accepted")
+too_many := observation
+many := {}
+mut i := 0
+while i < 100 { many["existing." + to_string(i)] = i; i += 1 }
+too_many["attributes"] = many
+assert(watchdog_runtime_measurements_attach_bytes(raw, artifact, too_many)["ok"] == false, "attribute overflow accepted")
+identity := attached["event"]
+identity["references"] = [{"type": "artifact", "id": "sha256:wrong", "namespace": "kujo.runtime-measurements/v1", "relation": "evidence"}]
+assert(watchdog_runtime_measurements_attach_bytes(raw, artifact, identity)["ok"] == false, "artifact identity conflict accepted")
+# Preserve externally sourced provenance verbatim; never synthesize usage.
+provenance := observation
+provenance["usage"] = {"input_tokens": null, "output_tokens": null, "source": "unavailable"}
+provenance["costs"] = [{"kind": "unknown", "amount": null, "source": "unavailable"}]
+preserved := watchdog_runtime_measurements_attach_bytes(raw, artifact, provenance)
+assert(preserved["event"]["usage"] == provenance["usage"] && preserved["event"]["costs"] == provenance["costs"], "caller provenance changed")
+# Reattach to fresh caller context after independent negative cases.
+attached = watchdog_runtime_measurements_attach_bytes(raw, artifact, observation)
+normalized := watchdog_native_batch_normalize("runtime-fixture", "1", "wave-a-batch", [attached["event"]])
+assert(normalized["ok"], "normalization failed")
+batch := normalized["batch"]
+record := batch["records"][0]
+report := parse_json(raw)
+assert(record["attributes"]["kujo.runtime.wall_ns"] == report["wall_ns"], "wall unit/value drift")
+assert(record["usage"] == null && record["costs"] == [], "unknown usage/cost invented")
+assert(record["content"] == [], "content copied")
+assert(record["started_at"] == watchdog_telemetry_v2_timestamp(1000, 1000), "caller timing changed")
+db := db_connect("sqlite", join_path(root, "watchdog.db"))
+watchdog_ensure_schema(db)
+first := watchdog_telemetry_repository_insert(db, batch)
+assert(first["ok"] && first["deduplicated"] == false, "real repository insert failed: " + to_json(first))
+second := watchdog_telemetry_repository_insert(db, batch)
+assert(second["ok"] && second["deduplicated"], "repeat ingestion duplicated records")
+rows := db_query(db, "SELECT canonical_json FROM telemetry_records_v2", [])
+assert(len(rows) == 1, "wrong stored record count")
+write_file(join_path(root, "stored.json"), rows[0]["canonical_json"])
+write_file(join_path(root, "batch.json"), to_json(batch))
+print("runtime_measurements_check: PASS")

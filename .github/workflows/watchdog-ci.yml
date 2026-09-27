@@ -43,6 +43,19 @@ jobs:
             node "$f"
           done
 
+      - name: Checkout RunLedger for runtime measurement integration
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: kujolang/runledger
+          ref: ef0fa3a28f3192fd2183ff42740abfcce06f3745
+          path: runledger-fixture
+
+      - name: Verify runtime measurement HTTP restart and receipt path
+        env:
+          KUJO_BIN: ${{ github.workspace }}/kujo-runtime/target/release/kujo
+          RUNLEDGER_REPO: ${{ github.workspace }}/runledger-fixture
+        run: node tests/runtime_measurements_adapter_check.js --integration
+
   matrix-auth-rate-limit:
     runs-on: ubuntu-latest
     strategy:
