@@ -1,0 +1,14 @@
+[package]
+name = "watchdog"
+version = "1.2.0"
+description = "Local observability, proxy telemetry and verified Kujo runtime measurement references."
+license = "MIT"
+repository = "https://github.com/kujolang/watchdog"
+
+[kujo]
+minimum_version = "1.6.0"
+entry = "dashboard_server.kujo"
+sources = ["."]
+excludes = [".git", "tmp", "data", "node_modules", "kujo-runtime", "runledger-fixture"]
+
+[dependencies]
