@@ -1,6 +1,6 @@
 # Watchdog
 
-[![Version](https://img.shields.io/badge/version-1.1.0-black)](https://github.com/kujolang/watchdog)
+[![Version](https://img.shields.io/badge/version-1.2.0-black)](https://github.com/kujolang/watchdog)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 [![built with Kujo](https://img.shields.io/badge/built%20with-Kujo-white.svg)](https://github.com/kujolang/kujo)
 
@@ -42,6 +42,8 @@ key behavior) to use the proxy.
 ---
 
 ## Quick start
+
+Use [Kujo 1.6.0](https://github.com/kujolang/kujo/releases/tag/v1.6.0) for the verified release workflow and runtime-measurement adapter. Watchdog does not authorize execution or replay.
 
 ### 1) Start the Watchdog server
 
@@ -677,6 +679,6 @@ its transaction rather than repeating the same full validation in the route.
 Raw container bounds and authoritative privacy projection still precede it;
 validation failures return HTTP 400 and identity conflicts return HTTP 409.
 
-## Kujo runtime measurements (unreleased)
+## Kujo 1.6 runtime measurements
 
 Attach bounded runtime summaries to existing execution observations; retain their exact-byte artifact references. See [adapter contract and offline proof](docs/runtime-measurements.md).

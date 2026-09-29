@@ -6,6 +6,24 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-29
+
+### Added
+
+- Verify bounded Kujo 1.6 runtime-measurement summaries and attach numeric observations and exact content-addressed references to existing native execution events.
+- Preserve caller timing and RunLedger correlation through HTTP intake, deduplication and server restart, without copying private runtime payloads or granting workflow authority.
+
+### Changed
+
+- Refresh provider and OpenRouter pricing catalogs with September 27 data. Costs remain estimates, not invoices.
+- Pin release verification to Kujo 1.6.0 and the released RunLedger integration; run Node 24 regressions and the authentication/rate-limit matrix.
+
+### Fixed
+
+- Isolate authentication, rate-limit and redaction fixtures so one control cannot mask another test's result.
+
+Existing proxy, telemetry and dashboard contracts remain compatible. Runtime-measurement production requires Kujo 1.6.0; Watchdog remains observational and does not authorize retries.
+
 ## [1.1.0] - 2026-09-26
 
 ### Added
@@ -55,7 +73,3 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 
 - Initial Watchdog release with a local dashboard, SQLite telemetry storage, and an OpenAI-compatible proxy.
 - Added the first release documentation set and operational checks for the project.
-
-## Unreleased — runtime measurement evidence
-
-Added a bounded Kujo runtime-summary adapter for existing native execution observations, fixed numeric attributes and verified content-addressed artifact references. Includes negative/privacy tests and an offline HTTP/restart/RunLedger fixture; no new event envelope or pricing policy.
