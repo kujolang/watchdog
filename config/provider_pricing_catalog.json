@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_id": "watchdog-provider-catalog:2026-09-27",
+  "catalog_id": "watchdog-provider-catalog:2026-10-04",
   "models": {
     "gpt-4.1": {
       "model_id": "gpt-4.1",
@@ -80,6 +80,16 @@
       "input_rate_per_million": 2.0,
       "output_rate_per_million": 10.0,
       "cached_input_rate_per_million": 0.2,
+      "cache_write_input_rate_per_million": 2.5
+    },
+    "gpt-6.1-sol": {
+      "model_id": "gpt-6.1-sol",
+      "priced_model": "gpt-6.1-sol",
+      "has_pricing": true,
+      "pricing_source": "openai-api-pricing:2026-10-04:standard-short-context",
+      "input_rate_per_million": 2.0,
+      "output_rate_per_million": 10.0,
+      "cached_input_rate_per_million": 0.1,
       "cache_write_input_rate_per_million": 2.5
     },
     "gpt-6-luna": {
@@ -197,6 +207,16 @@
       "priced_model": "claude-sonnet-5",
       "has_pricing": true,
       "pricing_source": "anthropic-pricing:2026-09-06:launch-rate-confirmed-standard-assume-5m-cache-write",
+      "input_rate_per_million": 2.0,
+      "output_rate_per_million": 10.0,
+      "cached_input_rate_per_million": 0.2,
+      "cache_write_input_rate_per_million": 2.5
+    },
+    "claude-sonnet-5.5": {
+      "model_id": "claude-sonnet-5.5",
+      "priced_model": "claude-sonnet-5.5",
+      "has_pricing": true,
+      "pricing_source": "anthropic-pricing:2026-10-04:standard-assume-5m-cache-write",
       "input_rate_per_million": 2.0,
       "output_rate_per_million": 10.0,
       "cached_input_rate_per_million": 0.2,
@@ -350,6 +370,26 @@
       "input_rate_per_million": 1.4,
       "output_rate_per_million": 4.4,
       "cached_input_rate_per_million": 0.26,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "glm-5.3": {
+      "model_id": "glm-5.3",
+      "priced_model": "glm-5.3",
+      "has_pricing": false,
+      "pricing_source": "z-ai-pricing:2026-10-04:not-listed-on-current-public-pricing-page",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "glm-5.3-flash": {
+      "model_id": "glm-5.3-flash",
+      "priced_model": "glm-5.3-flash",
+      "has_pricing": false,
+      "pricing_source": "z-ai-pricing:2026-10-04:not-listed-on-current-public-pricing-page",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
       "cache_write_input_rate_per_million": 0.0
     },
     "glm-5.1": {
@@ -622,6 +662,26 @@
       "cached_input_rate_per_million": 0.0,
       "cache_write_input_rate_per_million": 0.0
     },
+    "meituan/longcat-2.5-preview:free": {
+      "model_id": "meituan/longcat-2.5-preview:free",
+      "priced_model": "meituan/longcat-2.5-preview:free",
+      "has_pricing": false,
+      "pricing_source": "openrouter-public-catalog:2026-10-04:not-listed-in-current-catalog",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
+    },
+    "inclusionai/ling-3.0-flash-fin:free": {
+      "model_id": "inclusionai/ling-3.0-flash-fin:free",
+      "priced_model": "inclusionai/ling-3.0-flash-fin:free",
+      "has_pricing": false,
+      "pricing_source": "openrouter-public-catalog:2026-10-04:not-listed-in-current-catalog",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
+    },
     "kimi-k3": {
       "model_id": "kimi-k3",
       "priced_model": "kimi-k3",
@@ -677,6 +737,14 @@
     "ollama-cloud/glm-5.2": {
       "target_model_id": "glm-5.2",
       "pricing_source": "ollama-cloud-equivalent:z-ai-pricing:2026-07-19"
+    },
+    "ollama-cloud/glm-5.3": {
+      "target_model_id": "glm-5.3",
+      "pricing_source": "ollama-cloud-unpriced:2026-10-04#subscription-usage-no-per-token-rate"
+    },
+    "ollama-cloud/glm-5.3-flash:cloud": {
+      "target_model_id": "glm-5.3-flash",
+      "pricing_source": "ollama-cloud-unpriced:2026-10-04#subscription-usage-no-per-token-rate"
     },
     "ollama-cloud/glm-5.1": {
       "target_model_id": "glm-5.1",

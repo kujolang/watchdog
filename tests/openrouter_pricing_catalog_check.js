@@ -32,6 +32,13 @@ assert.equal(astra.cached_input_rate_per_million, 1);
 assert.equal(astra.cache_write_input_rate_per_million, 12.5);
 assert.equal(astra.output_rate_per_million, 50);
 
+const sol61 = resolvePricing('gpt-6.1-sol', { providerCatalog, openrouterCatalog });
+assert.equal(sol61.pricing_kind, 'catalog');
+assert.equal(sol61.input_rate_per_million, 2);
+assert.equal(sol61.cached_input_rate_per_million, 0.1);
+assert.equal(sol61.cache_write_input_rate_per_million, 2.5);
+assert.equal(sol61.output_rate_per_million, 10);
+
 const opus5 = resolvePricing('anthropic/claude-opus-5', { providerCatalog, openrouterCatalog });
 assert.equal(opus5.pricing_kind, 'catalog');
 assert.equal(opus5.input_rate_per_million, 5);
@@ -39,9 +46,9 @@ assert.equal(opus5.output_rate_per_million, 25);
 assert.equal(opus5.cache_write_input_rate_per_million, 6.25);
 
 const glm52 = resolvePricing('z-ai/glm-5.2', { providerCatalog, openrouterCatalog });
-assert.equal(glm52.input_rate_per_million, 0.6496);
-assert.equal(glm52.output_rate_per_million, 2.0416);
-assert.equal(glm52.cached_input_rate_per_million, 0.12064);
+assert.equal(glm52.input_rate_per_million, 0.38);
+assert.equal(glm52.output_rate_per_million, 3.49);
+assert.equal(glm52.cached_input_rate_per_million, 0.26);
 
 const alias = resolvePricing('~anthropic/claude-haiku-latest', { providerCatalog, openrouterCatalog });
 assert.equal(alias.pricing_kind, 'catalog');
@@ -101,6 +108,11 @@ const ollamaKimiK3 = resolvePricing('kimi-k3:cloud', { providerCatalog, openrout
 assert.equal(ollamaKimiK3.pricing_kind, 'unknown');
 assert.equal(ollamaKimiK3.priced_model, 'kimi-k3');
 assert.match(ollamaKimiK3.pricing_source, /^ollama-cloud-unpriced:/);
+
+const ollamaGlm53Flash = resolvePricing('glm-5.3-flash:cloud', { providerCatalog, openrouterCatalog });
+assert.equal(ollamaGlm53Flash.pricing_kind, 'unknown');
+assert.equal(ollamaGlm53Flash.priced_model, 'glm-5.3-flash');
+assert.match(ollamaGlm53Flash.pricing_source, /^ollama-cloud-unpriced:/);
 
 const ollamaEquivalent = resolvePricing('kimi-k2.6', { providerCatalog, openrouterCatalog });
 assert.equal(ollamaEquivalent.pricing_kind, 'catalog');
