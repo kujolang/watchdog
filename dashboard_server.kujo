@@ -1988,7 +1988,25 @@ func jsonl_v2_response(rows, exported_at, start_cursor) {
 }
 
 func persist_approved_canonical_batch(approved) {
-	result := watchdog_telemetry_repository_insert(db, approved)
+	# HTTP callbacks can overlap. A SQLite transaction belongs to its connection,
+	# so durable canonical writers must not share the dashboard's connection.
+	# Preserve the existing single-connection semantics for private :memory: stores.
+	writer := db
+	owned_writer := DB_PATH != ":memory:"
+	if owned_writer { writer = db_connect("sqlite", DB_PATH) }
+	result := {}
+	try {
+		if owned_writer {
+			db_query(writer, "PRAGMA busy_timeout=5000", [])
+			db_query(writer, "PRAGMA synchronous=NORMAL", [])
+			db_query(writer, "PRAGMA foreign_keys=ON", [])
+		}
+		result = watchdog_telemetry_repository_insert(writer, approved)
+		if owned_writer { db_close(writer) }
+	} except err {
+		if owned_writer { try { db_close(writer) } except close_err {} }
+		throw(err)
+	}
 	if result["ok"] && result["deduplicated"] == false && len(EXPORTER_PROFILE_IDS) > 0 {
 		delivery := watchdog_delivery_enqueue_batch(db, EXPORTER_PROFILE_IDS, result["batch_dbid"], EXPORT_QUEUE_MAX_RECORDS, EXPORT_QUEUE_MAX_BYTES)
 		result["delivery"] = delivery

@@ -682,3 +682,12 @@ validation failures return HTTP 400 and identity conflicts return HTTP 409.
 ## Kujo 1.6 runtime measurements
 
 Attach bounded runtime summaries to existing execution observations; retain their exact-byte artifact references. See [adapter contract and offline proof](docs/runtime-measurements.md).
+
+### Concurrent canonical intake
+
+Disk-backed canonical batches use a dedicated SQLite connection per request so
+overlapping HTTP callbacks cannot nest transactions on the dashboard connection.
+Validation, privacy filtering, atomic insertion and identity-conflict checks remain
+unchanged. Private `:memory:` stores retain their shared connection semantics and
+are not qualified for concurrent intake. Run the bounded regression with
+`node tests/canonical_concurrency_check.js` (Node with `node:sqlite`, Kujo available).
