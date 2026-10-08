@@ -47,14 +47,8 @@ func v2_is_hex_id(value, expected_len) {
 	if len(text) != expected_len {
 		return false
 	}
-	i := 0
-	while i < len(text) {
-		ch := substring(text, i, i + 1)
-		if contains("0123456789abcdef", ch) == 0 {
-			return false
-		}
-		i = i + 1
-	}
+	# Native character validation preserves lowercase/trim/length and zero-ID rules.
+	if regex_match(text, "[^0-9a-f]") { return false }
 	if text == substring("00000000000000000000000000000000", 0, expected_len) {
 		return false
 	}

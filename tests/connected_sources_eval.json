@@ -28,6 +28,7 @@
     }
   },
   "tests": [
+    {"name":"Native hexadecimal ID validation preserves canonical identity rules","check":"command_succeeds","timeout_seconds":30,"params":{"command":"node tests/hex_id_equivalence.js"}},
     {"name":"API authentication, aggregation, registry persistence, proxy profiles, privacy canaries, atomic writes, conflicts, rollback, and verification","check":"command_succeeds","timeout_seconds":60,"params":{"command":"node tests/connected_sources_management_suite.js"}},
     {"name":"Dashboard XSS and detail escaping","check":"command_succeeds","timeout_seconds":30,"params":{"command":"node tests/dashboard_xss_regression_check.js"}},
     {"name":"Connected Sources frontend, accessibility, responsive, and local-asset contract","check":"command_succeeds","timeout_seconds":30,"params":{"command":"node tests/connected_sources_frontend_contract_check.js"}},

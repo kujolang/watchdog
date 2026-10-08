@@ -6,6 +6,10 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 
 ## [Unreleased]
 
+### Changed
+
+- Validate hexadecimal telemetry IDs with a native character check while preserving normalization, length and zero-ID rules; verify equivalence against the prior scanner.
+
 ## [1.2.0] - 2026-09-29
 
 ### Added
