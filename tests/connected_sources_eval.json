@@ -34,6 +34,7 @@
     {"name":"Source inventory stays within the 25 ms p95 budget on the 50000-row reference fixture","check":"command_succeeds","timeout_seconds":90,"params":{"command":"node tests/connected_sources_query_benchmark.js"}},
     {"name":"Tenant and project isolation regression","check":"command_succeeds","timeout_seconds":60,"params":{"command":"node tests/tenant_project_partitioning_check.js"}},
     {"name":"Default and custom redaction matching remain equivalent","check":"command_succeeds","timeout_seconds":60,"params":{"command":"node tests/redaction_match_equivalence.js"}},
+    {"name":"Busy canonical writer fails closed and permits identity retry","check":"command_succeeds","timeout_seconds":60,"params":{"command":"node tests/canonical_busy_check.js"}},
     {"name":"Canonical serializer preserves retained identity bytes","check":"command_succeeds","timeout_seconds":60,"params":{"command":"node tests/canonical_serialization_equivalence.js"}},
     {"name":"Canonical v2 and OTLP source contracts","check":"command_succeeds","timeout_seconds":90,"params":{"command":"node tests/telemetry_v2_api_suite.js"}},
     {"name":"Authentication failures remain enforced","check":"command_succeeds","timeout_seconds":60,"params":{"command":"node tests/api_auth_mode_check.js"}},
