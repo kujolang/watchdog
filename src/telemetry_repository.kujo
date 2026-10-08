@@ -32,9 +32,14 @@ func repo_nullable_json(value) {
 	return to_json(value)
 }
 
+# Use native encoding only when this runtime proves recursive object ordering.
+# Keep the portable serializer below for older/differently configured runtimes.
+repo_native_json_ordered := to_json({"z": [{"z": 2, "a": 1}], "a": 0}) == "{\"a\":0,\"z\":[{\"a\":1,\"z\":2}]}" && to_json(parse_json("{\"z\":[{\"z\":2,\"a\":1}],\"a\":0}")) == "{\"a\":0,\"z\":[{\"a\":1,\"z\":2}]}"
+
 # RFC 8785-style stable object ordering for the bounded canonical record shape.
 # Arrays retain producer order; scalars use the runtime JSON encoder for escaping.
 func repo_canonical_json(value) {
+	if repo_native_json_ordered { return to_json(value) }
 	value_type := type(value)
 	if value_type == "dict" {
 		parts := []
