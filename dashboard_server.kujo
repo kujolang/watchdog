@@ -974,6 +974,10 @@ func redaction_enabled() {
 
 func string_has_sensitive_term(value) {
 	sensitive_scan_text := to_lower(to_string(value))
+	# The fixed default terms contain no regex syntax. Custom terms retain literal matching.
+	if REDACT_DEFAULT_TERMS {
+		return regex_match(sensitive_scan_text, "api_key|authorization|bearer|password|secret|token|sk-")
+	}
 	i := 0
 	while i < len(REDACT_TERMS) {
 		term := to_string(REDACT_TERMS[i])
@@ -1461,6 +1465,7 @@ if CONTENT_CAPTURE_MODE != "summaries" {
 	CONTENT_CAPTURE_MODE = "off"
 }
 REDACT_TERMS := parse_csv_terms(env_or_many(["WDG_REDACT_TERMS"], DEFAULT_REDACT_TERMS))
+REDACT_DEFAULT_TERMS := join(REDACT_TERMS, ",") == DEFAULT_REDACT_TERMS
 RATE_LIMIT_MODE := to_lower(env_or_many(["WDG_RATE_LIMIT_MODE"], DEFAULT_RATE_LIMIT_MODE))
 RATE_LIMIT_MAX_REQUESTS := parse_int_env_many(["WDG_RATE_LIMIT_MAX_REQUESTS"], DEFAULT_RATE_LIMIT_MAX_REQUESTS)
 RATE_LIMIT_WINDOW_SECS := parse_int_env_many(["WDG_RATE_LIMIT_WINDOW_SECS"], DEFAULT_RATE_LIMIT_WINDOW_SECS)
