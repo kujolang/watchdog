@@ -279,18 +279,25 @@ func repo_content_mode(records) {
 	return mode
 }
 
-func repo_insert_references(db, record_dbid, references) {
-	if type(references) != "array" { return }
-	count := 0
+func repo_prepare_references(references) {
+	if type(references) != "array" { return [] }
+	parameters := []
 	for reference in references {
-		if count < 24 && type(reference) == "dict" {
+		if len(parameters) < 24 && type(reference) == "dict" {
 			ref_type := repo_text(repo_get(reference, "type", "external"), 40)
 			ref_id := repo_text(repo_get(reference, "id", ""), 160)
 			if ref_id != "" {
-				db_execute(db, "INSERT OR IGNORE INTO telemetry_references_v2 (record_dbid, ref_type, ref_id, namespace, relation) VALUES (?,?,?,?,?)", [record_dbid, ref_type, ref_id, repo_text(repo_get(reference, "namespace", ""), 80), repo_text(repo_get(reference, "relation", ""), 40)])
-				count = count + 1
+				parameters = push(parameters, [null, ref_type, ref_id, repo_text(repo_get(reference, "namespace", ""), 80), repo_text(repo_get(reference, "relation", ""), 40)])
 			}
 		}
+	}
+	return parameters
+}
+
+func repo_insert_references(db, record_dbid, references) {
+	for parameters in references {
+		parameters[0] = record_dbid
+		db_execute(db, "INSERT OR IGNORE INTO telemetry_references_v2 (record_dbid, ref_type, ref_id, namespace, relation) VALUES (?,?,?,?,?)", parameters)
 	}
 }
 
@@ -326,7 +333,27 @@ func repo_parent_graph_error(db, batch) {
 	return ""
 }
 
-func repo_insert_batch_rows(db, batch) {
+# Pure, bounded preparation happens before acquiring the SQLite writer. Values
+# are derived only from the already-approved/validated batch; identity is still
+# checked against current database state inside the transaction.
+func repo_prepare_records(batch) {
+	producer_name := repo_text(repo_get(batch["producer"], "name", "external"), 80)
+	prepared := {}
+	for record in batch["records"] {
+		record_id := repo_text(record["record_id"], 160)
+		references := repo_get(record, "references", [])
+		canonical_json := repo_canonical_json(record)
+		record_hash := sha256(canonical_json)
+		source := repo_get(record, "source", {})
+		terminal_outcome := null
+		if repo_projection(record, "watchdog.outcome.terminal") == true { terminal_outcome = repo_nullable_text(repo_projection(record, "watchdog.outcome.code"), 20) }
+		parameters := [null, producer_name, record_id, repo_text(record["record_type"], 20), repo_text(record["trace_id"], 32), repo_nullable_text(repo_get(record, "span_id", null), 16), repo_nullable_text(repo_get(record, "parent_span_id", null), 16), repo_text(record["observed_at"], 80), repo_nullable_text(repo_get(record, "started_at", null), 80), repo_nullable_text(repo_get(record, "ended_at", null), 80), repo_nullable_text(repo_get(record, "kind", null), 40), repo_nullable_text(repo_get(record, "name", null), 160), repo_text(repo_get(record, "status", "unset"), 20), to_json(source), to_json(references), to_json(repo_get(record, "attributes", {})), repo_nullable_json(repo_get(record, "usage", null)), to_json(repo_get(record, "costs", [])), repo_nullable_json(repo_get(record, "error", null)), to_json(repo_get(record, "content", [])), to_json(repo_get(record, "privacy", {})), canonical_json, record_hash, repo_nullable_text(repo_projection(record, "watchdog.logical_request_id"), 160), repo_projection(record, "watchdog.attempt.number"), repo_relation_id(references, "retries"), terminal_outcome, repo_projection(record, "watchdog.time_to_first_output_ms"), repo_projection(record, "watchdog.output_generation_duration_ms"), repo_projection(record, "watchdog.output_tokens_per_second"), repo_projection(record, "watchdog.context.window_tokens"), repo_projection(record, "watchdog.context.utilization_ratio"), repo_nullable_text(repo_get(source, "application.name", null), 80), repo_nullable_text(repo_get(source, "harness.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.version", null), 40), null]
+		prepared[record_id] = {"sha256": record_hash, "parameters": parameters, "references": repo_prepare_references(references)}
+	}
+	return prepared
+}
+
+func repo_insert_batch_rows(db, batch, prepared) {
 	producer := batch["producer"]
 	producer_name := repo_text(repo_get(producer, "name", "external"), 80)
 	batch_id := repo_text(batch["batch_id"], 160)
@@ -335,8 +362,6 @@ func repo_insert_batch_rows(db, batch) {
 	conflicts := []
 	identical := {}
 	# Bounded to the validated batch; never retain source records across requests.
-	canonical_records := {}
-	record_hashes := {}
 	# One bounded lookup preserves identity checks without a query per record.
 	identity_parameters := [producer_name]
 	identity_placeholders := []
@@ -350,9 +375,7 @@ func repo_insert_batch_rows(db, batch) {
 	}
 	for record in records {
 		record_id := repo_text(record["record_id"], 160)
-		canonical_records[record_id] = repo_canonical_json(record)
-		incoming_sha256 := sha256(canonical_records[record_id])
-		record_hashes[record_id] = incoming_sha256
+		incoming_sha256 := prepared[record_id]["sha256"]
 		if has_key(prior_by_id, record_id) {
 			prior := prior_by_id[record_id]
 			existing_sha256 := repo_text(repo_get(prior, "canonical_sha256", ""), 64)
@@ -392,12 +415,11 @@ func repo_insert_batch_rows(db, batch) {
 	for record in records {
 		record_id := repo_text(record["record_id"], 160)
 		if has_key(identical, record_id) { continue }
-		references := repo_get(record, "references", [])
-		canonical_json := canonical_records[record_id]
-		source := repo_get(record, "source", {})
-		terminal_outcome := null
-		if repo_projection(record, "watchdog.outcome.terminal") == true { terminal_outcome = repo_nullable_text(repo_projection(record, "watchdog.outcome.code"), 20) }
-		rows := db_query(db, "INSERT INTO telemetry_records_v2 (batch_dbid, producer_name, record_id, record_type, trace_id, span_id, parent_span_id, observed_at, started_at, ended_at, kind, name, status, source_json, references_json, attributes_json, usage_json, costs_json, error_json, content_json, privacy_json, canonical_json, canonical_sha256, logical_request_id, attempt_number, retry_of_request_id, terminal_outcome, time_to_first_output_ms, output_generation_duration_ms, output_tokens_per_second, context_window_tokens, context_utilization_ratio, application_name, harness_name, instrumentation_name, instrumentation_version, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id", [batch_dbid, producer_name, record_id, repo_text(record["record_type"], 20), repo_text(record["trace_id"], 32), repo_nullable_text(repo_get(record, "span_id", null), 16), repo_nullable_text(repo_get(record, "parent_span_id", null), 16), repo_text(record["observed_at"], 80), repo_nullable_text(repo_get(record, "started_at", null), 80), repo_nullable_text(repo_get(record, "ended_at", null), 80), repo_nullable_text(repo_get(record, "kind", null), 40), repo_nullable_text(repo_get(record, "name", null), 160), repo_text(repo_get(record, "status", "unset"), 20), to_json(source), to_json(references), to_json(repo_get(record, "attributes", {})), repo_nullable_json(repo_get(record, "usage", null)), to_json(repo_get(record, "costs", [])), repo_nullable_json(repo_get(record, "error", null)), to_json(repo_get(record, "content", [])), to_json(repo_get(record, "privacy", {})), canonical_json, record_hashes[record_id], repo_nullable_text(repo_projection(record, "watchdog.logical_request_id"), 160), repo_projection(record, "watchdog.attempt.number"), repo_relation_id(references, "retries"), terminal_outcome, repo_projection(record, "watchdog.time_to_first_output_ms"), repo_projection(record, "watchdog.output_generation_duration_ms"), repo_projection(record, "watchdog.output_tokens_per_second"), repo_projection(record, "watchdog.context.window_tokens"), repo_projection(record, "watchdog.context.utilization_ratio"), repo_nullable_text(repo_get(source, "application.name", null), 80), repo_nullable_text(repo_get(source, "harness.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.version", null), 40), received_at])
+		references := prepared[record_id]["references"]
+		parameters := prepared[record_id]["parameters"]
+		parameters[0] = batch_dbid
+		parameters[len(parameters)-1] = received_at
+		rows := db_query(db, "INSERT INTO telemetry_records_v2 (batch_dbid, producer_name, record_id, record_type, trace_id, span_id, parent_span_id, observed_at, started_at, ended_at, kind, name, status, source_json, references_json, attributes_json, usage_json, costs_json, error_json, content_json, privacy_json, canonical_json, canonical_sha256, logical_request_id, attempt_number, retry_of_request_id, terminal_outcome, time_to_first_output_ms, output_generation_duration_ms, output_tokens_per_second, context_window_tokens, context_utilization_ratio, application_name, harness_name, instrumentation_name, instrumentation_version, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id", parameters)
 		if len(rows) > 0 {
 			record_dbid := rows[0]["id"]
 			repo_insert_references(db, record_dbid, references)
@@ -410,6 +432,7 @@ func repo_insert_batch_rows(db, batch) {
 func repo_insert_batch(db, batch) {
 	validation := repo_validate_batch(batch)
 	if validation["ok"] == false { return validation }
+	prepared := repo_prepare_records(batch)
 	db_execute(db, "BEGIN IMMEDIATE", [])
 	try {
 		parent_error := repo_parent_graph_error(db, batch)
@@ -417,7 +440,7 @@ func repo_insert_batch(db, batch) {
 			db_execute(db, "ROLLBACK", [])
 			return {"ok": false, "error": parent_error, "error_code": "invalid_semantics"}
 		}
-		result := repo_insert_batch_rows(db, batch)
+		result := repo_insert_batch_rows(db, batch, prepared)
 		db_execute(db, "COMMIT", [])
 		return result
 	} except err {
@@ -432,7 +455,7 @@ func repo_insert_batch_fast(db, batch) {
 	if len(batch["records"]) != 1 { return {"ok": false, "error": "fast repository path requires exactly one record"} }
 	parent_error := repo_parent_graph_error(db, batch)
 	if parent_error != "" { return {"ok": false, "error": parent_error, "error_code": "invalid_semantics"} }
-	return repo_insert_batch_rows(db, batch)
+	return repo_insert_batch_rows(db, batch, repo_prepare_records(batch))
 }
 
 export watchdog_telemetry_repository_validate := repo_validate_batch
