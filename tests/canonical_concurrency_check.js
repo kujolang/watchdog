@@ -27,7 +27,17 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
   for(const response of retries){assert.equal(response.status,200);assert.equal((await response.json()).data.deduplicated,true);}
   const conflicting=structuredClone(batches[0]);conflicting.records[0].name='changed-identity';
   const responses=await Promise.all([post(batches[0]),post(conflicting)]);assert.deepEqual(responses.map(r=>r.status),[200,409]);
-  const sql=new DatabaseSync(db,{readOnly:true});try{assert.equal(sql.prepare('SELECT count(*) n FROM telemetry_records_v2').get().n,160);assert.equal(sql.prepare('SELECT count(*) n FROM telemetry_batches_v2').get().n,4);for(const row of sql.prepare('SELECT canonical_json FROM telemetry_records_v2').all()){assert(!row.canonical_json.includes('secret-canary'));assert(!row.canonical_json.includes('private-canary'));}}finally{sql.close();}
-  console.log('canonical_concurrency_check: PASS (160 retained; concurrent retry deduplication; identity conflict409; privacy preserved)');
+  // Bulk identity lookup must preserve overlap, producer scoping and atomic conflicts.
+  const overlap=structuredClone(batches[0]);overlap.batch_id='partial-overlap';
+  overlap.records.push(...batches[0].records.map((r,i)=>({...r,record_id:`new-${i}`})));
+  let reply=await post(overlap);assert.equal(reply.status,200,await reply.text());
+  reply=await post(overlap);assert.equal(reply.status,200);assert.equal((await reply.json()).data.deduplicated,true);
+  const otherProducer=structuredClone(batches[0]);otherProducer.producer.name='other-producer';
+  reply=await post(otherProducer);assert.equal(reply.status,200,await reply.text());
+  const mixedConflict=structuredClone(batches[0]);mixedConflict.batch_id='atomic-conflict';
+  mixedConflict.records[0].name='different';mixedConflict.records[1].record_id='must-not-be-inserted';
+  reply=await post(mixedConflict);assert.equal(reply.status,409);
+  const sql=new DatabaseSync(db,{readOnly:true});try{assert.equal(sql.prepare('SELECT count(*) n FROM telemetry_records_v2').get().n,240);assert.equal(sql.prepare('SELECT count(*) n FROM telemetry_batches_v2').get().n,6);for(const row of sql.prepare('SELECT canonical_json FROM telemetry_records_v2').all()){assert(!row.canonical_json.includes('secret-canary'));assert(!row.canonical_json.includes('private-canary'));}}finally{sql.close();}
+  console.log('canonical_concurrency_check: PASS (240 retained; overlap retries; producer scope; atomic identity conflicts; privacy preserved)');
  }catch(e){e.message+='\n'+log;throw e;}finally{if(child && child.exitCode===null){child.kill('SIGTERM');await delay(300);if(child.exitCode===null)child.kill('SIGKILL');await delay(100);}fs.rmSync(temp,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

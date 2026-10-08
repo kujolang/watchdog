@@ -337,17 +337,28 @@ func repo_insert_batch_rows(db, batch) {
 	# Bounded to the validated batch; never retain source records across requests.
 	canonical_records := {}
 	record_hashes := {}
+	# One bounded lookup preserves identity checks without a query per record.
+	identity_parameters := [producer_name]
+	identity_placeholders := []
+	for record in records {
+		identity_parameters = push(identity_parameters, repo_text(record["record_id"], 160))
+		identity_placeholders = push(identity_placeholders, "?")
+	}
+	prior_by_id := {}
+	for prior_row in db_query(db, "SELECT id, record_id, canonical_json, canonical_sha256 FROM telemetry_records_v2 WHERE producer_name = ? AND record_id IN (" + join(identity_placeholders, ",") + ")", identity_parameters) {
+		prior_by_id[prior_row["record_id"]] = prior_row
+	}
 	for record in records {
 		record_id := repo_text(record["record_id"], 160)
 		canonical_records[record_id] = repo_canonical_json(record)
 		incoming_sha256 := sha256(canonical_records[record_id])
 		record_hashes[record_id] = incoming_sha256
-		prior := db_query(db, "SELECT id, canonical_json, canonical_sha256 FROM telemetry_records_v2 WHERE producer_name = ? AND record_id = ?", [producer_name, record_id])
-		if len(prior) > 0 {
-			existing_sha256 := repo_text(repo_get(prior[0], "canonical_sha256", ""), 64)
+		if has_key(prior_by_id, record_id) {
+			prior := prior_by_id[record_id]
+			existing_sha256 := repo_text(repo_get(prior, "canonical_sha256", ""), 64)
 			if existing_sha256 == "" {
-				existing_sha256 = repo_record_hash(parse_json(prior[0]["canonical_json"]))
-				db_execute(db, "UPDATE telemetry_records_v2 SET canonical_sha256 = ? WHERE id = ? AND (canonical_sha256 IS NULL OR canonical_sha256 = '')", [existing_sha256, prior[0]["id"]])
+				existing_sha256 = repo_record_hash(parse_json(prior["canonical_json"]))
+				db_execute(db, "UPDATE telemetry_records_v2 SET canonical_sha256 = ? WHERE id = ? AND (canonical_sha256 IS NULL OR canonical_sha256 = '')", [existing_sha256, prior["id"]])
 			}
 			if existing_sha256 == incoming_sha256 {
 				identical[record_id] = true
@@ -386,11 +397,9 @@ func repo_insert_batch_rows(db, batch) {
 		source := repo_get(record, "source", {})
 		terminal_outcome := null
 		if repo_projection(record, "watchdog.outcome.terminal") == true { terminal_outcome = repo_nullable_text(repo_projection(record, "watchdog.outcome.code"), 20) }
-		db_execute(db, "INSERT INTO telemetry_records_v2 (batch_dbid, producer_name, record_id, record_type, trace_id, span_id, parent_span_id, observed_at, started_at, ended_at, kind, name, status, source_json, references_json, attributes_json, usage_json, costs_json, error_json, content_json, privacy_json, canonical_json, canonical_sha256, logical_request_id, attempt_number, retry_of_request_id, terminal_outcome, time_to_first_output_ms, output_generation_duration_ms, output_tokens_per_second, context_window_tokens, context_utilization_ratio, application_name, harness_name, instrumentation_name, instrumentation_version, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [batch_dbid, producer_name, record_id, repo_text(record["record_type"], 20), repo_text(record["trace_id"], 32), repo_nullable_text(repo_get(record, "span_id", null), 16), repo_nullable_text(repo_get(record, "parent_span_id", null), 16), repo_text(record["observed_at"], 80), repo_nullable_text(repo_get(record, "started_at", null), 80), repo_nullable_text(repo_get(record, "ended_at", null), 80), repo_nullable_text(repo_get(record, "kind", null), 40), repo_nullable_text(repo_get(record, "name", null), 160), repo_text(repo_get(record, "status", "unset"), 20), to_json(source), to_json(references), to_json(repo_get(record, "attributes", {})), repo_nullable_json(repo_get(record, "usage", null)), to_json(repo_get(record, "costs", [])), repo_nullable_json(repo_get(record, "error", null)), to_json(repo_get(record, "content", [])), to_json(repo_get(record, "privacy", {})), canonical_json, record_hashes[record_id], repo_nullable_text(repo_projection(record, "watchdog.logical_request_id"), 160), repo_projection(record, "watchdog.attempt.number"), repo_relation_id(references, "retries"), terminal_outcome, repo_projection(record, "watchdog.time_to_first_output_ms"), repo_projection(record, "watchdog.output_generation_duration_ms"), repo_projection(record, "watchdog.output_tokens_per_second"), repo_projection(record, "watchdog.context.window_tokens"), repo_projection(record, "watchdog.context.utilization_ratio"), repo_nullable_text(repo_get(source, "application.name", null), 80), repo_nullable_text(repo_get(source, "harness.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.version", null), 40), received_at])
-		rows := db_query(db, "SELECT id FROM telemetry_records_v2 WHERE producer_name = ? AND record_id = ?", [producer_name, record_id])
+		rows := db_query(db, "INSERT INTO telemetry_records_v2 (batch_dbid, producer_name, record_id, record_type, trace_id, span_id, parent_span_id, observed_at, started_at, ended_at, kind, name, status, source_json, references_json, attributes_json, usage_json, costs_json, error_json, content_json, privacy_json, canonical_json, canonical_sha256, logical_request_id, attempt_number, retry_of_request_id, terminal_outcome, time_to_first_output_ms, output_generation_duration_ms, output_tokens_per_second, context_window_tokens, context_utilization_ratio, application_name, harness_name, instrumentation_name, instrumentation_version, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id", [batch_dbid, producer_name, record_id, repo_text(record["record_type"], 20), repo_text(record["trace_id"], 32), repo_nullable_text(repo_get(record, "span_id", null), 16), repo_nullable_text(repo_get(record, "parent_span_id", null), 16), repo_text(record["observed_at"], 80), repo_nullable_text(repo_get(record, "started_at", null), 80), repo_nullable_text(repo_get(record, "ended_at", null), 80), repo_nullable_text(repo_get(record, "kind", null), 40), repo_nullable_text(repo_get(record, "name", null), 160), repo_text(repo_get(record, "status", "unset"), 20), to_json(source), to_json(references), to_json(repo_get(record, "attributes", {})), repo_nullable_json(repo_get(record, "usage", null)), to_json(repo_get(record, "costs", [])), repo_nullable_json(repo_get(record, "error", null)), to_json(repo_get(record, "content", [])), to_json(repo_get(record, "privacy", {})), canonical_json, record_hashes[record_id], repo_nullable_text(repo_projection(record, "watchdog.logical_request_id"), 160), repo_projection(record, "watchdog.attempt.number"), repo_relation_id(references, "retries"), terminal_outcome, repo_projection(record, "watchdog.time_to_first_output_ms"), repo_projection(record, "watchdog.output_generation_duration_ms"), repo_projection(record, "watchdog.output_tokens_per_second"), repo_projection(record, "watchdog.context.window_tokens"), repo_projection(record, "watchdog.context.utilization_ratio"), repo_nullable_text(repo_get(source, "application.name", null), 80), repo_nullable_text(repo_get(source, "harness.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.name", null), 80), repo_nullable_text(repo_get(source, "instrumentation.version", null), 40), received_at])
 		if len(rows) > 0 {
 			record_dbid := rows[0]["id"]
-			db_execute(db, "DELETE FROM telemetry_references_v2 WHERE record_dbid = ?", [record_dbid])
 			repo_insert_references(db, record_dbid, references)
 		}
 		inserted = inserted + 1
