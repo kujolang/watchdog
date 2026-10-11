@@ -25,11 +25,11 @@ function metadataOnlyBatch(input) {
 		throw new Error('Expected a watchdog.telemetry.v2 batch with 1-100 records');
 	}
 	return {
-		...structuredClone(input),
+		...structuredClone({...input, records: []}),
 		records: input.records.map((source) => {
-			const record = structuredClone(source);
+			const record = structuredClone({...source, content: []});
 			const transformations = Array.isArray(record.privacy?.transformations) ? record.privacy.transformations.slice(0, 31) : [];
-			if (Array.isArray(record.content) && record.content.length) transformations.push('content_dropped_by_shared_client');
+			if (Array.isArray(source.content) && source.content.length) transformations.push('content_dropped_by_shared_client');
 			record.content = [];
 			record.privacy = {content_mode: 'off', policy_version: 'watchdog.privacy.v1', transformations};
 			return record;
@@ -121,11 +121,13 @@ export function createWatchdogTelemetryClient(options = {}) {
 		} catch (error) {
 			return {ok: false, status: 0, retryable: true, error: String(error)};
 		} finally {
+			// Delivery is status-only; release unread/streaming response bodies now.
+			controller.abort();
 			clearTimeout(timer);
 		}
 	}
 
-	async function flush() {
+	async function flushOnce() {
 		await spool.writeChain;
 		await spool.initialize();
 		let sent = 0;
@@ -141,6 +143,12 @@ export function createWatchdogTelemetryClient(options = {}) {
 			break;
 		}
 		return {sent, retained};
+	}
+
+	let flushing = null;
+	function flush() {
+		if (!flushing) flushing = flushOnce().finally(() => { flushing = null; });
+		return flushing;
 	}
 
 	async function submit(input) {

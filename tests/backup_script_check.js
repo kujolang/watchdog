@@ -1,4 +1,5 @@
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -34,6 +35,8 @@ function runTest() {
 		assert.strictEqual(payload.encrypted, false);
 		assert.ok(fs.existsSync(payload.path));
 		assert.ok(fs.existsSync(payload.checksum_path));
+		assert.strictEqual(payload.sha256, crypto.createHash('sha256').update(fs.readFileSync(payload.path)).digest('hex'));
+		assert.strictEqual(fs.readFileSync(payload.checksum_path, 'utf8'), payload.sha256 + '  ' + path.basename(payload.path) + '\n');
 		sqlite = spawnSync('sqlite3', [payload.path, 'SELECT value FROM proof;'], { encoding: 'utf8' });
 		assert.strictEqual(sqlite.stdout.trim(), 'preserved');
 

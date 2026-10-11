@@ -48,7 +48,16 @@ function utcStamp(date = new Date()) {
 
 function sha256(filePath) {
 	const hash = crypto.createHash('sha256');
-	hash.update(fs.readFileSync(filePath));
+	const fd = fs.openSync(filePath, 'r');
+	try {
+		const buffer = Buffer.allocUnsafe(1024 * 1024);
+		let bytes;
+		while ((bytes = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+			hash.update(buffer.subarray(0, bytes));
+		}
+	} finally {
+		fs.closeSync(fd);
+	}
 	return hash.digest('hex');
 }
 
