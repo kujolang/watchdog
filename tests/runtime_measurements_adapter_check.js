@@ -9,6 +9,20 @@ const root = path.resolve(__dirname, '..');
 const kujo = resolveKujoBin(root);
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wave-a-measurements-'));
 const secret = 'PRIVATE_PAYLOAD_sk-123_personal-document_prompt_tool-output';
+// Required counters in the published v1 contract. Later runtimes may add
+// optional counters; removing an extension must not invalidate a v1 report.
+const requiredCounters = new Set([
+    'vm_entries', 'vm_inclusive_wall_ns', 'vm_call_opcodes',
+    'vm_return_opcodes', 'vm_native_call_opcodes', 'scheduler_rounds',
+    'vm_closures_created', 'vm_capture_cells_created', 'vm_capture_value_shallow_bytes',
+    'vm_generator_states_created', 'vm_generator_state_drops', 'vm_generator_state_shallow_bytes',
+    'vm_generator_resume_attempts', 'tasks_admitted', 'tasks_admission_rejected',
+    'tasks_started', 'task_bodies_exited', 'task_completions_published',
+    'task_cancellations_published', 'task_queue_wall_ns', 'detached_tasks_observed',
+    'promise_polls', 'promise_pending_polls', 'promise_ready_polls',
+    'jit_compile_entries', 'jit_compile_inclusive_wall_ns', 'jit_cache_lookup_hits',
+    'jit_cache_lookup_misses', 'jit_type_guard_passes', 'jit_type_guard_failures',
+]);
 const hash = body => 'sha256:' + crypto.createHash('sha256').update(body).digest('hex');
 function run(args, cwd = root, env = {}) {
     const r = spawnSync(kujo, args, {cwd, encoding: 'utf8', env: {...process.env, ...env}, timeout: 120000});
@@ -48,7 +62,8 @@ try {
     add('exact-bound', raw + ' '.repeat(8192-Buffer.byteLength(raw)), true);
     add('utf8-byte-bound', raw + 'é'.repeat(4096), false);
     for (const field of Object.keys(report)) alter('missing-'+field, x=>delete x[field]);
-    for (const counter of Object.keys(report.counters)) alter('missing-counter-'+counter,x=>delete x.counters[counter]);
+    for (const counter of requiredCounters) assert(Object.hasOwn(report.counters, counter), 'runtime omitted v1 required counter ' + counter);
+    for (const counter of Object.keys(report.counters)) alter('missing-counter-'+counter,x=>delete x.counters[counter], !requiredCounters.has(counter));
     add('oversized', ' '.repeat(8193), false);
     add('invalid-json', '{"private":"' + secret, false);
     add('tampered', raw + ' ', false, hash(raw));

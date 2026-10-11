@@ -2,7 +2,9 @@
   "name": "watchdog-dashboard-assets",
   "private": true,
   "scripts": {
-    "build:charts": "esbuild src/dither-charts.tsx --bundle --minify --format=iife --global-name=WatchdogDitherCharts --outfile=vendor/dither-charts.js && tailwindcss -i src/dither-kit.css -o vendor/dither-charts.css --minify"
+    "build:charts": "esbuild src/dither-charts.tsx --bundle --minify --format=iife --global-name=WatchdogDitherCharts --outfile=vendor/dither-charts.js && tailwindcss -i src/dither-kit.css -o vendor/dither-charts.css --minify",
+    "test": "node scripts/verify.js",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@types/react": "^19.1.8",

@@ -38,12 +38,14 @@ jobs:
           # GitHub-hosted runners are not the documented 25 ms reference fixture;
           # retain a bounded regression gate while local/Eval runs keep 25 ms.
           WDG_CONNECTED_SOURCES_P95_BUDGET_MS: '75'
+        run: npm test
+
+      - name: Verify dashboard assets and types
         run: |
-          set -euo pipefail
-          for f in tests/*.js; do
-            echo "==> $f"
-            node "$f"
-          done
+          npm ci --ignore-scripts
+          npm run build:charts
+          npm run typecheck
+          git diff --exit-code -- vendor/dither-charts.js vendor/dither-charts.css
 
       - name: Checkout RunLedger for runtime measurement integration
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

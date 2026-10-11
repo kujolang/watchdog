@@ -258,7 +258,7 @@ rejected before any upstream request is made.
 
 ### `passthrough` (default)
 
-- Forwards incoming `Authorization` header to upstream.
+- Forwards incoming provider `Authorization` to upstream. A bearer value equal to the configured Watchdog proxy token is stripped; send `X-Watchdog-Proxy-Token` separately from provider authorization.
 - Best when each client profile manages its own key.
 
 ### `override`
@@ -314,7 +314,7 @@ kujo run --interpreter dashboard_server.kujo
 
 ## Non-local deployment hardening
 
-- Kujo `http_server` currently binds all interfaces (`0.0.0.0`) and does not expose host-binding parameters.
+- Set `WDG_HOST=127.0.0.1` for loopback-only access; the default is `0.0.0.0` (all interfaces).
 - Treat `WDG_API_AUTH_MODE=off` as local-only usage.
 - For non-local access, enable `WDG_API_AUTH_MODE=token`, enable `WDG_PROXY_AUTHZ_MODE=token`, and place Watchdog behind firewall rules or a reverse proxy.
 
@@ -691,3 +691,16 @@ Validation, privacy filtering, atomic insertion and identity-conflict checks rem
 unchanged. Private `:memory:` stores retain their shared connection semantics and
 are not qualified for concurrent intake. Run the bounded regression with
 `node tests/canonical_concurrency_check.js` (Node with `node:sqlite`, Kujo available).
+
+## Repository verification
+
+Run `KUJO_BIN=/path/to/kujo npm test` for all self-contained JavaScript and MJS
+checks. Logs and a structured receipt are saved in `tmp/verification/`; override
+that directory with `WDG_VERIFICATION_DIR`. Set `AGENTS_SDK_PATH` to include the
+external Agents SDK integration (otherwise explicitly reported as skipped).
+Run `npm ci --ignore-scripts`, `npm run build:charts`, and `npm run typecheck`
+for dashboard assets. CI also rejects generated asset drift.
+
+The local `watchdog_proxy_config.json` is ignored; start from
+`config/proxy.example.json` when file configuration is needed. Environment-only
+startup continues to work.

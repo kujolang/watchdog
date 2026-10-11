@@ -15,7 +15,9 @@ assertContains('full-regression:', 'workflow should define full-regression job')
 assertContains('matrix-auth-rate-limit:', 'workflow should define matrix job for auth/rate-limit modes');
 assertContains('api_auth_mode: [off, token]', 'matrix should cover API auth off/token modes');
 assertContains('rate_limit_mode: [off, basic]', 'matrix should cover rate limit off/basic modes');
-assertContains('for f in tests/*.js; do', 'full-regression job should run full local parity test loop');
+assertContains('run: npm test', 'full-regression job should run the shared JS and MJS verification runner');
+assertContains('npm run typecheck', 'CI should check dashboard types');
+assertContains('git diff --exit-code -- vendor/', 'CI should reject generated asset drift');
 assertContains('node tests/api_auth_mode_check.js', 'matrix job should include api auth contract test');
 assertContains('node tests/rate_limit_controls_check.js', 'matrix job should include rate limit contract test');
 

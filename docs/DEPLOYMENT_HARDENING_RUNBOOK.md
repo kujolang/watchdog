@@ -54,7 +54,7 @@ Start server:
 
 ## 2. Network Exposure Guidance
 
-- Kujo `http_server` currently binds to all interfaces (`0.0.0.0`).
+- Watchdog defaults to all interfaces (`0.0.0.0`); set `WDG_HOST=127.0.0.1` for loopback-only access.
 - For non-local deployments, do not rely on network defaults alone.
 - Require `WDG_API_AUTH_MODE=token`.
 - Require `WDG_PROXY_AUTHZ_MODE=token`.
@@ -188,3 +188,12 @@ sqlite3 restored-watchdog.db 'PRAGMA quick_check;'
 	- Increase `WDG_RATE_LIMIT_MAX_REQUESTS`, raise `WDG_RATE_LIMIT_WINDOW_SECS`, or disable limiting for local-only workflows.
 - `502 Upstream request failed`:
 	- Verify upstream URL and network path in proxy config.
+
+### Rate-limit trust boundary
+
+Basic session buckets are cooperative accounting: callers control session,
+forwarded-address and Host headers. They are not an abuse-prevention boundary.
+For network exposure, enforce a separate pre-authentication limit at the reverse
+proxy using its authenticated peer identity, strip untrusted forwarding headers,
+and keep both Watchdog token modes enabled. Tenant/project filters do not grant
+separate tenant authorization; the API token grants administrative authority.

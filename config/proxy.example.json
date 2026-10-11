@@ -1,0 +1,6 @@
+{
+  "upstream_base_url": "https://api.openai.com/v1",
+  "auth_mode": "passthrough",
+  "upstream_api_key": "",
+  "upstream_api_key_env": ""
+}
