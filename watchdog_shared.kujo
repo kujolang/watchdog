@@ -111,15 +111,15 @@ func pricing_record_from_catalog(catalog, requested_model, record, priced_model,
 func lookup_catalog_pricing_record(catalog, model_key) {
 	models := catalog_models(catalog)
 	aliases := catalog_aliases(catalog)
-	if has_key(models, model_key) && type(models[model_key]) == "dict" {
-		return pricing_record_from_catalog(catalog, model_key, models[model_key], to_string(models[model_key]["priced_model"]), "")
-	}
 	if has_key(aliases, model_key) && type(aliases[model_key]) == "dict" {
 		alias_record := aliases[model_key]
 		target_model := normalize_model_key(alias_record["target_model_id"])
 		if target_model != "" && has_key(models, target_model) && type(models[target_model]) == "dict" {
 			return pricing_record_from_catalog(catalog, model_key, models[target_model], target_model, to_string(alias_record["pricing_source"]))
 		}
+	}
+	if has_key(models, model_key) && type(models[model_key]) == "dict" {
+		return pricing_record_from_catalog(catalog, model_key, models[model_key], to_string(models[model_key]["priced_model"]), "")
 	}
 	return null
 }
