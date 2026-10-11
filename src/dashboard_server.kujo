@@ -1002,6 +1002,7 @@ func redact_sensitive_text(value) {
 
 func telemetry_metric_key(key_text) {
 	key := to_lower(trim(to_string(key_text)))
+	if contains(["gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens", "watchdog.usage.total_tokens", "watchdog.usage.cached_input_tokens", "watchdog.usage.cache_write_input_tokens", "watchdog.usage.reasoning_tokens", "watchdog.output_tokens_per_second", "watchdog.context.window_tokens", "llm.token_count.prompt", "llm.token_count.completion", "llm.token_count.total"], key) { return true }
 	if key == "input_tokens" || key == "output_tokens" || key == "total_tokens" || key == "cached_input_tokens" || key == "cache_write_input_tokens" || key == "reasoning_output_tokens" {
 		return true
 	}
@@ -1721,7 +1722,7 @@ func canonical_policy_scalar_map(value, max_properties) {
 		if count < max_properties {
 			next := value[key]
 			if type(next) != "dict" && type(next) != "array" {
-				clean[truncate_str(to_string(key), 160)] = canonical_policy_scalar(next)
+				clean[truncate_str(to_string(key), 160)] = canonical_policy_scalar(redact_sensitive_value_for_key(key, next))
 				count = count + 1
 			}
 		}
@@ -1739,12 +1740,12 @@ func canonical_policy_attributes(value) {
 			if type(next) == "array" {
 				items := []
 				for item in next {
-					if len(items) < 32 && type(item) != "dict" && type(item) != "array" { items = push(items, canonical_policy_scalar(item)) }
+					if len(items) < 32 && type(item) != "dict" && type(item) != "array" { items = push(items, canonical_policy_scalar(redact_sensitive_value_for_key(key, item))) }
 				}
 				clean[truncate_str(to_string(key), 160)] = items
 				count = count + 1
 			} else if type(next) != "dict" {
-				clean[truncate_str(to_string(key), 160)] = canonical_policy_scalar(next)
+				clean[truncate_str(to_string(key), 160)] = canonical_policy_scalar(redact_sensitive_value_for_key(key, next))
 				count = count + 1
 			}
 		}
@@ -1848,7 +1849,7 @@ func canonical_policy_costs(value) {
 				"currency": truncate_str(to_string(safe_dict_get(cost, "currency", "USD")), 3),
 				"amount": safe_dict_get(cost, "amount", null),
 				"source": truncate_str(redact_sensitive_text(to_string(safe_dict_get(cost, "source", "unknown"))), 120),
-				"catalog_version": safe_dict_get(cost, "catalog_version", null),
+				"catalog_version": canonical_policy_scalar(safe_dict_get(cost, "catalog_version", null)),
 				"calculated_at": safe_dict_get(cost, "calculated_at", null),
 				"components": canonical_policy_scalar_map(safe_dict_get(cost, "components", {}), 16)
 			})
@@ -1880,7 +1881,7 @@ func canonical_policy_record(record) {
 		"started_at": safe_dict_get(record, "started_at", null),
 		"ended_at": safe_dict_get(record, "ended_at", null),
 		"kind": safe_dict_get(record, "kind", null),
-		"name": safe_dict_get(record, "name", null),
+		"name": canonical_policy_scalar(redact_sensitive_value_for_key("name", safe_dict_get(record, "name", null))),
 		"status": truncate_str(trim(to_string(safe_dict_get(record, "status", "unset"))), 20),
 		"source": canonical_policy_scalar_map(safe_dict_get(record, "source", {}), 16),
 		"references": canonical_policy_references(safe_dict_get(record, "references", [])),
@@ -2028,6 +2029,30 @@ func persist_fast_approved_canonical_batch(approved) {
 		result["delivery"] = watchdog_delivery_enqueue_batch(db, EXPORTER_PROFILE_IDS, result["batch_dbid"], EXPORT_QUEUE_MAX_RECORDS, EXPORT_QUEUE_MAX_BYTES)
 	}
 	return result
+}
+
+# Earlier OTLP adapters used receive time as observed_at. Preserve that one
+# field when replaying existing identities; every other field still conflicts
+# normally. One bounded lookup avoids a query per span.
+func preserve_otlp_observations(batch) {
+	records := batch["records"]
+	placeholders := []
+	params := [batch["producer"]["name"]]
+	for record in records {
+		placeholders = push(placeholders, "?")
+		params = push(params, record["record_id"])
+	}
+	if len(placeholders) == 0 { return batch }
+	rows := db_query(db, "SELECT record_id, observed_at FROM telemetry_records_v2 WHERE producer_name = ? AND record_id IN (" + join(placeholders, ",") + ")", params)
+	observed := {}
+	for row in rows { observed[row["record_id"]] = row["observed_at"] }
+	next_records := []
+	for record in records {
+		if has_key(observed, record["record_id"]) { record["observed_at"] = observed[record["record_id"]] }
+		next_records = push(next_records, record)
+	}
+	batch["records"] = next_records
+	return batch
 }
 
 func persist_canonical_batch(body) {
@@ -3475,7 +3500,10 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		headers_out["Authorization"] := "Bearer " + override_key
 	} else {
 		auth_header := get_header(headers_in, "Authorization")
-		if auth_header != "" {
+		# Gateway bearer credentials must never cross the provider boundary.
+		gateway_token := bearer_token_from_auth_header(auth_header)
+		is_gateway_token := PROXY_AUTHZ_MODE == "token" && PROXY_AUTHZ_TOKEN != "" && gateway_token == PROXY_AUTHZ_TOKEN
+		if auth_header != "" && is_gateway_token == false {
 			headers_out["Authorization"] := auth_header
 		}
 	}
@@ -4596,7 +4624,11 @@ server := server.route("POST", "/telemetry/v2/otlp/v1/traces", func(req) {
 		"records": mapped["records"]
 	}
 	try {
-		result := persist_canonical_batch(batch)
+		result := persist_canonical_batch(preserve_otlp_observations(batch))
+		if result["ok"] == false {
+			if safe_dict_get(result, "error_code", "") == "record_identity_conflict" { return api_error(409, "record_identity_conflict") }
+			return api_error(400, result["error"])
+		}
 		insert_audit_event("guarded_otlp_trace_intake", resolve_audit_actor_key(req, "api"), "success", {"producer": mapped["producer"], "accepted_records": result["records"], "rejected_spans": mapped["rejected"]})
 		message := ""
 		if mapped["rejected"] > 0 { message = "Generic, invalid, or over-limit spans were rejected" }

@@ -237,6 +237,20 @@ async function run() {
 		assert.strictEqual(validBearerResp.status, 200, 'proxy route should accept Authorization bearer token');
 
 		assert.strictEqual(stub.received.length, 3, 'only allowlisted and authorized proxy calls should reach upstream');
+		assert.strictEqual(stub.received[2].authorization, '', 'gateway bearer credential leaked to upstream');
+		for (const stream of [false, true]) {
+			const provider = await httpRequest(watchdogPort, 'POST', '/proxy/v1/chat/completions', {
+				'Content-Type': 'application/json', 'X-Watchdog-Proxy-Token': 'proxy-secret', Authorization: 'Bearer provider-only',
+			}, JSON.stringify({model: 'fixture', messages: [], stream}));
+			assert.strictEqual(provider.status, 200);
+			assert.strictEqual(stub.received.at(-1).authorization, 'Bearer provider-only', 'independent provider credential was stripped');
+			const gateway = await httpRequest(watchdogPort, 'POST', '/proxy/v1/chat/completions', {
+				'Content-Type': 'application/json', Authorization: 'Bearer proxy-secret',
+			}, JSON.stringify({model: 'fixture', messages: [], stream}));
+			assert.strictEqual(gateway.status, 200);
+			assert.strictEqual(stub.received.at(-1).authorization, '', 'gateway token leaked for stream=' + stream);
+		}
+
 
 		watchdogMissing = await startWatchdog(watchdogPort + 1, dbPath + '.missing', cfgPath, {
 			WDG_PROXY_AUTHZ_MODE: 'token',

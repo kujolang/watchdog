@@ -180,6 +180,43 @@ func repo_semantic_error(record) {
 	return ""
 }
 
+# Validate scalar leaves before canonical serialization. Complex values in
+# numeric/boolean fields can otherwise bypass the caller's scalar privacy policy.
+func repo_leaf_error(record) {
+	name := repo_get(record, "name", null)
+	if type(name) != "null" && type(name) != "string" { return "name must be a string or null" }
+	usage := repo_get(record, "usage", null)
+	if type(usage) != "null" {
+		if type(usage) != "dict" { return "usage must be an object or null" }
+		for field in ["input_tokens", "output_tokens", "total_tokens", "cached_input_tokens", "cache_write_input_tokens", "reasoning_tokens"] {
+			value := repo_get(usage, field, null)
+			if type(value) != "null" {
+				if type(value) != "int" && type(value) != "integer" { return "usage." + field + " must be a non-negative integer or null" }
+				if value < 0 { return "usage." + field + " must be a non-negative integer or null" }
+			}
+		}
+	}
+	error := repo_get(record, "error", null)
+	if type(error) != "null" {
+		if type(error) != "dict" { return "error must be an object or null" }
+		retryable := repo_get(error, "retryable", null)
+		if type(retryable) != "null" && type(retryable) != "bool" && type(retryable) != "boolean" { return "error.retryable must be boolean or null" }
+	}
+	for cost in repo_get(record, "costs", []) {
+		if type(cost) != "dict" { return "cost must be an object" }
+		amount := repo_get(cost, "amount", null)
+		if type(amount) != "null" {
+			if type(amount) != "int" && type(amount) != "integer" && type(amount) != "float" { return "cost.amount must be a non-negative number or null" }
+			if amount < 0 { return "cost.amount must be a non-negative number or null" }
+		}
+		for field in ["catalog_version", "calculated_at"] {
+			value := repo_get(cost, field, null)
+			if type(value) != "null" && type(value) != "string" { return "cost." + field + " must be a string or null" }
+		}
+	}
+	return ""
+}
+
 func repo_validate_batch(batch) {
 	if type(batch) != "dict" {
 		return {"ok": false, "error": "telemetry batch must be an object"}
@@ -263,6 +300,8 @@ func repo_validate_batch(batch) {
 		if type(privacy) != "dict" || repo_text(repo_get(privacy, "policy_version", ""), 80) == "" {
 				return {"ok": false, "error": "privacy policy is required for " + record_id}
 			}
+			leaf_error := repo_leaf_error(record)
+			if leaf_error != "" { return {"ok": false, "error": leaf_error} }
 			semantic_error := repo_semantic_error(record)
 			if semantic_error != "" { return {"ok": false, "error": semantic_error, "error_code": "invalid_semantics"} }
 		}

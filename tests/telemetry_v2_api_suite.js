@@ -70,6 +70,10 @@ async function run() {
 		batch.records[0].attributes['kujo.operation.attempt'] = 1;
 		batch.records[0].attributes['kujo.source.occurred_at_ms'] = 1788836289375;
 		batch.records[0].attributes.authorization = 'Bearer secret-canary-value';
+		batch.records[0].attributes.password = 'ordinary-sensitive-value';
+		batch.records[0].attributes.input_tokens = 7;
+		batch.records[0].attributes['gen_ai.usage.input_tokens'] = 7;
+		batch.records[0].name = 'Bearer name-credential-canary';
 		batch.records[0].content = [{class: 'prompt', media_type: 'text/plain', value: 'raw-content-canary', truncated: false}];
 		batch.records[0].privacy = {content_mode: 'full', policy_version: 'producer-policy', transformations: []};
 
@@ -104,6 +108,16 @@ async function run() {
 		assert.ok(stored.privacy.transformations.includes('content_dropped_by_watchdog_policy'));
 		assert.ok(!JSON.stringify(stored).includes('raw-content-canary'), 'content canary leaked');
 		assert.ok(!JSON.stringify(stored).includes('secret-canary-value'), 'credential canary leaked');
+		assert.ok(!JSON.stringify(stored).includes('ordinary-sensitive-value'), 'sensitive-key value leaked');
+		assert.ok(!JSON.stringify(stored).includes('name-credential-canary'), 'name credential leaked');
+		assert.strictEqual(stored.attributes.input_tokens, 7, 'legitimate token metric was redacted');
+		assert.strictEqual(stored.attributes['gen_ai.usage.input_tokens'], 7, 'namespaced token metric was redacted');
+		for (const patch of [{usage: {input_tokens: {password: 'typed-canary'}}}, {error: {retryable: {password: 'typed-canary'}}}, {costs: [{kind: 'unknown', currency: 'USD', amount: {password: 'typed-canary'}, source: 'fixture'}]}]) {
+			const malformed = {...structuredClone(batch), batch_id: 'invalid-typed-field', records: [{...structuredClone(batch.records[0]), ...patch}]};
+			const result = await request('POST', '/telemetry/v2/batches', malformed);
+			assert.strictEqual(result.status, 400, result.body);
+		}
+
 		const exportStatus = JSON.parse((await request('GET', '/api/telemetry/v2/export-status')).body).data;
 		assert.strictEqual(exportStatus.configured_profiles, 1);
 		assert.ok(exportStatus.deliveries.some((row) => row.profile_id === 'fixture-collector' && row.status === 'pending' && row.records === 1), 'canonical intake did not enqueue exporter delivery');
@@ -176,6 +190,11 @@ async function run() {
 		assert.strictEqual(JSON.parse(otlpIntake.body).partialSuccess.rejectedSpans, 1, 'generic OTLP span was not partially rejected');
 		const otlpRecords = JSON.parse((await request('GET', '/api/telemetry/v2/records?producer=fixture-otel-agent')).body).data.records;
 		assert.strictEqual(otlpRecords.length, 2, 'guarded OTLP records were not persisted');
+		assert.strictEqual((await request('POST', '/telemetry/v2/otlp/v1/traces', otlpPayload)).status, 200, 'identical OTLP retry must succeed');
+		const conflictingOtlp = structuredClone(otlpPayload);
+		conflictingOtlp.resourceSpans[0].scopeSpans[0].spans[0].name = 'different-span-name';
+		assert.strictEqual((await request('POST', '/telemetry/v2/otlp/v1/traces', conflictingOtlp)).status, 409, 'OTLP must not acknowledge an identity conflict');
+
 		assert.ok(!JSON.stringify(otlpRecords).includes('otlp-raw-prompt-canary'), 'OTLP prompt content leaked into storage');
 		assert.strictEqual((await request('POST', '/telemetry/v2/otlp/v1/logs', {})).status, 404, 'OTLP logs must not be accepted');
 		assert.strictEqual((await request('POST', '/telemetry/v2/otlp/v1/metrics', {})).status, 404, 'OTLP metrics must not be accepted');

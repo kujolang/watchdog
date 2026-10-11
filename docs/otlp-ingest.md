@@ -22,3 +22,9 @@ Offline conformance fixtures cover standard/OpenInference output shaped for
 LangChain, LlamaIndex, CrewAI, AutoGen, PydanticAI, and Semantic Kernel.
 OpenInference `llm.token_count.*` values map to canonical usage while remaining
 preserved as source usage provenance.
+
+OTLP span observation time uses the source end timestamp (or start timestamp
+when end is absent), so transport retries produce stable canonical records.
+Replays of records stored by the older receive-time adapter retain their original
+observation time. Other identity changes still return HTTP 409; invalid canonical
+records return HTTP 400. A rejected write is never acknowledged as success.
