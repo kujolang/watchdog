@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
   "aliases": {
-    "~anthropic/claude-haiku-latest": "anthropic/claude-haiku-4.5"
+    "~anthropic/claude-haiku-latest": "anthropic/claude-haiku-5.5"
   }
 }
