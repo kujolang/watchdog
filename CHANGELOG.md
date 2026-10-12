@@ -6,9 +6,29 @@ The format follows Keep a Changelog principles and semantic versioning intent.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-12
+
+### Fixed
+
+- Give credential regression scenarios separate session budgets so the auth/rate-limit CI matrix tests both controls without fixture interference.
+- Keep Watchdog gateway bearer tokens out of upstream provider requests while preserving separate provider credentials.
+- Redact sensitive canonical metadata and validate numeric, boolean and cost fields before storage.
+- Make OTLP retries deterministic, preserve observations written by older adapters, and return errors for invalid or conflicting records.
+- Enforce delivery queue record limits within each incoming batch and count UTF-8 bytes correctly.
+- Isolate concurrent canonical transactions and fail closed on writer contention.
+- Coalesce overlapping JavaScript client flushes and release unread HTTP response bodies.
+- Keep the runtime-measurement validator aligned with the required v1 counters while accepting optional numeric extensions.
+
 ### Changed
 
-- Validate hexadecimal telemetry IDs with a native character check while preserving normalization, length and zero-ID rules; verify equivalence against the prior scanner.
+- Prepare canonical records before taking the SQLite writer lock and batch identity lookups.
+- Use verified native JSON encoding, cached redaction matching and equivalent native hexadecimal ID validation.
+- Avoid cloning discarded client content and hash backups with a fixed-size buffer.
+- Run JavaScript and ES module checks through one evidence-preserving test runner; verify types and generated dashboard assets in CI.
+- Update compatible build dependencies and replace the tracked local proxy configuration with `config/proxy.example.json`.
+- Refresh OpenRouter pricing and expand direct-provider and Ollama model coverage. Costs remain estimates, not invoices.
+
+Routes and schema versions remain compatible. Invalid typed telemetry now fails validation, and OTLP identity conflicts return 409. Keep API, gateway and provider credentials separate. Rate-limit identity, advisory proxy latency targets and Tailwind build dependency advisories remain documented in the [hardening audit](docs/audits/repository-hardening.md).
 
 ## [1.2.0] - 2026-09-29
 

@@ -1,31 +1,20 @@
 # Watchdog
 
-[![Version](https://img.shields.io/badge/version-1.2.0-black)](https://github.com/kujolang/watchdog)
+[![Version](https://img.shields.io/badge/version-1.2.1-black)](https://github.com/kujolang/watchdog)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 [![built with Kujo](https://img.shields.io/badge/built%20with-Kujo-white.svg)](https://github.com/kujolang/kujo)
 
-Watchdog is a server-first observability layer for local agent and workflow
-telemetry in Kujo applications.
+Watchdog records AI requests, tool calls and agent steps in a local SQLite database. Its dashboard and JSON APIs show latency, token use, estimated costs and failures.
 
-It combines an OpenAI-compatible proxy with a local SQLite telemetry store so
-humans and agents can inspect model calls, tool calls, agent steps, latency,
-token usage, estimated direct-API value, and failures through a dashboard and JSON APIs.
+Point an OpenAI-compatible client at `/proxy/v1`. Watchdog forwards requests to your provider and records telemetry. Native producers can also submit canonical batches or supported OTLP traces.
 
-Point your Kujo AI app at Watchdog's `/proxy/v1` endpoint and keep your normal
-OpenAI-style request paths. Watchdog forwards requests upstream, captures
-structured traces, and serves a local dashboard plus JSON APIs for debugging,
-bounded performance tuning, and usage analysis.
+Costs are estimated direct-provider equivalents, not invoices. See [pricing estimates](docs/PRICING_ESTIMATES.md) for catalog sources, model mappings and repricing commands.
 
-Cost fields are estimated direct-provider equivalents, not subscription invoices. See [Direct API value estimates](docs/PRICING_ESTIMATES.md) for the versioned OpenRouter catalog workflow, pricing provenance fields, repricing commands, model mappings, and limitations.
+Watchdog runs locally by default. Before exposing it to other machines, configure token authentication, TLS, network access, retention, backups and secret storage. See the [deployment guide](docs/DEPLOYMENT_HARDENING_RUNBOOK.md).
 
-Watchdog is part of Kujo’s Control layer: visible state, bounded telemetry,
-structured exports, regression signals, and reviewable local monitoring data.
+## Current release
 
-Watchdog is intentionally strong as a local-first reference implementation and
-can be deployed behind enterprise controls. Production readiness still depends
-on the operator enabling token auth, TLS/reverse-proxy boundaries, firewalling,
-retention policy, backups, and secret-management practices appropriate to the
-environment.
+[Watchdog 1.2.1](https://github.com/kujolang/watchdog/releases/tag/v1.2.1) fixes credential forwarding, telemetry validation, OTLP retries and delivery queue limits. It reduces canonical intake work, client cloning and backup memory use, and updates pricing catalogs. Existing routes and telemetry schemas remain compatible; malformed records and conflicting OTLP retries now return errors. See the [changelog](CHANGELOG.md) for details.
 
 ---
 
@@ -370,7 +359,7 @@ Copy `config/exporters.example.json` to the path selected by `WDG_EXPORTERS_CONF
 
 Exporter credentials never belong in the profile. Map a header to an environment-variable name with `headers_from_env`, for example `{"Authorization":"WATCHDOG_OTLP_AUTH"}`, then set that environment variable only in the worker process. The worker caps batches at 256 records and 512 KiB, retries bounded transient failures, pauses on authentication rejection, expires old queue entries, and retains bounded dead-letter metadata without raw export payloads.
 
-The guarded trace receiver is `POST /telemetry/v2/otlp/v1/traces`. It accepts OTLP/HTTP JSON and Protobuf, optionally gzip-compressed, under the same authentication, request-size, rate, and privacy controls as other ingestion. It retains only spans carrying recognized GenAI/OpenInference/Watchdog semantics, returns OTLP partial success for rejected spans, strips content at the authoritative policy boundary, and rejects generic traces, logs, metrics, malformed wire data, and over-limit decompression. Watchdog is intentionally not a generic OpenTelemetry Collector.
+The guarded trace receiver is `POST /telemetry/v2/otlp/v1/traces`. It accepts OTLP/HTTP JSON and Protobuf, optionally gzip-compressed, under the same authentication, request-size, rate, and privacy controls as other ingestion. It retains only spans carrying recognized GenAI/OpenInference/Watchdog semantics, returns OTLP partial success for rejected spans, strips content at the authoritative policy boundary, and rejects generic traces, logs, metrics, malformed wire data, and over-limit decompression. Watchdog does not accept arbitrary OpenTelemetry data.
 
 ## Rate limiting
 
@@ -560,7 +549,7 @@ application. Named proxy profile changes are saved to the existing proxy
 configuration and apply to new requests without restarting Watchdog. In-flight
 requests retain the profile snapshot they started with. See [Connected Sources](docs/CONNECTED_SOURCES.md).
 
-`/api/insights` is intentionally labeled as observed legacy telemetry: runs are grouped by task ID, workflow ID, or session ID; a success signal means no request error was recorded; retry signals are inferred from retry-named trace events; and its token-volume section does not measure context capacity. The Canonical Evidence dashboard tab uses explicit terminal events, typed relations, nullable timing, versioned context limits, and distinct cost kinds instead.
+`/api/insights` reports observed legacy telemetry: runs are grouped by task ID, workflow ID, or session ID; a success signal means no request error was recorded; retry signals are inferred from retry-named trace events; and its token-volume section does not measure context capacity. The Canonical Evidence dashboard tab uses explicit terminal events, typed relations, nullable timing, versioned context limits, and distinct cost kinds instead.
 
 List endpoints now support optional query parameters for pagination and filtering:
 
