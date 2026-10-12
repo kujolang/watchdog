@@ -238,14 +238,17 @@ async function run() {
 
 		assert.strictEqual(stub.received.length, 3, 'only allowlisted and authorized proxy calls should reach upstream');
 		assert.strictEqual(stub.received[2].authorization, '', 'gateway bearer credential leaked to upstream');
+		// Give each credential scenario its own bounded session budget in the CI rate-limit matrix.
 		for (const stream of [false, true]) {
 			const provider = await httpRequest(watchdogPort, 'POST', '/proxy/v1/chat/completions', {
 				'Content-Type': 'application/json', 'X-Watchdog-Proxy-Token': 'proxy-secret', Authorization: 'Bearer provider-only',
+				'X-Observe-Session-Id': 'credential-boundary-' + stream,
 			}, JSON.stringify({model: 'fixture', messages: [], stream}));
 			assert.strictEqual(provider.status, 200);
 			assert.strictEqual(stub.received.at(-1).authorization, 'Bearer provider-only', 'independent provider credential was stripped');
 			const gateway = await httpRequest(watchdogPort, 'POST', '/proxy/v1/chat/completions', {
 				'Content-Type': 'application/json', Authorization: 'Bearer proxy-secret',
+				'X-Observe-Session-Id': 'credential-boundary-' + stream,
 			}, JSON.stringify({model: 'fixture', messages: [], stream}));
 			assert.strictEqual(gateway.status, 200);
 			assert.strictEqual(stub.received.at(-1).authorization, '', 'gateway token leaked for stream=' + stream);
