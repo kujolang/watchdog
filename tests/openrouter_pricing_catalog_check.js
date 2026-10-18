@@ -46,9 +46,9 @@ assert.equal(opus5.output_rate_per_million, 25);
 assert.equal(opus5.cache_write_input_rate_per_million, 6.25);
 
 const glm52 = resolvePricing('z-ai/glm-5.2', { providerCatalog, openrouterCatalog });
-assert.equal(glm52.input_rate_per_million, 0.06);
-assert.equal(glm52.output_rate_per_million, 7);
-assert.equal(glm52.cached_input_rate_per_million, 0.059);
+assert.equal(glm52.input_rate_per_million, 0.62);
+assert.equal(glm52.output_rate_per_million, 2.42);
+assert.equal(glm52.cached_input_rate_per_million, 0.14);
 
 const alias = resolvePricing('~anthropic/claude-haiku-latest', { providerCatalog, openrouterCatalog });
 assert.equal(alias.pricing_kind, 'catalog');
@@ -161,5 +161,9 @@ const unknown = resolvePricing('openrouter/auto-beta', { providerCatalog, openro
 assert.equal(unknown.pricing_kind, 'unknown');
 assert.equal(unknown.input_rate_per_million, 0);
 assert.equal(unknown.output_rate_per_million, 0);
+
+const hermesMissingNo = resolvePricing('stealth/missingno', { providerCatalog, openrouterCatalog });
+assert.equal(hermesMissingNo.pricing_kind, 'unknown');
+assert.match(hermesMissingNo.pricing_source, /no-public-token-rate$/);
 
 console.log('openrouter_pricing_catalog_check: PASS');

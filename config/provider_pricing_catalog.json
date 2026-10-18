@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_id": "watchdog-provider-catalog:2026-10-11",
+  "catalog_id": "watchdog-provider-catalog:2026-10-18",
   "models": {
     "gpt-4.1": {
       "model_id": "gpt-4.1",
@@ -642,6 +642,16 @@
       "cached_input_rate_per_million": 0.0,
       "cache_write_input_rate_per_million": 0.0
     },
+    "stealth/missingno": {
+      "model_id": "stealth/missingno",
+      "priced_model": "stealth/missingno",
+      "has_pricing": false,
+      "pricing_source": "nous-portal-inventory:2026-10-10:no-public-token-rate",
+      "input_rate_per_million": 0.0,
+      "output_rate_per_million": 0.0,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
+    },
     "stepfun/step-3.7-flash:free": {
       "model_id": "stepfun/step-3.7-flash:free",
       "priced_model": "stepfun/step-3.7-flash:free",
@@ -696,7 +706,7 @@
       "model_id": "kimi-k3",
       "priced_model": "kimi-k3",
       "has_pricing": true,
-      "pricing_source": "moonshot-kimi-pricing:2026-10-11",
+      "pricing_source": "moonshot-kimi-pricing:2026-10-18",
       "input_rate_per_million": 3.0,
       "output_rate_per_million": 15.0,
       "cached_input_rate_per_million": 0.3,
@@ -706,7 +716,7 @@
       "model_id": "ollama-cloud/kimi-k3",
       "priced_model": "ollama-cloud/kimi-k3",
       "has_pricing": true,
-      "pricing_source": "ollama-cloud-pricing:2026-10-11",
+      "pricing_source": "ollama-cloud-pricing:2026-10-18",
       "input_rate_per_million": 3.0,
       "output_rate_per_million": 15.0,
       "cached_input_rate_per_million": 0.3,
@@ -716,7 +726,7 @@
       "model_id": "ollama-cloud/gemma4",
       "priced_model": "ollama-cloud/gemma4",
       "has_pricing": true,
-      "pricing_source": "ollama-cloud-pricing:2026-10-11",
+      "pricing_source": "ollama-cloud-pricing:2026-10-18",
       "input_rate_per_million": 0.14,
       "output_rate_per_million": 0.4,
       "cached_input_rate_per_million": 0.05,
@@ -726,7 +736,7 @@
       "model_id": "ollama-cloud/gpt-oss:120b",
       "priced_model": "ollama-cloud/gpt-oss:120b",
       "has_pricing": true,
-      "pricing_source": "ollama-cloud-pricing:2026-10-11",
+      "pricing_source": "ollama-cloud-pricing:2026-10-18",
       "input_rate_per_million": 0.15,
       "output_rate_per_million": 0.6,
       "cached_input_rate_per_million": 0.014,
@@ -736,7 +746,7 @@
       "model_id": "ollama-cloud/gpt-oss:20b",
       "priced_model": "ollama-cloud/gpt-oss:20b",
       "has_pricing": true,
-      "pricing_source": "ollama-cloud-pricing:2026-10-11",
+      "pricing_source": "ollama-cloud-pricing:2026-10-18",
       "input_rate_per_million": 0.07,
       "output_rate_per_million": 0.3,
       "cached_input_rate_per_million": 0.035,
@@ -746,7 +756,7 @@
       "model_id": "ollama-cloud/mistral-large-3",
       "priced_model": "ollama-cloud/mistral-large-3",
       "has_pricing": true,
-      "pricing_source": "ollama-cloud-pricing:2026-10-11",
+      "pricing_source": "ollama-cloud-pricing:2026-10-18",
       "input_rate_per_million": 0.5,
       "output_rate_per_million": 1.5,
       "cached_input_rate_per_million": 0.0,
@@ -756,7 +766,7 @@
       "model_id": "ollama-cloud/nemotron-3-ultra",
       "priced_model": "ollama-cloud/nemotron-3-ultra",
       "has_pricing": true,
-      "pricing_source": "ollama-cloud-pricing:2026-10-11",
+      "pricing_source": "ollama-cloud-pricing:2026-10-18",
       "input_rate_per_million": 0.1,
       "output_rate_per_million": 3.0,
       "cached_input_rate_per_million": 0.1,
@@ -766,7 +776,7 @@
       "model_id": "ollama-cloud/nemotron-3-nano",
       "priced_model": "ollama-cloud/nemotron-3-nano",
       "has_pricing": true,
-      "pricing_source": "ollama-cloud-pricing:2026-10-11",
+      "pricing_source": "ollama-cloud-pricing:2026-10-18",
       "input_rate_per_million": 0.06,
       "output_rate_per_million": 0.24,
       "cached_input_rate_per_million": 0.0,
@@ -776,7 +786,7 @@
       "model_id": "ollama-cloud/nemotron-3-super",
       "priced_model": "ollama-cloud/nemotron-3-super",
       "has_pricing": true,
-      "pricing_source": "ollama-cloud-pricing:2026-10-11",
+      "pricing_source": "ollama-cloud-pricing:2026-10-18",
       "input_rate_per_million": 0.015,
       "output_rate_per_million": 0.6,
       "cached_input_rate_per_million": 0.015,
@@ -786,7 +796,7 @@
       "model_id": "ollama-cloud/minimax-m3",
       "priced_model": "ollama-cloud/minimax-m3",
       "has_pricing": true,
-      "pricing_source": "ollama-cloud-pricing:2026-10-11",
+      "pricing_source": "ollama-cloud-pricing:2026-10-18",
       "input_rate_per_million": 0.6,
       "output_rate_per_million": 2.4,
       "cached_input_rate_per_million": 0.12,
@@ -800,15 +810,15 @@
     },
     "ollama-cloud/kimi-k2.7-code": {
       "target_model_id": "kimi-k2.7-code",
-      "pricing_source": "ollama-cloud-equivalent:moonshot-kimi-pricing:2026-07-19"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/kimi-k3:cloud": {
       "target_model_id": "ollama-cloud/kimi-k3",
-      "pricing_source": "ollama-cloud-pricing:2026-10-11"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/kimi-k2.6": {
       "target_model_id": "kimi-k2.6",
-      "pricing_source": "ollama-cloud-equivalent:moonshot-kimi-pricing:2026-07-19"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/kimi-k2.5": {
       "target_model_id": "kimi-k2.5",
@@ -816,19 +826,19 @@
     },
     "ollama-cloud/deepseek-v4-flash": {
       "target_model_id": "deepseek-v4-flash",
-      "pricing_source": "ollama-cloud-pricing:2026-10-11:peak-rate"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18:peak-rate"
     },
     "ollama-cloud/deepseek-v4-pro": {
       "target_model_id": "deepseek-v4-pro",
-      "pricing_source": "ollama-cloud-pricing:2026-10-11:peak-rate"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18:peak-rate"
     },
     "ollama-cloud/minimax-m3": {
       "target_model_id": "ollama-cloud/minimax-m3",
-      "pricing_source": "ollama-cloud-pricing:2026-10-11"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/minimax-m2.7": {
       "target_model_id": "minimax-m2.7",
-      "pricing_source": "ollama-cloud-equivalent:minimax-pricing:2026-07-19"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/minimax-m2.5": {
       "target_model_id": "minimax-m2.5",
@@ -836,15 +846,15 @@
     },
     "ollama-cloud/glm-5.2": {
       "target_model_id": "glm-5.2",
-      "pricing_source": "ollama-cloud-equivalent:z-ai-pricing:2026-07-19"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/glm-5.3": {
       "target_model_id": "glm-5.3",
-      "pricing_source": "ollama-cloud-pricing:2026-10-11"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/glm-5.3-flash:cloud": {
       "target_model_id": "glm-5.3-flash",
-      "pricing_source": "ollama-cloud-pricing:2026-10-11"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/glm-5.1": {
       "target_model_id": "glm-5.1",
@@ -852,31 +862,31 @@
     },
     "ollama-cloud/gemma4:31b": {
       "target_model_id": "ollama-cloud/gemma4",
-      "pricing_source": "ollama-cloud-pricing:2026-10-11"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/gpt-oss:120b": {
       "target_model_id": "ollama-cloud/gpt-oss:120b",
-      "pricing_source": "ollama-cloud-pricing:2026-10-11"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/gpt-oss:20b": {
       "target_model_id": "ollama-cloud/gpt-oss:20b",
-      "pricing_source": "ollama-cloud-pricing:2026-10-11"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/mistral-large-3:675b": {
       "target_model_id": "ollama-cloud/mistral-large-3",
-      "pricing_source": "ollama-cloud-pricing:2026-10-11"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/nemotron-3-ultra": {
       "target_model_id": "ollama-cloud/nemotron-3-ultra",
-      "pricing_source": "ollama-cloud-pricing:2026-10-11"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/nemotron-3-nano:30b": {
       "target_model_id": "ollama-cloud/nemotron-3-nano",
-      "pricing_source": "ollama-cloud-pricing:2026-10-11"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     },
     "ollama-cloud/nemotron-3-super": {
       "target_model_id": "ollama-cloud/nemotron-3-super",
-      "pricing_source": "ollama-cloud-pricing:2026-10-11"
+      "pricing_source": "ollama-cloud-pricing:2026-10-18"
     }
   }
 }
