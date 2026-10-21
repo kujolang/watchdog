@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.2] — 2026-10-21
+
+- Refresh checked-in pricing catalog data.
+- Require patched Node.js versions for dashboard and regression tooling.
+- Bound service-readiness checks by monotonic startup deadlines.
+
 All notable changes to Watchdog are documented in this file.
 
 The format follows Keep a Changelog principles and semantic versioning intent.

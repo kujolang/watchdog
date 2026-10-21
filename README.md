@@ -1,6 +1,6 @@
 # Watchdog
 
-[![Version](https://img.shields.io/badge/version-1.2.1-black)](https://github.com/kujolang/watchdog)
+[![Version](https://img.shields.io/badge/version-1.2.2-black)](https://github.com/kujolang/watchdog)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 [![built with Kujo](https://img.shields.io/badge/built%20with-Kujo-white.svg)](https://github.com/kujolang/kujo)
 
@@ -13,6 +13,10 @@ Costs are estimated direct-provider equivalents, not invoices. See [pricing esti
 Watchdog runs locally by default. Before exposing it to other machines, configure token authentication, TLS, network access, retention, backups and secret storage. See the [deployment guide](docs/DEPLOYMENT_HARDENING_RUNBOOK.md).
 
 ## Current release
+
+Watchdog 1.2.2 updates the pricing catalogs, supported Node.js versions and service-readiness checks. Routes and telemetry schemas remain compatible.
+
+### Included 1.2.1 improvements
 
 [Watchdog 1.2.1](https://github.com/kujolang/watchdog/releases/tag/v1.2.1) fixes credential forwarding, telemetry validation, OTLP retries and delivery queue limits. It reduces canonical intake work, client cloning and backup memory use, and updates pricing catalogs. Existing routes and telemetry schemas remain compatible; malformed records and conflicting OTLP retries now return errors. See the [changelog](CHANGELOG.md) for details.
 
