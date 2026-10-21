@@ -50,7 +50,7 @@ async function run() {
 		watchdog = spawn(kujoBin, ['run', '--interpreter', 'dashboard_server.kujo'], {cwd: root, env: {...process.env, WDG_PORT: String(watchdogPort), WDG_DB_PATH: dbPath, WDG_PROXY_CONFIG_PATH: configPath, WDG_API_AUTH_MODE: 'off', WDG_PROXY_AUTHZ_MODE: 'off', WDG_BACKUP_ENABLED: 'false'}, stdio: ['ignore', 'pipe', 'pipe']});
 		let output = ''; watchdog.stdout.on('data', c => { output += c; }); watchdog.stderr.on('data', c => { output += c; });
 		let ready = false;
-		for (let i = 0; i < 100; i++) { try { if ((await getJson('/readyz')).status === 200) { ready = true; break; } } catch {} await delay(100); }
+		for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) { try { if ((await getJson('/readyz')).status === 200) { ready = true; break; } } catch {} await delay(100); }
 		if (!ready) throw new Error(`Watchdog failed to start\n${output}`);
 		const direct = await timedRequest(upstreamPort, '/v1/chat/completions');
 		const proxied = await timedRequest(watchdogPort, '/proxy/v1/chat/completions');

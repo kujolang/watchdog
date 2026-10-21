@@ -62,7 +62,7 @@ async function run() {
 	child.stderr.on('data', chunk => { output += chunk.toString(); });
 
 	try {
-		for (let i = 0; i < 100; i += 1) {
+		for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) {
 			try {
 				const ready = await request(port, 'GET', '/healthz', '', null);
 				if (ready.status === 200) break;

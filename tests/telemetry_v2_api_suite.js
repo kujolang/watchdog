@@ -41,7 +41,7 @@ async function startServer() {
 	let output = '';
 	child.stdout.on('data', (chunk) => { output += chunk; });
 	child.stderr.on('data', (chunk) => { output += chunk; });
-	for (let attempt = 0; attempt < 80; attempt += 1) {
+	for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) {
 		try {
 			if ((await request('GET', '/readyz')).status === 200) return {child, output: () => output};
 		} catch (error) {

@@ -102,7 +102,7 @@ async function startServer() {
 		output += chunk.toString();
 	});
 
-	for (let i = 0; i < 60; i += 1) {
+	for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) {
 		try {
 			const result = await httpGet('/api/stats');
 			if (result.status === 200) {

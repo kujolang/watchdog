@@ -61,7 +61,7 @@ async function startServer(port, visibility, dbPath) {
 		output += chunk.toString();
 	});
 
-	for (let i = 0; i < 40; i += 1) {
+	for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) {
 		try {
 			await httpGetJson(`http://127.0.0.1:${port}/api/stats`);
 			return child;

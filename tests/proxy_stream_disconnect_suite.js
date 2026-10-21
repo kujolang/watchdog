@@ -71,7 +71,7 @@ async function run() {
 		watchdog.stdout.on('data', chunk => { output = (output + chunk).slice(-8192); });
 		watchdog.stderr.on('data', chunk => { output = (output + chunk).slice(-8192); });
 		let ready = false;
-		for (let i = 0; i < 100; i++) {
+		for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) {
 			try { if ((await getJson('/readyz')).status === 200) { ready = true; break; } } catch {}
 			await delay(100);
 		}

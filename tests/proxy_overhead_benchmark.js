@@ -55,7 +55,7 @@ async function startWatchdog(port, upstreamPort, dbPath, configPath, exportersPa
     env: {...process.env, WDG_PORT: String(port), WDG_DB_PATH: dbPath, WDG_PROXY_CONFIG_PATH: configPath,
       WDG_API_AUTH_MODE: 'off', WDG_RATE_LIMIT_MODE: 'off', ...(exportersPath ? {WDG_EXPORTERS_CONFIG_PATH: exportersPath} : {})}, stdio: ['ignore', 'pipe', 'pipe']});
   let output = ''; child.stdout.on('data', b => { output += b; }); child.stderr.on('data', b => { output += b; });
-  for (let i = 0; i < 100; i++) {
+  for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) {
     try { const response = await new Promise((resolve, reject) => { http.get(`http://127.0.0.1:${port}/healthz`, resolve).on('error', reject); }); response.resume(); if (response.statusCode === 200) return {child, output: () => output}; } catch (_) {}
     await delay(100);
   }

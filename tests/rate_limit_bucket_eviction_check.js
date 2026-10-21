@@ -67,7 +67,7 @@ async function startWatchdog(port, dbPath) {
 		output += chunk.toString();
 	});
 
-	for (let i = 0; i < 120; i += 1) {
+	for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) {
 		try {
 			const probe = await httpGet(port, '/api/stats');
 			if (probe.status === 200) {

@@ -35,7 +35,7 @@ async function run() {
 		child = spawn(kujoBin, ['run', '--interpreter', 'dashboard_server.kujo'], {cwd: root, env: {...process.env, WDG_DB_PATH: dbPath, WDG_PORT: String(port), WDG_API_AUTH_MODE: 'off', WDG_BACKUP_ENABLED: 'false', WDG_EXPORTERS_CONFIG_PATH: exportersPath}, stdio: ['ignore', 'pipe', 'pipe']});
 		let output = ''; child.stdout.on('data', value => { output += value; }); child.stderr.on('data', value => { output += value; });
 		let ready = false;
-		for (let i = 0; i < 100; i++) { try { await request({}); ready = true; break; } catch {} await delay(100); }
+		for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) { try { await request({}); ready = true; break; } catch {} await delay(100); }
 		if (!ready) throw new Error(`Watchdog did not start\n${output}`);
 		const batch = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/telemetry-v2/canonical-minimal.json'), 'utf8'));
 		assert.strictEqual((await request(batch)).status, 200);

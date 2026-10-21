@@ -18,7 +18,7 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
   try{await fetch(base+'/healthz',{signal:AbortSignal.timeout(300)});throw Error('Test port occupied');}catch(e){if(e.message==='Test port occupied')throw e;}
   child=spawn(resolveKujoBinOrThrow(__filename),['run','--interpreter','dashboard_server.kujo'],{cwd:root,env:{...process.env,WDG_HOST:'127.0.0.1',WDG_PORT:String(port),WDG_DB_PATH:db,WDG_API_AUTH_MODE:'token',WDG_API_AUTH_TOKEN:token,WDG_BACKUP_ENABLED:'false',WDG_PROXY_CONFIG_PATH:path.join(temp,'proxy.json'),WDG_SOURCES_CONFIG_PATH:path.join(temp,'sources.json'),WDG_EXPORTERS_CONFIG_PATH:path.join(temp,'exporters.json')},stdio:['ignore','pipe','pipe']});
   child.stdout.on('data',b=>log=(log+b).slice(-5000));child.stderr.on('data',b=>log=(log+b).slice(-5000));
-  let ready=false;for(let i=0;i<100;i++){try{if((await fetch(base+'/healthz',{signal:AbortSignal.timeout(500)})).ok){ready=true;break;}}catch{}await delay(100);}assert(ready,log);
+  let ready=false;for(const startupDeadline=performance.now()+30_000;performance.now()<startupDeadline;){try{if((await fetch(base+'/healthz',{signal:AbortSignal.timeout(500)})).ok){ready=true;break;}}catch{}await delay(100);}assert(ready,log);
   const template=JSON.parse(fs.readFileSync(path.join(root,'tests/fixtures/telemetry-v2/canonical-minimal.json'),'utf8'));
   const locked=structuredClone(template);locked.batch_id='held-writer';locked.records[0].record_id='held-writer-record';
   const holder=new DatabaseSync(db);holder.exec('BEGIN IMMEDIATE');

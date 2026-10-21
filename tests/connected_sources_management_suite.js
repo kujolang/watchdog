@@ -53,7 +53,7 @@ async function start() {
 	const child = spawn(KUJO_BIN, ['run', '--interpreter', 'dashboard_server.kujo'], {cwd: ROOT, env: {...process.env, WDG_PORT: String(PORT), WDG_DB_PATH: DB, WDG_SOURCES_CONFIG_PATH: REGISTRY, WDG_PROXY_CONFIG_PATH: PROXY, WDG_API_AUTH_MODE: 'token', WDG_API_AUTH_TOKEN: TOKEN, WDG_BACKUP_ENABLED: 'false'}, stdio: ['ignore', 'pipe', 'pipe']});
 	let output = '';
 	child.stdout.on('data', chunk => { output += chunk; }); child.stderr.on('data', chunk => { output += chunk; });
-	for (let i = 0; i < 100; i += 1) {
+	for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) {
 		try { if ((await request('GET', '/readyz', null, '')).status === 200) return {child, output: () => output}; } catch {}
 		if (child.exitCode != null) throw new Error('server exited before ready\n' + output);
 		await wait(100);

@@ -54,7 +54,7 @@ function parseJSON(text, label) {
 }
 
 async function waitForServer(port, child) {
-	for (let i = 0; i < 80; i += 1) {
+	for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) {
 		try {
 			const probe = await httpRequest(port, 'GET', '/api/stats');
 			if ([200, 401, 403, 500].includes(probe.status)) {

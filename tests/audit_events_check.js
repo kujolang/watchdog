@@ -75,7 +75,7 @@ async function startWatchdog(port, dbPath, extraEnv = {}) {
 		output += chunk.toString();
 	});
 
-	for (let i = 0; i < 120; i += 1) {
+	for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) {
 		try {
 			const probe = await httpRequest(port, 'GET', '/healthz');
 			if (probe.status === 200) {

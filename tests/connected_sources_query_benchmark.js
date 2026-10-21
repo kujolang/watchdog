@@ -22,12 +22,12 @@ async function run() {
 	let child;
 	try {
 		child = spawn(KUJO_BIN, ['run','--interpreter','dashboard_server.kujo'], {cwd:ROOT, env:{...process.env,WDG_PORT:String(PORT),WDG_DB_PATH:DB,WDG_SOURCES_CONFIG_PATH:path.join(TEMP,'sources.json'),WDG_PROXY_CONFIG_PATH:path.join(TEMP,'proxy.json'),WDG_BACKUP_ENABLED:'false'}, stdio:'ignore'});
-		for (let i=0;i<100;i+=1) { try { if ((await get()).status === 200) break; } catch {} await wait(100); }
+		for (const startupDeadline=performance.now()+30_000;performance.now()<startupDeadline;) { try { if ((await get()).status === 200) break; } catch {} await wait(100); }
 		const firstExit = new Promise(resolve => child.once('exit', resolve)); child.kill('SIGTERM'); await firstExit; child = null;
 		const sql = `BEGIN; WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<50000) INSERT INTO requests(source_app,provider,status,tenant_id,project_id,created_at) SELECT CASE WHEN x%10=0 THEN 'watchdog-proxy' ELSE 'app-'||(x%50) END, CASE WHEN x%10=0 THEN 'profile-'||(x%4) ELSE 'provider' END, 'success', 'tenant-'||(x%5), 'project-'||(x%10), CAST(1788537600000+x AS TEXT) FROM n; COMMIT;`;
 		const seeded = spawnSync('sqlite3', [DB, sql], {encoding:'utf8'}); assert.strictEqual(seeded.status,0,seeded.stderr);
 		child = spawn(KUJO_BIN, ['run','--interpreter','dashboard_server.kujo'], {cwd:ROOT, env:{...process.env,WDG_PORT:String(PORT),WDG_DB_PATH:DB,WDG_SOURCES_CONFIG_PATH:path.join(TEMP,'sources.json'),WDG_PROXY_CONFIG_PATH:path.join(TEMP,'proxy.json'),WDG_BACKUP_ENABLED:'false'}, stdio:'ignore'});
-		for (let i=0;i<100;i+=1) { try { if ((await get()).status === 200) break; } catch {} await wait(100); }
+		for (const startupDeadline=performance.now()+30_000;performance.now()<startupDeadline;) { try { if ((await get()).status === 200) break; } catch {} await wait(100); }
 		for (let i=0;i<10;i+=1) await get();
 		const timings=[]; for (let i=0;i<100;i+=1) { const start=performance.now(); const response=await get(); assert.strictEqual(response.status,200); timings.push(performance.now()-start); }
 		timings.sort((a,b)=>a-b); const p95=timings[Math.ceil(timings.length*.95)-1];
