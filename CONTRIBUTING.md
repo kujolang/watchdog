@@ -31,7 +31,7 @@ kujo --version
 Watchdog local startup:
 
 ```bash
-kujo run --interpreter dashboard_server.kujo
+kujo run dashboard_server.kujo
 ```
 
 Default dashboard:

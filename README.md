@@ -42,7 +42,7 @@ Use [Kujo 1.6.0](https://github.com/kujolang/kujo/releases/tag/v1.6.0) for the v
 
 ```bash
 cd /path/to/kujo-watchdog
-kujo run --interpreter dashboard_server.kujo
+kujo run dashboard_server.kujo
 ```
 
 ### 2) Open the dashboard
@@ -275,7 +275,7 @@ Example:
 ```bash
 WDG_API_AUTH_MODE=token \
 WDG_API_AUTH_TOKEN='replace-with-long-random-token' \
-kujo run --interpreter dashboard_server.kujo
+kujo run dashboard_server.kujo
 ```
 
 Then call protected routes with:
@@ -302,7 +302,7 @@ Example:
 WDG_PROXY_AUTHZ_MODE=token \
 WDG_PROXY_AUTHZ_TOKEN='replace-with-long-random-proxy-token' \
 WDG_PROXY_AUTHZ_ALLOWLIST='/healthz,/readyz,/proxy/v1/models' \
-kujo run --interpreter dashboard_server.kujo
+kujo run dashboard_server.kujo
 ```
 
 ## Non-local deployment hardening
@@ -357,7 +357,7 @@ npm run build:charts
 
 ## OTLP export
 
-Copy `config/exporters.example.json` to the path selected by `WDG_EXPORTERS_CONFIG_PATH`, enable a profile, and run `kujo run --interpreter export_worker.kujo` once or with `--watch`. Profiles are isolated by durable queue/checkpoint state; optional destination failure never changes proxy success. Remote endpoints require HTTPS. Loopback HTTP is accepted for local collectors, while private-network HTTPS requires the profile's explicit `allow_private_network` opt-in.
+Copy `config/exporters.example.json` to the path selected by `WDG_EXPORTERS_CONFIG_PATH`, enable a profile, and run `kujo run export_worker.kujo` once or with `--watch`. Profiles are isolated by durable queue/checkpoint state; optional destination failure never changes proxy success. Remote endpoints require HTTPS. Loopback HTTP is accepted for local collectors, while private-network HTTPS requires the profile's explicit `allow_private_network` opt-in.
 
 `encoding: "protobuf"` is the recommended OTLP/HTTP transport and sends `application/x-protobuf`; it requires Kujo 1.2.2 or newer for binary request/response bodies. `encoding: "json"` remains the compatibility default when the field is omitted. Set `compression: "gzip"` for bounded binary-safe request compression. Mapping profiles are independently pinned as `otel.base.v1`, `otel.genai.v1`, or `openinference.v1`. Grafana/Tempo, Datadog, Honeycomb, Phoenix, Langfuse, and other compatible destinations should normally receive these profiles through their OTLP endpoint or an OpenTelemetry Collector, not a destination-specific Watchdog trace client.
 
