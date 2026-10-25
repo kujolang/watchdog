@@ -36,7 +36,7 @@ contains(server, 'excluded.cached_input_tokens > traces.cached_input_tokens', 'T
 contains(server, 'excluded.input_cost_usd > traces.input_cost_usd', 'Trace persistence should keep replay-safe cumulative cost components');
 contains(dashboard, 'Est. API Value', 'Dashboard summary label should remain present');
 
-assert(providerCatalog.catalog_id === 'watchdog-provider-catalog:2026-10-18', 'Provider catalog snapshot should be versioned with the refresh date');
+assert(providerCatalog.catalog_id === 'watchdog-provider-catalog:2026-10-25', 'Provider catalog snapshot should be versioned with the refresh date');
 assert(providerCatalog.models['gpt-4.1'].cached_input_rate_per_million === 0.5, 'Direct OpenAI prompt caching should come from the provider catalog');
 assert(providerCatalog.models['gpt-6-sol'].cache_write_input_rate_per_million === 2.5, 'GPT-6 Sol cache-write pricing should come from OpenAI');
 assert(providerCatalog.models['gpt-6.1-sol'].cached_input_rate_per_million === 0.1, 'GPT-6.1 Sol cached-input pricing should come from OpenAI');
@@ -71,7 +71,9 @@ assert(providerCatalog.models['glm-5.3'].input_rate_per_million === 1.4, 'GLM 5.
 assert(providerCatalog.models['glm-5.3-flash'].output_rate_per_million === 0.5, 'GLM 5.3 Flash pricing should come from Z.AI');
 assert(providerCatalog.models['ollama-cloud/gemma4'].cached_input_rate_per_million === 0.05, 'Ollama Cloud Gemma 4 should use Ollama public cache pricing');
 assert(providerCatalog.aliases['ollama-cloud/nemotron-3-nano:30b'].target_model_id === 'ollama-cloud/nemotron-3-nano', 'Ollama model variants should resolve to their published cloud rate');
-assert(catalog.catalog_id === 'openrouter-public-catalog:2026-10-18', 'Catalog snapshot should be versioned with the refresh date');
+assert(providerCatalog.models['ollama-cloud/qwen3.5:397b'].output_rate_per_million === 3.6, 'Ollama Cloud Qwen 3.5 397B should use Ollama public output pricing');
+assert(providerCatalog.aliases['ollama-cloud/qwen3.5:397b'].pricing_source === 'ollama-cloud-pricing:2026-10-25', 'Ollama Cloud Qwen 3.5 397B should retain current Ollama provenance');
+assert(catalog.catalog_id === 'openrouter-public-catalog:2026-10-25', 'Catalog snapshot should be versioned with the refresh date');
 assert(catalog.models['openai/gpt-5.4'].input_rate_per_million === 2.5, 'GPT-5.4 prompt pricing should come from the catalog');
 assert(catalog.models['anthropic/claude-sonnet-5'].cache_write_input_rate_per_million === 2.5, 'Claude Sonnet 5 cache write pricing should come from the catalog');
 assert(catalog.models['anthropic/claude-sonnet-5.5'].cache_write_input_rate_per_million === 2.5, 'Claude Sonnet 5.5 cache write pricing should come from the refreshed catalog');

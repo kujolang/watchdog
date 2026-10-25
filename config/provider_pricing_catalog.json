@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_id": "watchdog-provider-catalog:2026-10-18",
+  "catalog_id": "watchdog-provider-catalog:2026-10-25",
   "models": {
     "gpt-4.1": {
       "model_id": "gpt-4.1",
@@ -801,6 +801,16 @@
       "output_rate_per_million": 2.4,
       "cached_input_rate_per_million": 0.12,
       "cache_write_input_rate_per_million": 0.0
+    },
+    "ollama-cloud/qwen3.5:397b": {
+      "model_id": "ollama-cloud/qwen3.5:397b",
+      "priced_model": "ollama-cloud/qwen3.5:397b",
+      "has_pricing": true,
+      "pricing_source": "ollama-cloud-pricing:2026-10-25",
+      "input_rate_per_million": 0.6,
+      "output_rate_per_million": 3.6,
+      "cached_input_rate_per_million": 0.0,
+      "cache_write_input_rate_per_million": 0.0
     }
   },
   "aliases": {
@@ -835,6 +845,10 @@
     "ollama-cloud/minimax-m3": {
       "target_model_id": "ollama-cloud/minimax-m3",
       "pricing_source": "ollama-cloud-pricing:2026-10-18"
+    },
+    "ollama-cloud/qwen3.5:397b": {
+      "target_model_id": "ollama-cloud/qwen3.5:397b",
+      "pricing_source": "ollama-cloud-pricing:2026-10-25"
     },
     "ollama-cloud/minimax-m2.7": {
       "target_model_id": "minimax-m2.7",

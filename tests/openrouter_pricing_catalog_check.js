@@ -46,9 +46,9 @@ assert.equal(opus5.output_rate_per_million, 25);
 assert.equal(opus5.cache_write_input_rate_per_million, 6.25);
 
 const glm52 = resolvePricing('z-ai/glm-5.2', { providerCatalog, openrouterCatalog });
-assert.equal(glm52.input_rate_per_million, 0.62);
-assert.equal(glm52.output_rate_per_million, 2.42);
-assert.equal(glm52.cached_input_rate_per_million, 0.14);
+assert.equal(glm52.input_rate_per_million, 0.0341);
+assert.equal(glm52.output_rate_per_million, 7);
+assert.equal(glm52.cached_input_rate_per_million, 0.033);
 
 const alias = resolvePricing('~anthropic/claude-haiku-latest', { providerCatalog, openrouterCatalog });
 assert.equal(alias.pricing_kind, 'catalog');
@@ -119,6 +119,13 @@ const ollamaGemma4 = resolvePricing('gemma4:31b', { providerCatalog, openrouterC
 assert.equal(ollamaGemma4.pricing_kind, 'catalog');
 assert.equal(ollamaGemma4.priced_model, 'ollama-cloud/gemma4');
 assert.equal(ollamaGemma4.cached_input_rate_per_million, 0.05);
+
+const ollamaQwen35 = resolvePricing('qwen3.5:397b', { providerCatalog, openrouterCatalog });
+assert.equal(ollamaQwen35.pricing_kind, 'catalog');
+assert.equal(ollamaQwen35.priced_model, 'ollama-cloud/qwen3.5:397b');
+assert.equal(ollamaQwen35.input_rate_per_million, 0.6);
+assert.equal(ollamaQwen35.cached_input_rate_per_million, 0);
+assert.equal(ollamaQwen35.output_rate_per_million, 3.6);
 
 const ollamaEquivalent = resolvePricing('kimi-k2.6', { providerCatalog, openrouterCatalog });
 assert.equal(ollamaEquivalent.pricing_kind, 'catalog');
