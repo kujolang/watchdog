@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_id": "watchdog-provider-catalog:2026-10-25",
+  "catalog_id": "watchdog-provider-catalog:2026-11-01",
   "models": {
     "gpt-4.1": {
       "model_id": "gpt-4.1",
@@ -91,6 +91,16 @@
       "output_rate_per_million": 10.0,
       "cached_input_rate_per_million": 0.1,
       "cache_write_input_rate_per_million": 2.5
+    },
+    "gpt-6.1-terra": {
+      "model_id": "gpt-6.1-terra",
+      "priced_model": "gpt-6.1-terra",
+      "has_pricing": true,
+      "pricing_source": "openai-api-pricing:2026-11-01:standard-short-context",
+      "input_rate_per_million": 1.0,
+      "output_rate_per_million": 5.0,
+      "cached_input_rate_per_million": 0.05,
+      "cache_write_input_rate_per_million": 1.25
     },
     "gpt-6-luna": {
       "model_id": "gpt-6-luna",

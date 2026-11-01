@@ -21,10 +21,10 @@ node scripts/refresh_openrouter_pricing_catalog.js
 
 This fetches `https://openrouter.ai/api/v1/models`, applies the checked-in alias overrides from [`config/openrouter_pricing_aliases.json`](../config/openrouter_pricing_aliases.json), and rewrites the versioned catalog snapshot.
 
-The October 25, 2026 snapshot contains 467 models. It adds newly advertised
-routes including Kimi K3.1 Pro, MiniMax M3.1 Flash, Recursive Flint, Inception
-Mercury 3, and Liquid LFM2.5 2.6B, removes nine routes no longer advertised by
-the catalog, and preserves the current route-specific prices exactly as returned by OpenRouter.
+The November 1, 2026 snapshot contains 452 models. It adds six newly advertised
+routes, including GPT-6.1 Terra, Particle 1, and Ternary Bonsai 2 9B, removes
+twenty-one routes no longer advertised by the catalog, and preserves the current
+route-specific prices exactly as returned by OpenRouter.
 These are OpenRouter route estimates, not direct-provider prices.
 
 ## Inspect pricing provenance
@@ -64,6 +64,7 @@ Common `pricing_source` patterns:
 - `xai-api-pricing:2026-08-30:standard-short-context`
 - `openrouter-public-catalog:2026-10-18`
 - `openrouter-public-catalog:2026-10-25`
+- `openrouter-public-catalog:2026-11-01`
 - `watchdog-fallback-estimate:v1`
 
 ## Reprice historical records
@@ -120,9 +121,9 @@ Apply the same command with `--apply` once the dry-run output looks correct.
 
 ## Provider catalog coverage
 
-The local provider catalog is intentionally versioned and explicit. As of October 25, 2026 it includes:
+The local provider catalog is intentionally versioned and explicit. As of November 1, 2026 it includes:
 
-- direct OpenAI text-token models used by AI Chat such as `gpt-4.1`, `gpt-4.1-mini`, and `o4-mini`, plus current Codex/API inventory models `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini`; GPT-6.1 Sol uses OpenAI's current $2 input, $10 output, $0.10 cache-read, and $2.50 cache-write standard short-context rates, `gpt-5.6-sol` and the `gpt-daybreak-blue-latest` equivalent retain their documented promotional rates, and non-public-API `gpt-5.3-codex-spark` remains explicitly `unknown`
+- direct OpenAI text-token models used by AI Chat such as `gpt-4.1`, `gpt-4.1-mini`, and `o4-mini`, plus current Codex/API inventory models `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini`; GPT-6.1 Sol uses OpenAI's current $2 input, $10 output, $0.10 cache-read, and $2.50 cache-write standard short-context rates, while GPT-6.1 Terra uses $1 input, $5 output, $0.05 cache-read, and $1.25 cache-write rates; `gpt-5.6-sol` and the `gpt-daybreak-blue-latest` equivalent retain their documented promotional rates, and non-public-API `gpt-5.3-codex-spark` remains explicitly `unknown`
 - direct Anthropic models such as `claude-sonnet-5`, `claude-sonnet-5.5`, `claude-opus-5.5`, `claude-opus-4.8`, `claude-haiku-5.5`, and `claude-haiku-4.5`; Sonnet 5.5 uses Anthropic's current $2 input, $10 output, $0.10 cache-read, and five-minute $2.50 cache-write rates per million tokens, while Haiku 5.5 uses the published short-context tier through 100,000 prompt tokens
 - direct Google Gemini models such as `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, and `gemini-3.8-flash`; the Gemini 3.8 Flash row records its introductory rate through December 31, 2026
 - direct Moonshot Kimi models such as `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.6`, and `kimi-k2.5`; Kimi K3 includes Moonshot's separately published cache-write rate

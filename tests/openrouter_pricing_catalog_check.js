@@ -39,6 +39,13 @@ assert.equal(sol61.cached_input_rate_per_million, 0.1);
 assert.equal(sol61.cache_write_input_rate_per_million, 2.5);
 assert.equal(sol61.output_rate_per_million, 10);
 
+const terra61 = resolvePricing('gpt-6.1-terra', { providerCatalog, openrouterCatalog });
+assert.equal(terra61.pricing_kind, 'catalog');
+assert.equal(terra61.input_rate_per_million, 1);
+assert.equal(terra61.cached_input_rate_per_million, 0.05);
+assert.equal(terra61.cache_write_input_rate_per_million, 1.25);
+assert.equal(terra61.output_rate_per_million, 5);
+
 const opus5 = resolvePricing('anthropic/claude-opus-5', { providerCatalog, openrouterCatalog });
 assert.equal(opus5.pricing_kind, 'catalog');
 assert.equal(opus5.input_rate_per_million, 5);
@@ -46,9 +53,9 @@ assert.equal(opus5.output_rate_per_million, 25);
 assert.equal(opus5.cache_write_input_rate_per_million, 6.25);
 
 const glm52 = resolvePricing('z-ai/glm-5.2', { providerCatalog, openrouterCatalog });
-assert.equal(glm52.input_rate_per_million, 0.0341);
-assert.equal(glm52.output_rate_per_million, 7);
-assert.equal(glm52.cached_input_rate_per_million, 0.033);
+assert.equal(glm52.input_rate_per_million, 0.006);
+assert.equal(glm52.output_rate_per_million, 6.8);
+assert.equal(glm52.cached_input_rate_per_million, 0.005);
 
 const alias = resolvePricing('~anthropic/claude-haiku-latest', { providerCatalog, openrouterCatalog });
 assert.equal(alias.pricing_kind, 'catalog');
