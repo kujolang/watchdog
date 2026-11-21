@@ -18,6 +18,51 @@ async function run() { const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'watch
   server = await start(port, dbPath); const migrations = new DatabaseSync(dbPath); const migrationKeys = migrations.prepare("SELECT key FROM schema_migrations WHERE key IN ('0015_canonical_telemetry_v2','0016_bounded_export_delivery_journal') ORDER BY key").all().map(row => row.key); migrations.close(); assert.deepStrictEqual(migrationKeys, ['0015_canonical_telemetry_v2', '0016_bounded_export_delivery_journal']);
   const batch = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests/fixtures/telemetry-v2/canonical-minimal.json'), 'utf8')); batch.batch_id = 'migration-restart'; const intake = await request(port, 'POST', '/telemetry/v2/batches', batch); assert.strictEqual(intake.status, 200, intake.body); await stop(server.child);
   server = await start(port, dbPath); const records = await request(port, 'GET', '/api/telemetry/v2/records?limit=10'); assert.strictEqual(records.status, 200); assert(JSON.parse(records.body).data.records.some(item => item.record.record_id === 'trace:fixture:1')); const legacy = await request(port, 'GET', '/api/requests?session_id=legacy-session'); assert.strictEqual(legacy.status, 200); assert(JSON.parse(legacy.body).data.some(item => item.request_id === 'legacy-request'));
+  const offsetTime = new Date(Date.now() - 5 * 60 * 60 * 1000 - 10_000).toISOString().replace('Z', '-05:00');
+  const olderTime = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const offsetBatch = structuredClone(batch);
+  offsetBatch.batch_id = 'source-observation-offsets';
+  offsetBatch.producer.name = 'offset-fixture';
+  offsetBatch.records = [olderTime, offsetTime].map((observed_at, index) => ({
+    ...batch.records[0], record_id: 'offset-record-' + index, observed_at,
+  }));
+  const invalidTimestamp = structuredClone(offsetBatch);
+  invalidTimestamp.records[0].observed_at = '2026-19-40T33:70:00Z';
+  const rejected = await request(port, 'POST', '/telemetry/v2/batches', invalidTimestamp);
+  assert.strictEqual(rejected.status, 400, rejected.body);
+  assert.match(rejected.body, /observed_at must be RFC3339/);
+  const offsetIntake = await request(port, 'POST', '/telemetry/v2/batches', offsetBatch);
+  assert.strictEqual(offsetIntake.status, 200, offsetIntake.body);
+  async function readOffsetSource() {
+    const response = await request(port, 'GET', '/api/sources');
+    assert.strictEqual(response.status, 200, response.body);
+    return JSON.parse(response.body).data.sources.find(source => source.producer_names.includes('offset-fixture'));
+  }
+  let source = await readOffsetSource();
+  assert.strictEqual(source.status, 'active');
+  assert.strictEqual(source.first_seen_at, olderTime);
+  assert.strictEqual(source.last_seen_at, offsetTime);
+  await stop(server.child);
+
+  const existingSummary = new DatabaseSync(dbPath);
+  try {
+    existingSummary.exec("DELETE FROM schema_migrations WHERE key = '0019_connected_source_observation_times'");
+    existingSummary.prepare("UPDATE source_observations SET first_seen_at = ?, last_seen_at = ? WHERE source_identity = 'offset-fixture'").run(offsetTime, olderTime);
+  } finally { existingSummary.close(); }
+
+  server = await start(port, dbPath);
+  source = await readOffsetSource();
+  assert.strictEqual(source.status, 'active', 'startup must rebuild the old text-ordered summary');
+  assert.strictEqual(source.last_seen_at, offsetTime);
+
+  const prune = new DatabaseSync(dbPath);
+  try {
+    prune.exec("DELETE FROM telemetry_records_v2 WHERE producer_name = 'offset-fixture' AND record_id = 'offset-record-1'");
+  } finally { prune.close(); }
+  source = await readOffsetSource();
+  assert.strictEqual(source.status, 'stale');
+  assert.strictEqual(source.accepted_records, 1);
+  assert.strictEqual(source.last_seen_at, olderTime);
   const check = new DatabaseSync(dbPath); assert.strictEqual(check.prepare('PRAGMA quick_check').get().quick_check, 'ok'); check.close(); console.log('telemetry_migration_restart_suite: PASS');
  } finally { if (server && server.child.exitCode == null) await stop(server.child); fs.rmSync(temp, {recursive: true, force: true}); } }
 run().catch(error => { console.error('telemetry_migration_restart_suite: FAIL'); console.error(error.stack || error); process.exit(1); });

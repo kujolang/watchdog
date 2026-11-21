@@ -62,12 +62,13 @@ func repo_record_hash(record) {
 }
 
 func repo_valid_timestamp(value) {
-	text := repo_text(value, 80)
-	if len(text) < 20 || contains(text, "T") == 0 { return false }
-	if ends_with(text, "Z") { return true }
-	if contains(substring(text, 10, len(text)), "+") { return true }
-	if contains(substring(text, 10, len(text)), "-") { return true }
-	return false
+	if type(value) != "string" { return false }
+	text := trim(value)
+	if len(text) < 20 || len(text) > 80 { return false }
+	try {
+		parse_datetime(text)
+		return true
+	} except err { return false }
 }
 
 func repo_valid_status(value) {

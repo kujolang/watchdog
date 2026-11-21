@@ -156,8 +156,13 @@ func source_validate_registration(raw) {
 	return {"ok": true, "source": {"id": id, "name": name, "description": description, "kind": kind, "producer_names": clean_producers, "source_apps": clean_apps, "profile_name": profile_name, "enabled": source_get(raw, "enabled", true) != false, "archived": source_get(raw, "archived", false) == true, "setup_template_id": template_id, "options": clean_options, "created_at": created_at, "updated_at": updated_at}}
 }
 
+func source_path_is_symlink(path) {
+	# Kujo raises when the path does not exist, but recognizes dangling links.
+	try { return path_is_symlink(path) } except err { return false }
+}
+
 func source_load_registry(path) {
-	if file_exists(path) == false { return {"ok": true, "registry": source_default_registry(), "revision": "0", "error": ""} }
+	if file_exists(path) == false && source_path_is_symlink(path) == false { return {"ok": true, "registry": source_default_registry(), "revision": "0", "error": ""} }
 	if path_is_symlink(path) || path_is_file(path) == false { return {"ok": false, "registry": source_default_registry(), "revision": "", "error": "source registry must be a regular non-symlink file"} }
 	if file_size(path) > SOURCE_MAX_FILE_BYTES { return {"ok": false, "registry": source_default_registry(), "revision": "", "error": "source registry exceeds 256 KiB"} }
 	text := read_file(path)
@@ -180,18 +185,57 @@ func source_load_registry(path) {
 	return {"ok": true, "registry": registry, "revision": sha256(to_json(registry)), "error": ""}
 }
 
-func source_write_registry(path, registry) {
-	if file_exists(path) && (path_is_symlink(path) || path_is_file(path) == false) { return {"ok": false, "error": "source registry target is unsafe"} }
+func source_parent(path) {
 	parent := dirname(path)
-	if path_is_dir(parent) == false {
-		if source_ensure_private_dir(parent) == false { return {"ok": false, "error": "source registry parent could not be created"} }
+	if parent == "" { return "." }
+	return parent
+}
+
+func source_write_private(path, payload) {
+	stage := source_parent(path) + "/.watchdog-config-" + uuid_v4() + ".tmp"
+	io_write_private_file(stage, payload, 384)
+	try {
+		rename_file(stage, path)
+	} except err {
+		try { delete_file(stage) } except cleanup_err {}
+		throw(err)
 	}
-	if path_is_symlink(parent) || path_is_dir(parent) == false { return {"ok": false, "error": "source registry parent is unsafe"} }
-	payload := to_json(registry) + "\n"
-	if len(payload) > SOURCE_MAX_FILE_BYTES { return {"ok": false, "error": "source registry exceeds 256 KiB"} }
-	write_file_atomic(path, payload, true)
-	io_set_permissions(path, 384)
-	return {"ok": true, "error": "", "revision": sha256(to_json(registry))}
+}
+
+# Keep revision checks and replacement under the same process-shared
+# lock. Readers continue to see a complete old or new file.
+func source_mutate_locked(path, mutate) {
+	parent := source_parent(path)
+	if path_is_dir(parent) == false {
+		try {
+			if source_ensure_private_dir(parent) == false { return {"ok": false, "status": 500, "error": "configuration parent could not be created"} }
+		} except err {
+			return {"ok": false, "status": 500, "error": "configuration parent could not be created"}
+		}
+	}
+	if path_is_symlink(parent) || path_is_dir(parent) == false { return {"ok": false, "status": 409, "error": "configuration parent is unsafe"} }
+	lock := null
+	try {
+		lock = file_lock(path + ".watchdog-config.lock", 500)
+	} except err {
+		return {"ok": false, "status": 503, "error": "configuration lock could not be acquired"}
+	}
+	result := {}
+	try {
+		result = mutate()
+	} except err {
+		result = {"ok": false, "status": 500, "error": "configuration mutation could not be completed"}
+	}
+	file_unlock(lock)
+	return result
+}
+
+func source_mutate_registry(path, action, source_id, input, expected_revision) {
+	return source_mutate_locked(path, func() { return source_registry_mutate(path, action, source_id, input, expected_revision) })
+}
+
+func source_mutate_proxy(path, action, profile_name, input, expected_revision) {
+	return source_mutate_locked(path, func() { return source_proxy_mutate(path, action, profile_name, input, expected_revision) })
 }
 
 func source_registry_mutate(path, action, source_id, input, expected_revision) {
@@ -239,9 +283,11 @@ func source_registry_mutate(path, action, source_id, input, expected_revision) {
 	} else { return {"ok": false, "status": 400, "error": "unsupported source mutation"} }
 	registry["sources"] = sources
 	registry["revision"] = source_get(registry, "revision", 0) + 1
-	written := source_write_registry(path, registry)
-	if written["ok"] == false { return {"ok": false, "status": 500, "error": written["error"]} }
-	return {"ok": true, "status": 200, "source": result_source, "revision": written["revision"], "restart_required": false, "historical_telemetry_retained": action == "delete"}
+	encoded := to_json(registry)
+	payload := encoded + "\n"
+	if byte_length(payload) > SOURCE_MAX_FILE_BYTES { return {"ok": false, "status": 400, "error": "source registry exceeds 256 KiB"} }
+	source_write_private(path, payload)
+	return {"ok": true, "status": 200, "source": result_source, "revision": sha256(encoded), "restart_required": false, "historical_telemetry_retained": action == "delete"}
 }
 
 func source_proxy_endpoint_allowed(endpoint) {
@@ -271,12 +317,7 @@ func source_proxy_mutate(path, action, profile_name, input, expected_revision) {
 	if profile_name == "default" { return {"ok": false, "status": 403, "error": "the default proxy profile is read-only in this release"} }
 	name := source_identifier(profile_name)
 	if name == "" { return {"ok": false, "status": 400, "error": "invalid proxy profile name"} }
-	if file_exists(path) && (path_is_symlink(path) || path_is_file(path) == false || file_size(path) > SOURCE_MAX_FILE_BYTES) { return {"ok": false, "status": 409, "error": "proxy configuration target is unsafe"} }
-	parent := dirname(path)
-	if path_is_dir(parent) == false {
-		if source_ensure_private_dir(parent) == false { return {"ok": false, "status": 500, "error": "proxy configuration parent could not be created"} }
-	}
-	if path_is_symlink(parent) || path_is_dir(parent) == false { return {"ok": false, "status": 409, "error": "proxy configuration parent is unsafe"} }
+	if source_path_is_symlink(path) || (file_exists(path) && (path_is_file(path) == false || file_size(path) > SOURCE_MAX_FILE_BYTES)) { return {"ok": false, "status": 409, "error": "proxy configuration target is unsafe"} }
 	text := "{}"
 	if file_exists(path) { text = read_file(path) }
 	current_revision := sha256(text)
@@ -313,8 +354,8 @@ func source_proxy_mutate(path, action, profile_name, input, expected_revision) {
 	}
 	cfg["upstream_profiles"] = profiles
 	payload := to_json(cfg) + "\n"
-	write_file_atomic(path, payload, true)
-	io_set_permissions(path, 384)
+	if byte_length(payload) > SOURCE_MAX_FILE_BYTES { return {"ok": false, "status": 400, "error": "proxy configuration exceeds 256 KiB"} }
+	source_write_private(path, payload)
 	return {"ok": true, "status": 200, "profile_name": name, "revision": sha256(payload), "restart_required": false, "configuration_reload": "applies_to_new_requests", "historical_telemetry_retained": action == "delete_proxy"}
 }
 
@@ -339,8 +380,9 @@ func source_setup_templates() {
 export watchdog_sources_contract_version := SOURCE_CONTRACT_VERSION
 export watchdog_sources_registry_version := SOURCE_REGISTRY_VERSION
 export watchdog_sources_load_registry := source_load_registry
-export watchdog_sources_registry_mutate := source_registry_mutate
-export watchdog_sources_proxy_mutate := source_proxy_mutate
+export watchdog_sources_registry_mutate := source_mutate_registry
+export watchdog_sources_proxy_mutate := source_mutate_proxy
 export watchdog_sources_proxy_public_profile := source_proxy_public_profile
 export watchdog_sources_setup_templates := source_setup_templates
 export watchdog_sources_active_window_ms := SOURCE_ACTIVE_WINDOW_MS
+export watchdog_sources_max_file_bytes := SOURCE_MAX_FILE_BYTES

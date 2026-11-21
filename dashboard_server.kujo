@@ -36,7 +36,7 @@ from source_management import watchdog_sources_contract_version, watchdog_source
 from source_management import watchdog_sources_load_registry, watchdog_sources_registry_mutate
 from source_management import watchdog_sources_proxy_mutate, watchdog_sources_setup_templates
 from source_management import watchdog_sources_proxy_public_profile
-from source_management import watchdog_sources_active_window_ms
+from source_management import watchdog_sources_active_window_ms, watchdog_sources_max_file_bytes
 
 DEFAULT_PORT := 7700
 DEFAULT_DB_PATH := "data/watchdog.db"
@@ -1256,7 +1256,10 @@ func read_proxy_config_file(config_path) {
 	if !file_exists(config_path) {
 		return {}
 	}
-	text := read_file(config_path)
+	return parse_proxy_config(read_file(config_path))
+}
+
+func parse_proxy_config(text) {
 	parsed := parse_json_safe(text)
 	if !parsed["ok"] {
 		return {}
@@ -1269,6 +1272,10 @@ func read_proxy_config_file(config_path) {
 }
 
 func effective_proxy_config(config_path) {
+	return effective_proxy_config_from_file(read_proxy_config_file(config_path))
+}
+
+func effective_proxy_config_from_file(file_cfg) {
 	defaults := {
 		"upstream_base_url": DEFAULT_UPSTREAM_BASE_URL,
 		"auth_mode": DEFAULT_AUTH_MODE,
@@ -1276,7 +1283,6 @@ func effective_proxy_config(config_path) {
 		"upstream_api_key_env": ""
 	}
 
-	file_cfg := read_proxy_config_file(config_path)
 	cfg := merge_config_maps(defaults, file_cfg)
 
 	env_upstream := env_or_many(["WDG_UPSTREAM_BASE_URL"], "")
@@ -1311,10 +1317,11 @@ func effective_proxy_config(config_path) {
 }
 
 func effective_upstream_profiles(config_path) {
-	profiles := {
-		"default": effective_proxy_config(config_path)
-	}
-	file_cfg := read_proxy_config_file(config_path)
+	return effective_profiles_from_file(read_proxy_config_file(config_path))
+}
+
+func effective_profiles_from_file(file_cfg) {
+	profiles := {"default": effective_proxy_config_from_file(file_cfg)}
 	raw_profiles := safe_dict_get(file_cfg, "upstream_profiles", {})
 	if type(raw_profiles) != "dict" {
 		return profiles
@@ -3792,17 +3799,15 @@ func source_timestamp_ms(value) {
 		numeric := parse_int(text)
 		if numeric > 0 { return numeric }
 	} except err {}
-	if len(text) >= 19 {
-		try { return parse_date(substring(text, 0, 19), "YYYY-MM-DDTHH:mm:ss") * 1000 } except err {}
-	}
-	return 0
+	try { return round(parse_datetime(text) * 1000.0) } except err { return 0 }
 }
 
 func source_status(configured, enabled, observed, last_seen_at) {
 	if configured && enabled == false { return {"status": "disabled", "evidence": "local configuration is disabled"} }
 	if observed == false { return {"status": "pending", "evidence": "configured or registered; no matching accepted telemetry observed"} }
 	last_ms := source_timestamp_ms(last_seen_at)
-	if last_ms > 0 && current_timestamp() - last_ms <= watchdog_sources_active_window_ms { return {"status": "active", "evidence": "accepted telemetry observed inside the 5-minute active window"} }
+	now_ms := current_timestamp()
+	if last_ms > 0 && last_ms <= now_ms && now_ms - last_ms <= watchdog_sources_active_window_ms { return {"status": "active", "evidence": "accepted telemetry observed inside the 5-minute active window"} }
 	return {"status": "stale", "evidence": "accepted telemetry was observed, but not inside the 5-minute active window"}
 }
 
@@ -3828,17 +3833,23 @@ func source_inventory(req) {
 	tenant_id := request_query_text(req, "tenant_id", "")
 	project_id := request_query_text(req, "project_id", "")
 	registry_result := watchdog_sources_load_registry(SOURCES_CONFIG_PATH)
-	proxy_revision := sha256("{}")
-	if file_exists(PROXY_CONFIG_PATH) && path_is_file(PROXY_CONFIG_PATH) && path_is_symlink(PROXY_CONFIG_PATH) == false { proxy_revision = sha256(read_file(PROXY_CONFIG_PATH)) }
+	# Use one bounded file snapshot for both the revision and displayed profiles.
+	proxy_text := "{}"
+	proxy_revision := sha256(proxy_text)
+	if file_exists(PROXY_CONFIG_PATH) && path_is_file(PROXY_CONFIG_PATH) && path_is_symlink(PROXY_CONFIG_PATH) == false {
+		if file_size(PROXY_CONFIG_PATH) <= watchdog_sources_max_file_bytes {
+			proxy_text = read_file(PROXY_CONFIG_PATH)
+			proxy_revision = sha256(proxy_text)
+		} else { proxy_revision = "" }
+	}
+	cache_key := ""
 	observation_revision := -1
 	if tenant_id == "" && project_id == "" {
 		revision_rows := db_query(db, "SELECT revision FROM source_observation_state WHERE id = 1", [])
 		if len(revision_rows) > 0 { observation_revision = revision_rows[0]["revision"] }
-		registry_fingerprint := safe_dict_get(registry_result, "revision", "")
-		if registry_result["ok"] == false && file_exists(SOURCES_CONFIG_PATH) && path_is_file(SOURCES_CONFIG_PATH) && path_is_symlink(SOURCES_CONFIG_PATH) == false { registry_fingerprint = sha256(read_file(SOURCES_CONFIG_PATH)) }
-		cache_key := to_string(observation_revision) + ":" + registry_fingerprint + ":" + proxy_revision
+		registry_fingerprint := registry_result["revision"] + registry_result["error"]
+		cache_key = to_string(observation_revision) + ":" + registry_fingerprint + ":" + proxy_revision
 		if SOURCE_INVENTORY_CACHE["result"] != null && SOURCE_INVENTORY_CACHE["key"] == cache_key && current_timestamp() < SOURCE_INVENTORY_CACHE["expires_at_ms"] { return SOURCE_INVENTORY_CACHE["result"] }
-		SOURCE_INVENTORY_CACHE["key"] = cache_key
 	}
 	registry_error := ""
 	registrations := []
@@ -3884,7 +3895,7 @@ func source_inventory(req) {
 	}
 	proxy_observations := {}
 	for observation in proxy_observation_rows { proxy_observations[to_string(observation["provider"])] = observation }
-	profiles := effective_upstream_profiles(PROXY_CONFIG_PATH)
+	profiles := effective_profiles_from_file(parse_proxy_config(proxy_text))
 	for profile_name in sort(keys(profiles)) {
 		profile_cfg := profiles[profile_name]
 		observation := {"first_seen_at": null, "last_seen_at": null, "legacy_requests": 0}
@@ -3954,12 +3965,17 @@ func source_inventory(req) {
 	result := {"contract_version": watchdog_sources_contract_version, "registry_version": watchdog_sources_registry_version, "revision": revision, "proxy_revision": proxy_revision, "active_window_ms": watchdog_sources_active_window_ms, "count_window_records": 50000, "summary": summary, "sources": items, "registry_error": registry_error, "capabilities": ["read_inventory", "register_metadata", "manage_proxy_profiles", "verify_local_observation"], "configuration_reload": "proxy profile changes apply to new requests without restart"}
 	if tenant_id == "" && project_id == "" {
 		expires_at_ms := 9999999999999
+		now_ms := current_timestamp()
 		for item in items {
 			if item["status"] == "active" {
 				transition_ms := source_timestamp_ms(item["last_seen_at"]) + watchdog_sources_active_window_ms + 1
 				if transition_ms < expires_at_ms { expires_at_ms = transition_ms }
+			} else if item["status"] == "stale" {
+				transition_ms := source_timestamp_ms(item["last_seen_at"])
+				if transition_ms > now_ms - watchdog_sources_active_window_ms && transition_ms < expires_at_ms { expires_at_ms = transition_ms }
 			}
 		}
+		SOURCE_INVENTORY_CACHE["key"] = cache_key
 		SOURCE_INVENTORY_CACHE["result"] = result
 		SOURCE_INVENTORY_CACHE["expires_at_ms"] = expires_at_ms
 	}

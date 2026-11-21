@@ -33,12 +33,12 @@ function createUpstream(port, label) {
 	});
 }
 
-function request(method, pathname, payload, token = TOKEN, extraHeaders = {}) {
+function request(method, pathname, payload, token = TOKEN, extraHeaders = {}, port = PORT) {
 	return new Promise((resolve, reject) => {
 		const body = payload == null ? '' : JSON.stringify(payload);
 		const headers = {...extraHeaders, ...(body ? {'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body)} : {})};
 		if (token) headers['X-Watchdog-Token'] = token;
-		const req = http.request({host: '127.0.0.1', port: PORT, path: pathname, method, headers}, res => {
+		const req = http.request({host: '127.0.0.1', port, path: pathname, method, headers}, res => {
 			let text = '';
 			res.on('data', chunk => { text += chunk; });
 			res.on('end', () => { let json = null; try { json = text ? JSON.parse(text) : null; } catch {} resolve({status: res.statusCode || 0, text, json}); });
@@ -49,12 +49,12 @@ function request(method, pathname, payload, token = TOKEN, extraHeaders = {}) {
 	});
 }
 
-async function start() {
-	const child = spawn(KUJO_BIN, ['run', '--interpreter', 'dashboard_server.kujo'], {cwd: ROOT, env: {...process.env, WDG_PORT: String(PORT), WDG_DB_PATH: DB, WDG_SOURCES_CONFIG_PATH: REGISTRY, WDG_PROXY_CONFIG_PATH: PROXY, WDG_API_AUTH_MODE: 'token', WDG_API_AUTH_TOKEN: TOKEN, WDG_BACKUP_ENABLED: 'false'}, stdio: ['ignore', 'pipe', 'pipe']});
+async function start(port = PORT, dbPath = DB) {
+	const child = spawn(KUJO_BIN, ['run', '--interpreter', 'dashboard_server.kujo'], {cwd: ROOT, env: {...process.env, WDG_PORT: String(port), WDG_DB_PATH: dbPath, WDG_SOURCES_CONFIG_PATH: REGISTRY, WDG_PROXY_CONFIG_PATH: PROXY, WDG_API_AUTH_MODE: 'token', WDG_API_AUTH_TOKEN: TOKEN, WDG_BACKUP_ENABLED: 'false'}, stdio: ['ignore', 'pipe', 'pipe']});
 	let output = '';
 	child.stdout.on('data', chunk => { output += chunk; }); child.stderr.on('data', chunk => { output += chunk; });
 	for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) {
-		try { if ((await request('GET', '/readyz', null, '')).status === 200) return {child, output: () => output}; } catch {}
+		try { if ((await request('GET', '/readyz', null, '', {}, port)).status === 200) return {child, output: () => output}; } catch {}
 		if (child.exitCode != null) throw new Error('server exited before ready\n' + output);
 		await wait(100);
 	}
@@ -71,7 +71,9 @@ async function run() {
 		server = await start();
 		assert.strictEqual((await request('GET', '/api/sources', null, '')).status, 401, 'inventory must require API authentication');
 		assert.strictEqual((await request('GET', '/api/sources', null, 'wrong')).status, 403, 'inventory must reject invalid authentication');
-		let inventory = (await request('GET', '/api/sources')).json.data;
+		const initial = await request('GET', '/api/sources');
+		assert.strictEqual(initial.status, 200, initial.text + '\n' + server.output().slice(-2500));
+		let inventory = initial.json.data;
 		assert.strictEqual(inventory.contract_version, 'watchdog.sources-panel.v1');
 		assert.strictEqual(inventory.registry_version, 'watchdog.sources.v1');
 		assert.ok(inventory.sources.some(source => source.kind === 'proxy' && source.profile_name === 'default' && source.status === 'pending' && source.read_only));
@@ -99,6 +101,20 @@ async function run() {
 		inventory = (await request('GET', '/api/sources')).json.data;
 		const configured = inventory.sources.find(source => source.registration_id === registrationId);
 		assert.strictEqual(configured.status, 'pending'); assert.strictEqual(configured.archived, true); assert.strictEqual(configured.observed, false);
+
+		const peerPort = 17743;
+		const peer = await start(peerPort, path.join(TEMP, 'peer.db'));
+		try {
+			const sameRevision = inventory.revision;
+			assert.strictEqual((await request('GET', '/api/sources', null, TOKEN, {}, peerPort)).json.data.revision, sameRevision);
+			const names = ['Primary writer', 'Peer writer'];
+			const results = await Promise.all([PORT, peerPort].map((port, index) =>
+				request('PATCH', '/api/sources/' + registrationId, {revision: sameRevision, source: {name: names[index]}}, TOKEN, {}, port)));
+			assert.deepStrictEqual(results.map(result => result.status).sort(), [200, 409], 'one writer must lose the shared revision');
+			assert.strictEqual(JSON.parse(fs.readFileSync(REGISTRY, 'utf8')).sources[0].name, names[results.findIndex(result => result.status === 200)]);
+		} finally {
+			await new Promise(resolve => { peer.child.once('exit', resolve); peer.child.kill('SIGTERM'); });
+		}
 
 		const telemetry = await request('POST', '/api/telemetry/requests', {schema_version:'kujo.telemetry.v1', source_app:'legacy-fixture', request_id:'source-observation-1', tenant_id:'tenant-a', project_id:'project-a', status:'success'});
 		assert.strictEqual(telemetry.status, 200, telemetry.text);
@@ -163,12 +179,22 @@ async function run() {
 		assert.ok(!fs.readFileSync(backupPath).includes(Buffer.from(canary)), 'secret canary must not reach database backups');
 
 		const validProxy = fs.readFileSync(PROXY);
+		const padding = JSON.stringify({operator_extension: 'é'.repeat(131047)});
+		assert.ok(Buffer.byteLength(padding) < 256 * 1024);
+		fs.writeFileSync(PROXY, padding, {mode: 0o600});
+		const overLimit = await request('POST', '/api/sources/proxy/update', {
+			profile_name: 'fixture-profile', profile: {upstream_base_url: 'https://api.example.test/v3', auth_mode: 'passthrough'},
+		});
+		assert.strictEqual(overLimit.status, 400, overLimit.text);
+		assert.strictEqual(fs.readFileSync(PROXY, 'utf8'), padding, 'oversized replacement must leave the prior configuration readable');
+
 		fs.writeFileSync(PROXY, '{malformed', {mode:0o600});
 		assert.strictEqual((await request('POST', '/api/sources/proxy/update', {profile_name:'fixture-profile', profile:{upstream_base_url:'https://api.example.test/v3',auth_mode:'passthrough'}})).status, 409);
 		assert.strictEqual(fs.readFileSync(PROXY, 'utf8'), '{malformed', 'malformed proxy config must not be overwritten');
 		fs.writeFileSync(PROXY, validProxy, {mode:0o600});
 		inventory = (await request('GET', '/api/sources')).json.data;
-		assert.strictEqual((await request('POST', '/api/sources/proxy/delete', {profile_name:'fixture-profile', revision:inventory.proxy_revision, retain_historical_telemetry:true})).status, 200, 'named proxy profiles must be deletable');
+		const deletedProfile = await request('POST', '/api/sources/proxy/delete', {profile_name:'fixture-profile', revision:inventory.proxy_revision, retain_historical_telemetry:true});
+		assert.strictEqual(deletedProfile.status, 200, deletedProfile.text + '\n' + server.output().slice(-2500));
 		assert.ok(!JSON.parse(fs.readFileSync(PROXY, 'utf8')).upstream_profiles['fixture-profile'], 'deleted proxy profile must be removed from configuration');
 		assert.strictEqual((await request('POST', '/proxy/v1/chat/completions', {model:'fixture',messages:[]}, TOKEN, {'X-Watchdog-Upstream-Profile':'fixture-profile'})).status, 400, 'deleted proxy profile must be rejected on the next request without restart');
 

@@ -9,7 +9,7 @@ the separate Exporters view.
 
 Source status is derived only from local configuration and accepted telemetry:
 
-- `active`: a matching accepted record was seen in the last five minutes;
+- `active`: the latest matching observation falls within the past five minutes. Watchdog compares canonical timestamps by instant, including their UTC offsets;
 - `stale`: a matching record exists, but not in the active window;
 - `pending`: configured or registered without matching accepted telemetry;
 - `disabled`: the local configuration is disabled;
@@ -36,8 +36,12 @@ Writes require normal Watchdog API authentication, validate bounded allowlisted
 fields, reject secret-bearing and policy-owned fields, use atomic replacement,
 and set the file to mode `0600`. Existing registry and proxy-config symlinks or
 non-regular files are refused. Mutations use the returned registry revision for
-optimistic conflict protection. A malformed valid-path file is reported and
-preserved rather than overwritten.
+optimistic conflict protection. Watchdog serializes revision checks and writes
+across server processes through an advisory lock beside each configuration file.
+The lock file ends in `.watchdog-config.lock` and should remain in place while
+Watchdog is running. A busy lock returns HTTP 503. Use the API to coordinate
+writes across instances. A malformed file is reported and preserved.
+Mutations that would exceed the 256 KiB UTF-8 file limit return HTTP 400.
 
 Deleting a registration removes metadata only. The request must acknowledge
 `retain_historical_telemetry: true`; telemetry stays subject to normal retention.
