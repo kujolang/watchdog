@@ -7,6 +7,7 @@ const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
 const ROOT = path.join(__dirname, '..');
+const openRouterCatalog = require('../config/openrouter_pricing_catalog.json');
 const TEMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-api-route-'));
 const DB_PATH = path.join(TEMP_ROOT, 'watchdog.db');
 const PORT = 17700;
@@ -254,7 +255,7 @@ async function run() {
 			assert.ok(trace.cached_input_cost_usd > 0);
 			assert.ok(trace.cache_write_input_cost_usd > 0);
 			assert.strictEqual(trace.pricing_kind, 'catalog');
-			assert.match(String(trace.pricing_source || ''), /^openrouter-public-catalog:2026-11-01/);
+			assert.strictEqual(trace.pricing_source, openRouterCatalog.models['anthropic/claude-sonnet-5'].pricing_source);
 			assert.strictEqual(trace.priced_model, 'anthropic/claude-sonnet-5');
 			assert.match(String(trace.attributes_json || ''), /"transport":"direct"/);
 		});

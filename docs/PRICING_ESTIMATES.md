@@ -65,6 +65,7 @@ Common `pricing_source` patterns:
 - `openrouter-public-catalog:2026-10-18`
 - `openrouter-public-catalog:2026-10-25`
 - `openrouter-public-catalog:2026-11-01`
+- `openrouter-public-catalog:2026-11-08`
 - `watchdog-fallback-estimate:v1`
 
 ## Reprice historical records

@@ -11,6 +11,10 @@ const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-reprice-'));
 const dbPath = path.join(tempRoot, 'watchdog.db');
 const providerCatalogPath = path.join(root, 'config', 'provider_pricing_catalog.json');
 const catalogPath = path.join(root, 'config', 'openrouter_pricing_catalog.json');
+const providerCatalog = JSON.parse(fs.readFileSync(providerCatalogPath, 'utf8'));
+const catalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
+const directPricingSource = catalog.models['openai/gpt-5.4'].pricing_source;
+const aliasPricingSource = catalog.aliases['~anthropic/claude-haiku-latest'].pricing_source;
 const scriptPath = path.join(root, 'scripts', 'reprice_watchdog_requests.js');
 
 const invalidLimit = spawnSync('node', [scriptPath, '--limit=not-a-number', '--source-app=ai-chat'], { encoding: 'utf8' });
@@ -106,7 +110,7 @@ VALUES
 const dryRun = JSON.parse(execFileSync('node', [scriptPath, `--db=${dbPath}`, `--provider-catalog=${providerCatalogPath}`, `--catalog=${catalogPath}`, '--source-app=ai-chat', '--models=openai/gpt-5.4,~anthropic/claude-haiku-latest', '--from-ms=1721260800000', '--until-ms=1721260801999'], { encoding: 'utf8' }));
 assert.equal(dryRun.dry_run, true);
 assert.equal(dryRun.candidate_rows, 2);
-assert.equal(dryRun.provider_catalog_id, 'watchdog-provider-catalog:2026-11-01');
+assert.equal(dryRun.provider_catalog_id, providerCatalog.catalog_id);
 assert.equal(sqlite('SELECT COUNT(*) AS n FROM pricing_reprice_runs', true)[0].n, 0, 'dry-run should not write audit rows');
 assert.equal(sqlite('SELECT pricing_kind FROM requests WHERE request_id = "req-1"', true)[0].pricing_kind, 'fallback', 'dry-run should not mutate requests');
 
@@ -116,7 +120,7 @@ assert.equal(applied.candidate_rows, 2);
 
 const req1 = sqlite('SELECT pricing_kind, pricing_source, priced_model, cost_usd, cached_input_rate_per_million FROM requests WHERE request_id = "req-1"', true)[0];
 assert.equal(req1.pricing_kind, 'catalog');
-assert.match(String(req1.pricing_source), /^openrouter-public-catalog:2026-11-01/);
+assert.equal(req1.pricing_source, directPricingSource);
 assert.equal(req1.priced_model, 'openai/gpt-5.4');
 assert.equal(Number(req1.cached_input_rate_per_million), 0.25);
 
@@ -140,7 +144,7 @@ assert.equal(Number(providerReported.cost_usd), 9.999);
 const auditRun = sqlite('SELECT candidate_count, applied_change_count, pricing_source FROM pricing_reprice_runs', true)[0];
 assert.equal(auditRun.candidate_count, 2);
 assert.equal(auditRun.applied_change_count, 2);
-assert.deepStrictEqual(JSON.parse(auditRun.pricing_source), ['openrouter-public-catalog:2026-11-01', 'openrouter-public-catalog:2026-11-01#alias'], 'reprice audit should record the sources actually applied');
+assert.deepStrictEqual(JSON.parse(auditRun.pricing_source), [directPricingSource, aliasPricingSource].sort(), 'reprice audit should record the sources actually applied');
 assert.equal(sqlite('SELECT COUNT(*) AS n FROM pricing_reprice_changes', true)[0].n, 2, 'applied reprices should be auditable');
 
 console.log('reprice_workflow_check: PASS');
