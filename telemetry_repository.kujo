@@ -1,3 +1,4 @@
+from telemetry_delivery import watchdog_delivery_enqueue_batch
 # Canonical Watchdog telemetry repository.
 #
 # This module owns structural validation and persistence only. Callers must apply
@@ -467,7 +468,7 @@ func repo_insert_batch_rows(db, batch, prepared) {
 	return {"ok": true, "error": "", "batch_dbid": batch_dbid, "records": inserted, "deduplicated": false}
 }
 
-func repo_insert_validated_batch(db, batch) {
+func repo_insert_validated_batch(db, batch, delivery_config) {
 	prepared := repo_prepare_records(batch)
 	db_execute(db, "BEGIN IMMEDIATE", [])
 	try {
@@ -477,6 +478,9 @@ func repo_insert_validated_batch(db, batch) {
 			return {"ok": false, "error": parent_error, "error_code": "invalid_semantics"}
 		}
 		result := repo_insert_batch_rows(db, batch, prepared)
+		if type(delivery_config) == "dict" && result["ok"] && result["deduplicated"] == false {
+			result["delivery"] = watchdog_delivery_enqueue_batch(db, delivery_config["profiles"], result["batch_dbid"], delivery_config["max_records"], delivery_config["max_bytes"])
+		}
 		db_execute(db, "COMMIT", [])
 		return result
 	} except err {
@@ -485,21 +489,26 @@ func repo_insert_validated_batch(db, batch) {
 	}
 }
 
-func repo_insert_batch(db, batch) {
+func repo_insert_batch_with_delivery(db, batch, delivery_config) {
 	validation := repo_validate_batch(batch)
 	if validation["ok"] == false { return validation }
-	return repo_insert_validated_batch(db, batch)
+	return repo_insert_validated_batch(db, batch, delivery_config)
+}
+
+func repo_insert_batch(db, batch) {
+	return repo_insert_batch_with_delivery(db, batch, null)
 }
 
 func repo_insert_batch_fast(db, batch) {
 	validation := repo_validate_batch(batch)
 	if validation["ok"] == false { return validation }
 	if len(batch["records"]) != 1 { return {"ok": false, "error": "fast repository path requires exactly one record"} }
-	return repo_insert_validated_batch(db, batch)
+	return repo_insert_validated_batch(db, batch, null)
 }
 
 export watchdog_telemetry_repository_validate := repo_validate_batch
 export watchdog_telemetry_repository_insert := repo_insert_batch
+export watchdog_telemetry_repository_insert_with_delivery := repo_insert_batch_with_delivery
 export watchdog_telemetry_repository_insert_fast := repo_insert_batch_fast
 export watchdog_telemetry_repository_canonical_json := repo_canonical_json
 export watchdog_telemetry_repository_record_hash := repo_record_hash

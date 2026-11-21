@@ -129,11 +129,23 @@ async function run() {
 			record.privacy.content_mode = 'full';
 			return record;
 		});
+		const queueDb = new DatabaseSync(dbPath);
+		try {
+			queueDb.exec(`CREATE TRIGGER block_delivery_fixture BEFORE INSERT ON telemetry_export_deliveries
+				WHEN NEW.profile_id = 'retry' BEGIN SELECT RAISE(ABORT, 'fixture journal write failed'); END;`);
+			const aborted = await request('POST', '/telemetry/v2/batches', batch);
+			assert.strictEqual(aborted.status, 500, aborted.body);
+			for (const table of ['telemetry_batches_v2', 'telemetry_records_v2', 'telemetry_export_deliveries']) {
+				assert.strictEqual(queueDb.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, `${table} retained a partial write`);
+			}
+			queueDb.exec('DROP TRIGGER block_delivery_fixture');
+		} finally { queueDb.close(); }
 		const intake = await request('POST', '/telemetry/v2/batches', batch);
 		assert.strictEqual(intake.status, 200, intake.body);
-		const queueDb = new DatabaseSync(dbPath);
-		queueDb.prepare("UPDATE telemetry_export_deliveries SET created_at_ms = ? WHERE profile_id = 'expired'").run(Date.now() - 120_000);
-		queueDb.close();
+		assert.strictEqual(JSON.parse(intake.body).data.deduplicated, false, 'retry must create the complete batch and its journal');
+		const expiryDb = new DatabaseSync(dbPath);
+		expiryDb.prepare("UPDATE telemetry_export_deliveries SET created_at_ms = ? WHERE profile_id = 'expired'").run(Date.now() - 120_000);
+		expiryDb.close();
 
 		const workerOutput = await runWorker();
 		assert.match(workerOutput, /"status":"sent"/);

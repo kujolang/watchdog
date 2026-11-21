@@ -17,7 +17,7 @@ from watchdog_shared import watchdog_cost_breakdown
 from watchdog_shared import watchdog_estimate_cost, watchdog_ensure_schema
 from watchdog_shared import watchdog_has_known_pricing
 from watchdog_shared import watchdog_cost_per_million
-from telemetry_repository import watchdog_telemetry_repository_insert
+from telemetry_repository import watchdog_telemetry_repository_insert_with_delivery
 from telemetry_repository import watchdog_telemetry_repository_validate
 from telemetry_v2 import watchdog_telemetry_v2_translate_v1
 from telemetry_v2 import watchdog_telemetry_v2_version
@@ -25,7 +25,6 @@ from telemetry_v2 import watchdog_telemetry_v2_canonical_id
 from telemetry_v2 import watchdog_telemetry_v2_status
 from telemetry_v2 import watchdog_telemetry_v2_timestamp
 from telemetry_v2 import watchdog_telemetry_v2_is_hex_id
-from telemetry_delivery import watchdog_delivery_enqueue_batch
 from telemetry_delivery import watchdog_delivery_load_profiles
 from telemetry_delivery import watchdog_delivery_profile_ids
 from telemetry_delivery import watchdog_delivery_status
@@ -1999,18 +1998,18 @@ func persist_approved_canonical_batch(approved) {
 			db_query(writer, "PRAGMA synchronous=NORMAL", [])
 			db_query(writer, "PRAGMA foreign_keys=ON", [])
 		}
-		result = watchdog_telemetry_repository_insert(writer, approved)
+		delivery_config := null
+		if len(EXPORTER_PROFILE_IDS) > 0 {
+			delivery_config = {"profiles": EXPORTER_PROFILE_IDS, "max_records": EXPORT_QUEUE_MAX_RECORDS, "max_bytes": EXPORT_QUEUE_MAX_BYTES}
+		}
+		result = watchdog_telemetry_repository_insert_with_delivery(writer, approved, delivery_config)
 		if owned_writer { db_close(writer) }
 	} except err {
 		if owned_writer { try { db_close(writer) } except close_err {} }
 		throw(err)
 	}
-	if result["ok"] && result["deduplicated"] == false && len(EXPORTER_PROFILE_IDS) > 0 {
-		delivery := watchdog_delivery_enqueue_batch(db, EXPORTER_PROFILE_IDS, result["batch_dbid"], EXPORT_QUEUE_MAX_RECORDS, EXPORT_QUEUE_MAX_BYTES)
-		result["delivery"] = delivery
-		if delivery["dropped"] > 0 {
-			insert_audit_event("telemetry_export_queue_drop", "system", "warning", delivery)
-		}
+	if has_key(result, "delivery") && result["delivery"]["dropped"] > 0 {
+		insert_audit_event("telemetry_export_queue_drop", "system", "warning", result["delivery"])
 	}
 	return result
 }

@@ -1,6 +1,6 @@
 # Telemetry exporters
 
-Watchdog exports policy-approved canonical telemetry through a bounded SQLite delivery journal. Ingestion only enqueues local references; remote latency and outages do not sit on the model/proxy request path. `export_worker.kujo` maps and sends due deliveries. Run it once from a scheduler or with `--watch` under a local supervisor.
+Watchdog exports policy-approved canonical telemetry through a bounded SQLite delivery journal. Canonical ingestion commits accepted records and their configured delivery references in one SQLite transaction. Ingestion only enqueues local references; remote latency and outages do not sit on the model/proxy request path. `export_worker.kujo` maps and sends due deliveries. Run it once from a scheduler or with `--watch` under a local supervisor.
 
 Copy `config/exporters.example.json` to an operator-owned path and set `WDG_EXPORTERS_CONFIG_PATH`. A profile has an independent ID, endpoint, mapping profile, retry state, and delivery row. Up to 16 enabled OTLP/HTTP profiles may run together. Watchdog supports OTLP/HTTP JSON; direct it to an OpenTelemetry Collector or a destination’s documented OTLP endpoint.
 
