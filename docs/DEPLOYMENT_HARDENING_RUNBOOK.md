@@ -114,7 +114,9 @@ curl -s http://127.0.0.1:7700/assets/vendor/chart.umd.min.js | head -c 80
 
 ## 4. Retention Tuning And Pruning
 
-Preview prune impact before delete:
+Prune reports counts from one SQLite snapshot. An applied prune commits all database changes together. A malformed request body returns HTTP 400.
+
+Preview the impact before applying the prune.
 
 ```bash
 curl -s -X POST http://127.0.0.1:7700/api/admin/prune \

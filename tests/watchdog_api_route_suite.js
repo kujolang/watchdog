@@ -403,6 +403,26 @@ async function run() {
 			assert.strictEqual(receipt.deduplicated, false);
 			assert.strictEqual(failures.prepare("SELECT request_dbid FROM traces WHERE trace_id = 'rollback-trace'").get().request_dbid, receipt.id);
 			assert.strictEqual((await httpPost('/api/telemetry/traces', traceOnly)).status, 200);
+
+			const before = Date.now() + 60000;
+			const preview = await httpPost('/api/admin/prune', {before_ms: before});
+			assert.strictEqual(preview.status, 200, preview.body);
+			assert.ok(parseJson(preview.body, 'prune dry run').data.affected.agent_steps > 0);
+			failures.exec("CREATE TRIGGER block_prune BEFORE DELETE ON requests BEGIN SELECT RAISE(ABORT, 'fixture prune write failed'); END");
+			const failedPrune = await httpPost('/api/admin/prune', {before_ms: before, dry_run: false});
+			assert.strictEqual(failedPrune.status, 500, failedPrune.body);
+			assert.strictEqual(failures.prepare("SELECT COUNT(*) AS n FROM agent_steps WHERE session_id = 'rollback-session'").get().n, 1);
+			assert.strictEqual(failures.prepare("SELECT COUNT(*) AS n FROM traces WHERE trace_id = 'rollback-trace'").get().n, 1);
+			failures.exec('DROP TRIGGER block_prune');
+
+			const invalid = await httpPost(`/api/admin/prune?before_ms=${before}&dry_run=false`, []);
+			assert.strictEqual(invalid.status, 400, invalid.body);
+			const clearFixtures = await httpPost('/api/admin/prune-fixtures', {dry_run: false});
+			assert.strictEqual(clearFixtures.status, 200, clearFixtures.body);
+			assert.strictEqual(parseJson(clearFixtures.body, 'fixture prune').data.dry_run, false);
+			assert.strictEqual(failures.prepare("SELECT COUNT(*) AS n FROM requests WHERE data_class = 'fixture'").get().n, 0);
+			assert.strictEqual(failures.prepare("SELECT COUNT(*) AS n FROM requests WHERE request_id = 'rollback-request'").get().n, 1);
+
 		} finally { failures.close(); }
 
 		console.log('watchdog_api_route_suite: PASS');
