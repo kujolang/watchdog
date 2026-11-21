@@ -1,8 +1,11 @@
 import {createHash, randomUUID} from 'node:crypto';
-import {mkdir, readdir, readFile, rename, rm, stat, writeFile} from 'node:fs/promises';
+import {constants} from 'node:fs';
+import {lstat, mkdir, open, readdir, rename, rm} from 'node:fs/promises';
 import {join} from 'node:path';
 
 const SCHEMA_VERSION = 'watchdog.telemetry.v2';
+const MAX_BATCH_BYTES = 512 * 1024;
+const SPOOL_FILENAME = /^\d{13}-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.json$/;
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_FILES = 1000;
 const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -13,11 +16,11 @@ function boundedInt(value, fallback, min, max) {
 }
 
 function endpointUrl(baseUrl) {
-	const url = new URL('/telemetry/v2/batches', String(baseUrl));
+	const url = new URL(String(baseUrl));
 	if (url.username || url.password || url.search || url.hash) throw new Error('Watchdog telemetry endpoint cannot contain credentials, query, or fragment');
 	const loopback = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(url.hostname);
 	if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) throw new Error('Watchdog telemetry requires HTTPS or explicit loopback HTTP');
-	return url;
+	return new URL('/telemetry/v2/batches', url);
 }
 
 function metadataOnlyBatch(input) {
@@ -52,46 +55,70 @@ class DurableSpool {
 	}
 
 	async files() {
-		const names = await readdir(this.directory).catch(() => []);
-		return names.filter((name) => name.endsWith('.json')).sort();
+		const entries = await readdir(this.directory, {withFileTypes: true});
+		return entries.filter((entry) => entry.isFile() && SPOOL_FILENAME.test(entry.name))
+			.map((entry) => entry.name).sort();
 	}
 
 	async append(batch) {
 		const operation = async () => {
-			await this.initialize();
 			const encoded = JSON.stringify(batch);
-			if (Buffer.byteLength(encoded) > 512 * 1024) throw new Error('Telemetry batch exceeds 512 KiB client spool bound');
+			const bytes = Buffer.byteLength(encoded);
+			if (bytes > MAX_BATCH_BYTES) throw new Error('Telemetry batch exceeds 512 KiB client spool bound');
+			if (bytes > this.maxBytes) throw new Error('Telemetry batch exceeds configured spool byte limit');
+			await mkdir(this.directory, {recursive: true, mode: 0o700});
 			const name = `${String(Date.now()).padStart(13, '0')}-${randomUUID()}.json`;
 			const finalPath = join(this.directory, name);
 			const tempPath = `${finalPath}.${randomUUID()}.tmp`;
-			await writeFile(tempPath, encoded, {mode: 0o600, flag: 'wx'});
-			await rename(tempPath, finalPath);
-			await this.enforceBounds();
+			const file = await open(tempPath, 'wx', 0o600);
+			try {
+				try {
+					await file.writeFile(encoded);
+				} finally {
+					await file.close();
+				}
+				await rename(tempPath, finalPath);
+			} catch (error) {
+				await rm(tempPath, {force: true});
+				throw error;
+			}
+			await this.enforceBounds(name);
 			return finalPath;
 		};
-		this.writeChain = this.writeChain.then(operation, operation);
-		return this.writeChain;
+		const result = this.writeChain.then(operation);
+		// Track completion for later operations. The submitter still sees a write error.
+		this.writeChain = result.catch(() => {});
+		return result;
 	}
 
-	async enforceBounds() {
+	async enforceBounds(newestName) {
 		const now = Date.now();
 		const entries = [];
+		let newestEntry;
 		for (const name of await this.files()) {
 			const path = join(this.directory, name);
-			const details = await stat(path).catch(() => null);
-			if (!details) continue;
-			if (now - details.mtimeMs > this.maxAgeMs) {
-				await rm(path, {force: true});
-				continue;
+			let details;
+			try {
+				details = await lstat(path);
+			} catch (error) {
+				if (error.code === 'ENOENT') continue;
+				throw error;
 			}
-			entries.push({name, path, size: details.size});
+			if (!details.isFile()) continue;
+			const entry = {path, size: details.size};
+			if (name === newestName) {
+				newestEntry = entry;
+			} else if (now - details.mtimeMs > this.maxAgeMs) {
+				await rm(path, {force: true});
+			} else {
+				entries.push(entry);
+			}
 		}
+		if (newestEntry) entries.push(newestEntry);
 		let bytes = entries.reduce((total, entry) => total + entry.size, 0);
-		while (entries.length > this.maxFiles || bytes > this.maxBytes) {
-			const oldest = entries.shift();
-			if (!oldest) break;
-			bytes -= oldest.size;
-			await rm(oldest.path, {force: true});
+		for (let i = 0; entries.length - i > this.maxFiles || bytes > this.maxBytes; i++) {
+			bytes -= entries[i].size;
+			await rm(entries[i].path, {force: true});
 		}
 	}
 }
@@ -134,8 +161,25 @@ export function createWatchdogTelemetryClient(options = {}) {
 		let retained = 0;
 		for (const name of await spool.files()) {
 			const path = join(spool.directory, name);
+			let text;
+			try {
+				const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+				try {
+					if (!(await file.stat()).isFile()) continue;
+					text = await file.readFile('utf8');
+				} finally {
+					await file.close();
+				}
+			} catch (error) {
+				if (error.code === 'ENOENT' || error.code === 'ELOOP') continue;
+				throw error;
+			}
 			let batch;
-			try { batch = JSON.parse(await readFile(path, 'utf8')); } catch { await rm(path, {force: true}); continue; }
+			try { batch = JSON.parse(text); } catch (error) {
+				if (!(error instanceof SyntaxError)) throw error;
+				await rm(path, {force: true});
+				continue;
+			}
 			const result = await send(batch);
 			if (result.ok) { await rm(path, {force: true}); sent += 1; continue; }
 			if (!result.retryable) { await rm(path, {force: true}); continue; }

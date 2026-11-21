@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {mkdtemp, readFile, rm} from 'node:fs/promises';
+import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createWatchdogTelemetryClient} from '../clients/javascript/watchdog-telemetry.mjs';
@@ -46,6 +46,35 @@ try {
 	assert.equal(batch.records[0].content[0].value, 'private-content', 'caller input mutated');
 	assert.deepEqual(batch.producer, original.producer);
 	assert.deepEqual(await client.flush(), {sent: 0, retained: 0}, 'completed flush was not reset');
+	for (const baseUrl of ['https://example.test?token=discarded', 'https://example.test/#fragment']) {
+		assert.throws(() => createWatchdogTelemetryClient({baseUrl}), /credentials, query, or fragment/);
+	}
+
+	const bounded = createWatchdogTelemetryClient({spoolDirectory: join(temp, 'bounded'), maxSpoolBytes: 2048, maxSpoolFiles: 1});
+	globalThis.fetch = async () => { throw new Error('offline fixture'); };
+	const firstBatch = {...original, batch_id: 'first'};
+	const secondBatch = {...original, batch_id: 'second'};
+	const originalNow = Date.now;
+	try {
+		Date.now = () => 1795248000000;
+		await bounded.submit(firstBatch);
+		assert.equal((await bounded.submit(secondBatch)).spooled, true);
+	} finally { Date.now = originalNow; }
+	const [queued] = await bounded.spool.files();
+	assert.equal(JSON.parse(await readFile(join(bounded.spool.directory, queued), 'utf8')).batch_id, 'second');
+	const unrelated = join(bounded.spool.directory, 'operator.json');
+	await writeFile(unrelated, '{"keep":true}');
+	const oversized = structuredClone(original);
+	oversized.records[0].attributes = {fixture: 'x'.repeat(2048)};
+	await assert.rejects(bounded.submit(oversized), /configured spool byte limit/);
+	assert.deepEqual(await bounded.spool.files(), [queued]);
+	globalThis.fetch = async () => ({ok: true, status: 200});
+	assert.deepEqual(await bounded.flush(), {sent: 1, retained: 0}, 'failed append poisoned subsequent flush');
+	assert.equal(await readFile(unrelated, 'utf8'), '{"keep":true}');
+
+	const unavailable = createWatchdogTelemetryClient({spoolDirectory: join(temp, 'unavailable')});
+	await writeFile(join(temp, 'unavailable'), 'operator data');
+	await assert.rejects(unavailable.flush(), {code: 'ENOTDIR'});
 	console.log('shared_client_lifecycle_check: PASS');
 } finally {
 	globalThis.fetch = originalFetch;
