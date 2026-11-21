@@ -367,8 +367,8 @@ The guarded trace receiver is `POST /telemetry/v2/otlp/v1/traces`. It accepts OT
 
 ## Rate limiting
 
-- `WDG_RATE_LIMIT_MODE=basic` enables lightweight SQLite-backed throttling for both Watchdog API routes and proxy routes. Persisted buckets avoid concurrent dashboard requests corrupting shared process state.
-- Buckets are keyed by `X-Observe-Session-Id` when present, otherwise by forwarded IP/host fallbacks.
+- `WDG_RATE_LIMIT_MODE=basic` enables lightweight SQLite-backed throttling for both Watchdog API routes and proxy routes. Listeners sharing a database atomically count requests against the same persisted buckets.
+- Buckets are keyed by `X-Observe-Session-Id` when present, otherwise by forwarded IP/host fallbacks. These values are caller-provided. Apply an independent edge limit for untrusted traffic.
 - Use `WDG_RATE_LIMIT_MAX_REQUESTS` and `WDG_RATE_LIMIT_WINDOW_SECS` to tune burst tolerance for your environment.
 - Use `WDG_RATE_LIMIT_MAX_BUCKETS` and `WDG_RATE_LIMIT_BUCKET_TTL_SECS` to bound limiter memory and evict stale buckets in long-running deployments.
 

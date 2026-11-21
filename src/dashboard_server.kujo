@@ -883,79 +883,44 @@ func rate_limit_key(req) {
 	return "anonymous"
 }
 
-func normalize_rate_limit_buckets(now_ms) {
-	ttl_ms := RATE_LIMIT_BUCKET_TTL_SECS * 1000
-	db_execute(db, "DELETE FROM rate_limit_buckets WHERE last_seen_ms < ?", [now_ms - ttl_ms])
+func rate_limit_count(writer, bucket_key) {
+	db_execute(writer, "BEGIN IMMEDIATE", [])
+	try {
+		now_ms := current_timestamp()
+		db_execute(writer, "DELETE FROM rate_limit_buckets WHERE last_seen_ms < ?", [now_ms - RATE_LIMIT_BUCKET_TTL_SECS * 1000])
+		window_cutoff := now_ms - RATE_LIMIT_WINDOW_SECS * 1000
+		rows := db_query(writer, "INSERT INTO rate_limit_buckets (bucket_key, window_start_ms, request_count, last_seen_ms) VALUES (?, ?, 1, ?) ON CONFLICT(bucket_key) DO UPDATE SET request_count = CASE WHEN window_start_ms <= ? THEN 1 ELSE request_count + 1 END, window_start_ms = CASE WHEN window_start_ms <= ? THEN excluded.window_start_ms ELSE window_start_ms END, last_seen_ms = excluded.last_seen_ms RETURNING request_count", [bucket_key, now_ms, now_ms, window_cutoff, window_cutoff])
+		count := rows[0]["request_count"]
+		if count == 1 && RATE_LIMIT_MAX_BUCKETS > 0 {
+			db_execute(writer, "DELETE FROM rate_limit_buckets WHERE bucket_key IN (SELECT bucket_key FROM rate_limit_buckets WHERE bucket_key <> ? ORDER BY last_seen_ms ASC, bucket_key ASC LIMIT (SELECT MAX(0, COUNT(*) - ?) FROM rate_limit_buckets))", [bucket_key, RATE_LIMIT_MAX_BUCKETS])
+		}
+		db_execute(writer, "COMMIT", [])
+		return count
+	} except err {
+		try { db_execute(writer, "ROLLBACK", []) } except rollback_err {}
+		throw(err)
+	}
 }
 
 func check_rate_limit(req) {
-	if RATE_LIMIT_MODE != "basic" {
-		return {
-			"allowed": true,
-			"status": 200,
-			"error": ""
-		}
+	if RATE_LIMIT_MODE != "basic" || RATE_LIMIT_MAX_REQUESTS <= 0 {
+		return {"allowed": true, "status": 200, "error": ""}
 	}
 
-	if RATE_LIMIT_MAX_REQUESTS <= 0 {
-		return {
-			"allowed": true,
-			"status": 200,
-			"error": ""
-		}
+	writer := open_storage_writer()
+	count := 0
+	try {
+		count = rate_limit_count(writer, rate_limit_key(req))
+	} except err {
+		if DB_PATH != ":memory:" { try { db_close(writer) } except close_err {} }
+		throw(err)
 	}
+	if DB_PATH != ":memory:" { db_close(writer) }
 
-	window_ms := RATE_LIMIT_WINDOW_SECS * 1000
-	now_ms := current_timestamp()
-	normalize_rate_limit_buckets(now_ms)
-	bucket_key := rate_limit_key(req)
-	bucket_rows := db_query(db, "SELECT window_start_ms, request_count FROM rate_limit_buckets WHERE bucket_key = ? LIMIT 1", [bucket_key])
-
-	if len(bucket_rows) == 0 {
-		if RATE_LIMIT_MAX_BUCKETS > 0 {
-			count_rows := db_query(db, "SELECT COUNT(*) AS n FROM rate_limit_buckets", [])
-			bucket_count := to_int_or_zero(count_rows[0]["n"])
-			while bucket_count >= RATE_LIMIT_MAX_BUCKETS {
-				db_execute(db, "DELETE FROM rate_limit_buckets WHERE bucket_key = (SELECT bucket_key FROM rate_limit_buckets ORDER BY last_seen_ms ASC, bucket_key ASC LIMIT 1)", [])
-				bucket_count := bucket_count - 1
-			}
-		}
-		db_execute(db, "INSERT OR REPLACE INTO rate_limit_buckets (bucket_key, window_start_ms, request_count, last_seen_ms) VALUES (?, ?, ?, ?)", [bucket_key, now_ms, 1, now_ms])
-		return {
-			"allowed": true,
-			"status": 200,
-			"error": ""
-		}
+	if count > RATE_LIMIT_MAX_REQUESTS {
+		return {"allowed": false, "status": 429, "error": "Too Many Requests: rate limit exceeded."}
 	}
-
-	bucket := bucket_rows[0]
-	window_start := to_int_or_zero(safe_dict_get(bucket, "window_start_ms", now_ms))
-	count := to_int_or_zero(safe_dict_get(bucket, "request_count", 0))
-	if now_ms - window_start >= window_ms {
-		db_execute(db, "INSERT OR REPLACE INTO rate_limit_buckets (bucket_key, window_start_ms, request_count, last_seen_ms) VALUES (?, ?, ?, ?)", [bucket_key, now_ms, 1, now_ms])
-		return {
-			"allowed": true,
-			"status": 200,
-			"error": ""
-		}
-	}
-
-	next_count := count + 1
-	db_execute(db, "INSERT OR REPLACE INTO rate_limit_buckets (bucket_key, window_start_ms, request_count, last_seen_ms) VALUES (?, ?, ?, ?)", [bucket_key, window_start, next_count, now_ms])
-
-	if next_count > RATE_LIMIT_MAX_REQUESTS {
-		return {
-			"allowed": false,
-			"status": 429,
-			"error": "Too Many Requests: rate limit exceeded."
-		}
-	}
-
-	return {
-		"allowed": true,
-		"status": 200,
-		"error": ""
-	}
+	return {"allowed": true, "status": 200, "error": ""}
 }
 
 func enforce_rate_limit(req) {

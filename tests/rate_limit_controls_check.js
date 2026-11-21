@@ -3,6 +3,7 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const {DatabaseSync} = require('node:sqlite');
 const { spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
@@ -173,6 +174,33 @@ async function runRateLimitOnScenario(upstreamPort, tempDir) {
 	}
 }
 
+async function runSharedDatabaseScenario(upstreamPort, tempDir) {
+	const dbPath = path.join(tempDir, 'rate-limit-shared.db');
+	const cfgPath = path.join(tempDir, 'rate-limit-shared-config.json');
+	writeProxyConfig(cfgPath, upstreamPort);
+	const ports = [7757, 7758];
+	const config = {
+		WDG_RATE_LIMIT_MODE: 'basic',
+		WDG_RATE_LIMIT_MAX_REQUESTS: '5',
+		WDG_RATE_LIMIT_WINDOW_SECS: '30',
+		WDG_BACKUP_ENABLED: 'false',
+	};
+	const servers = [];
+	try {
+		for (const port of ports) servers.push(await startWatchdog(port, dbPath, cfgPath, config));
+		const results = await Promise.all(Array.from({length: 40}, (_, index) =>
+			httpRequest(ports[index % ports.length], 'GET', '/api/stats', {'X-Observe-Session-Id': 'shared-bucket'})));
+		assert.strictEqual(results.filter(result => result.status === 200).length, 5, 'both listeners must share exactly one quota');
+		assert.strictEqual(results.filter(result => result.status === 429).length, 35, 'every excess request must be throttled');
+		const db = new DatabaseSync(dbPath, {readOnly: true});
+		try {
+			assert.strictEqual(db.prepare("SELECT request_count FROM rate_limit_buckets WHERE bucket_key = 'session:shared-bucket'").get().request_count, 40);
+		} finally { db.close(); }
+	} finally {
+		await Promise.all(servers.map(server => stopWatchdog(server.child)));
+	}
+}
+
 async function runRateLimitResetScenario(upstreamPort, tempDir) {
 	const port = 7753;
 	const dbPath = path.join(tempDir, 'rate-limit-reset.db');
@@ -230,6 +258,7 @@ async function run() {
 	try {
 		stub = await startStub(upstreamPort);
 		await runRateLimitOnScenario(upstreamPort, tempDir);
+		await runSharedDatabaseScenario(upstreamPort, tempDir);
 		await runRateLimitResetScenario(upstreamPort, tempDir);
 		await runRateLimitOffScenario(upstreamPort, tempDir);
 		console.log('rate_limit_controls_check: PASS');
