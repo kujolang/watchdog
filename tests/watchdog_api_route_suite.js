@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { DatabaseSync } = require('node:sqlite');
 
 const ROOT = path.join(__dirname, '..');
 const TEMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-api-route-'));
@@ -347,6 +348,32 @@ async function run() {
 			assert.ok(Array.isArray(data.trace_spans), 'export.trace_spans should be array');
 			assert.ok(Array.isArray(data.trace_events), 'export.trace_events should be array');
 		});
+
+		const repeated = Array.from({length: 6}, (_, index) => ({
+			source_app: 'concurrent-client', request_id: `request-${index}`, session_id: 'concurrent-session',
+			agent_steps: [{step_type: 'completed', title: `completed ${index}`}]
+		}));
+		const receipts = await Promise.all([...repeated, ...repeated].map(async item => {
+			const reply = await httpPost('/api/telemetry/requests', item);
+			assert.strictEqual(reply.status, 200, reply.body);
+			return parseJson(reply.body, 'concurrent intake').data;
+		}));
+		assert.strictEqual(receipts.filter(result => !result.deduplicated).length, repeated.length);
+		const persisted = new DatabaseSync(DB_PATH, {readOnly: true});
+		try {
+			const requests = persisted.prepare('SELECT id, request_id FROM requests WHERE session_id = ? ORDER BY request_id').all('concurrent-session');
+			assert.deepStrictEqual(requests.map(row => row.request_id), repeated.map(item => item.request_id));
+			for (let index = 0; index < requests.length; index++) {
+				assert.strictEqual(receipts[index].id, requests[index].id);
+				assert.strictEqual(receipts[index + repeated.length].id, requests[index].id);
+			}
+			const steps = persisted.prepare('SELECT step_number, content, metadata FROM agent_steps WHERE session_id = ? ORDER BY step_number').all('concurrent-session');
+			assert.deepStrictEqual(steps.map(row => row.step_number), [1, 2, 3, 4, 5, 6]);
+			for (const row of steps) {
+				const index = Number(row.content.split(' ').at(-1));
+				assert.strictEqual(JSON.parse(row.metadata).request_dbid, requests[index].id);
+			}
+		} finally { persisted.close(); }
 
 		console.log('watchdog_api_route_suite: PASS');
 	} finally {

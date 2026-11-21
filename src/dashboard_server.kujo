@@ -19,7 +19,6 @@ from watchdog_shared import watchdog_has_known_pricing
 from watchdog_shared import watchdog_cost_per_million
 from telemetry_repository import watchdog_telemetry_repository_insert
 from telemetry_repository import watchdog_telemetry_repository_validate
-from telemetry_repository import watchdog_telemetry_repository_insert_fast
 from telemetry_v2 import watchdog_telemetry_v2_translate_v1
 from telemetry_v2 import watchdog_telemetry_v2_version
 from telemetry_v2 import watchdog_telemetry_v2_canonical_id
@@ -1601,9 +1600,7 @@ func insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id,
 	clean_error_message := redact_sensitive_text(error_message)
 	clean_prompt_summary := redact_sensitive_text(prompt_summary)
 	clean_response_summary := redact_sensitive_text(response_summary)
-	db_execute(db, "INSERT INTO requests (session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, clean_error_message, clean_prompt_summary, clean_response_summary, source_app, "live", ts])
-
-	rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
+	rows := db_query(db, "INSERT INTO requests (session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id", [session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, clean_error_message, clean_prompt_summary, clean_response_summary, source_app, "live", ts])
 	if len(rows) > 0 {
 		return rows[0]["id"]
 	}
@@ -1627,16 +1624,11 @@ func insert_tool_call_row(request_dbid, session_id, tool_name, tool_args, tool_r
 	db_execute(db, "INSERT INTO tool_calls (request_dbid, session_id, tool_name, tool_args, tool_result, status, latency_ms, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", [request_dbid, session_id, tool_name, args_str, result_str, status, latency_ms, "watchdog-proxy", "live", ts])
 }
 
-func next_step_number(session_id) {
-	rows := db_query(db, "SELECT COALESCE(MAX(step_number), 0) AS n FROM agent_steps WHERE session_id = ?", [session_id])
-	if len(rows) == 0 {
-		return 1
-	}
-	return to_int_or_zero(rows[0]["n"]) + 1
+func append_agent_step(session_id, agent_id, step_type, content, metadata, source_app, data_class, created_at) {
+	db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) SELECT ?, ?, COALESCE(MAX(step_number), 0) + 1, ?, ?, ?, ?, ?, ? FROM agent_steps WHERE session_id = ?", [session_id, agent_id, step_type, content, metadata, source_app, data_class, created_at, session_id])
 }
 
 func insert_agent_step_row(session_id, agent_id, step_type, content, metadata) {
-	step_number := next_step_number(session_id)
 	ts := to_string(current_timestamp())
 	meta_str := metadata
 	if type(metadata) == "dict" {
@@ -1645,7 +1637,7 @@ func insert_agent_step_row(session_id, agent_id, step_type, content, metadata) {
 		meta_str := redact_sensitive_text(meta_str)
 	}
 	clean_content := truncate_str(redact_sensitive_text(content), 500)
-	db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?)", [session_id, agent_id, step_number, step_type, clean_content, meta_str, "watchdog-proxy", "live", ts])
+	append_agent_step(session_id, agent_id, step_type, clean_content, meta_str, "watchdog-proxy", "live", ts)
 }
 
 func external_text(body, key, fallback_value, max_len) {
@@ -2023,14 +2015,6 @@ func persist_approved_canonical_batch(approved) {
 	return result
 }
 
-func persist_fast_approved_canonical_batch(approved) {
-	result := watchdog_telemetry_repository_insert_fast(db, approved)
-	if result["ok"] && result["deduplicated"] == false && len(EXPORTER_PROFILE_IDS) > 0 {
-		result["delivery"] = watchdog_delivery_enqueue_batch(db, EXPORTER_PROFILE_IDS, result["batch_dbid"], EXPORT_QUEUE_MAX_RECORDS, EXPORT_QUEUE_MAX_BYTES)
-	}
-	return result
-}
-
 # Earlier OTLP adapters used receive time as observed_at. Preserve that one
 # field when replaying existing identities; every other field still conflicts
 # normally. One bounded lookup avoids a query per span.
@@ -2339,9 +2323,8 @@ func insert_external_agent_steps(request_dbid, body, source_app, session_id) {
 			"result": safe_dict_get(step, "result", {}),
 			"usage": safe_dict_get(step, "usage", {})
 		}
-		step_number := next_step_number(session_id)
 		ts := to_string(current_timestamp())
-		db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?)", [session_id, agent_id, step_number, step_type, content, to_json(redact_dict_shallow(metadata)), source_app, "external", ts])
+		append_agent_step(session_id, agent_id, step_type, content, to_json(redact_dict_shallow(metadata)), source_app, "external", ts)
 		step_count = step_count + 1
 	}
 
@@ -2364,9 +2347,8 @@ func insert_external_derived_agent_steps(request_dbid, body, source_app, session
 			if event_name != "thread_started" {
 				continue
 			}
-			step_number := next_step_number(session_id)
 			ts := to_string(current_timestamp())
-			db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?)", [session_id, agent_id, step_number, "thread_started", "Thread started", to_json({"request_dbid": request_dbid, "task_id": task_id, "correlation_id": correlation_id, "event_name": event_name}), source_app, "external", ts])
+			append_agent_step(session_id, agent_id, "thread_started", "Thread started", to_json({"request_dbid": request_dbid, "task_id": task_id, "correlation_id": correlation_id, "event_name": event_name}), source_app, "external", ts)
 			step_count = step_count + 1
 		}
 	}
@@ -2388,9 +2370,8 @@ func insert_external_derived_agent_steps(request_dbid, body, source_app, session
 				"result": truncate_str(to_string(tool_row["tool_result"]), 8000),
 				"latency_ms": to_int_or_zero(tool_row["latency_ms"])
 			}
-			step_number := next_step_number(session_id)
 			ts := to_string(current_timestamp())
-			db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?)", [session_id, agent_id, step_number, step_type, content, to_json(redact_dict_shallow(metadata)), source_app, "external", ts])
+			append_agent_step(session_id, agent_id, step_type, content, to_json(redact_dict_shallow(metadata)), source_app, "external", ts)
 			step_count = step_count + 1
 		}
 	}
@@ -2405,7 +2386,7 @@ func insert_external_request(body) {
 		return {"ok": false, "error": "request_id is required"}
 	}
 
-	existing := db_query(db, "SELECT id FROM requests WHERE source_app = ? AND request_id = ? LIMIT 1", [source_app, request_id])
+	existing := db_query(db, "SELECT id FROM requests WHERE source_app = ? AND request_id = ? ORDER BY id ASC LIMIT 1", [source_app, request_id])
 	if len(existing) > 0 {
 		return {"ok": true, "id": existing[0]["id"], "deduplicated": true}
 	}
@@ -2438,12 +2419,13 @@ func insert_external_request(body) {
 	latency_ms := to_int_or_zero(safe_dict_get(body, "latency_ms", 0))
 	ts := to_string(current_timestamp())
 
-	db_execute(db, "INSERT INTO requests (session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cached_input_tokens, cache_write_input_tokens, cost_usd, input_cost_usd, output_cost_usd, cached_input_cost_usd, cache_write_input_cost_usd, input_rate_per_million, output_rate_per_million, cached_input_rate_per_million, cache_write_input_rate_per_million, pricing_source, pricing_kind, priced_model, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [external_text(body, "session_id", request_id, 160), external_text(body, "user_id", "", 120), external_text(body, "tenant_id", "", 120), external_text(body, "project_id", "", 120), external_text(body, "workflow_id", "", 120), external_text(body, "task_id", "", 160), external_text(body, "correlation_id", "", 160), external_text(body, "provider", "external", 160), model_name, request_id, status, input_tokens, output_tokens, total_tokens, cached_input_tokens, cache_write_input_tokens, cost_usd, pricing["input_cost_usd"], pricing["output_cost_usd"], pricing["cached_input_cost_usd"], pricing["cache_write_input_cost_usd"], pricing["input_rate_per_million"], pricing["output_rate_per_million"], pricing["cached_input_rate_per_million"], pricing["cache_write_input_rate_per_million"], pricing["pricing_source"], pricing["pricing_kind"], pricing["priced_model"], latency_ms, external_text(body, "finish_reason", "", 80), external_text(body, "error_code", "", 80), external_text(body, "error_message", "", 500), external_text(body, "prompt_summary", "", 500), external_text(body, "response_summary", "", 500), source_app, "external", ts])
-	rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
-	request_dbid := 0
-	if len(rows) > 0 {
-		request_dbid := rows[0]["id"]
+	rows := db_query(db, "INSERT INTO requests (session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cached_input_tokens, cache_write_input_tokens, cost_usd, input_cost_usd, output_cost_usd, cached_input_cost_usd, cache_write_input_cost_usd, input_rate_per_million, output_rate_per_million, cached_input_rate_per_million, cache_write_input_rate_per_million, pricing_source, pricing_kind, priced_model, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, source_app, data_class, created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM requests WHERE source_app = ? AND request_id = ?) RETURNING id", [external_text(body, "session_id", request_id, 160), external_text(body, "user_id", "", 120), external_text(body, "tenant_id", "", 120), external_text(body, "project_id", "", 120), external_text(body, "workflow_id", "", 120), external_text(body, "task_id", "", 160), external_text(body, "correlation_id", "", 160), external_text(body, "provider", "external", 160), model_name, request_id, status, input_tokens, output_tokens, total_tokens, cached_input_tokens, cache_write_input_tokens, cost_usd, pricing["input_cost_usd"], pricing["output_cost_usd"], pricing["cached_input_cost_usd"], pricing["cache_write_input_cost_usd"], pricing["input_rate_per_million"], pricing["output_rate_per_million"], pricing["cached_input_rate_per_million"], pricing["cache_write_input_rate_per_million"], pricing["pricing_source"], pricing["pricing_kind"], pricing["priced_model"], latency_ms, external_text(body, "finish_reason", "", 80), external_text(body, "error_code", "", 80), external_text(body, "error_message", "", 500), external_text(body, "prompt_summary", "", 500), external_text(body, "response_summary", "", 500), source_app, "external", ts, source_app, request_id])
+	if len(rows) == 0 {
+		existing = db_query(db, "SELECT id FROM requests WHERE source_app = ? AND request_id = ? ORDER BY id ASC LIMIT 1", [source_app, request_id])
+		if len(existing) == 0 { throw("external request disappeared during deduplication") }
+		return {"ok": true, "id": existing[0]["id"], "deduplicated": true}
 	}
+	request_dbid := rows[0]["id"]
 
 	session_id := external_text(body, "session_id", request_id, 160)
 	explicit_step_count := insert_external_agent_steps(request_dbid, body, source_app, session_id)
@@ -2464,8 +2446,7 @@ func insert_external_request(body) {
 				fallback_content = truncate_str(redact_sensitive_text(first_tool_name + " completed"), 500)
 			}
 		}
-		step_number := next_step_number(session_id)
-		db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?)", [session_id, external_text(body, "agent_id", source_app, 120), step_number, fallback_step_type, fallback_content, to_json({"request_dbid": request_dbid, "task_id": external_text(body, "task_id", "", 160), "correlation_id": external_text(body, "correlation_id", "", 160)}), source_app, "external", ts])
+		append_agent_step(session_id, external_text(body, "agent_id", source_app, 120), fallback_step_type, fallback_content, to_json({"request_dbid": request_dbid, "task_id": external_text(body, "task_id", "", 160), "correlation_id": external_text(body, "correlation_id", "", 160)}), source_app, "external", ts)
 	}
 	return {"ok": true, "id": request_dbid, "deduplicated": false, "trace": trace_result}
 }
@@ -2793,8 +2774,6 @@ func create_backup_run(trigger_type) {
 	if settings["encryption_enabled"] && BACKUP_ENCRYPTION_KEY_FILE == "" {
 		error_message := "Backup encryption is enabled but WDG_BACKUP_ENCRYPTION_KEY_FILE is not configured"
 		db_execute(db, "INSERT INTO backup_runs (trigger_type, status, error_message, started_at_ms, finished_at_ms) VALUES (?, 'failed', ?, ?, ?)", [trigger_type, error_message, started_ms, current_timestamp()])
-		id_rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
-		run_id = to_int_or_zero(id_rows[0]["id"])
 		insert_audit_event("backup_operation", "system", "failed", {"trigger": trigger_type, "reason": "encryption_key_not_configured"})
 		BACKUP_IN_PROGRESS = false
 		return {"ok": false, "error": error_message}
@@ -2835,8 +2814,7 @@ func create_backup_run(trigger_type) {
 		checksum_path := truncate_str(to_string(safe_dict_get(data, "checksum_path", "")), 1000)
 		size_bytes := to_int_or_zero(safe_dict_get(data, "size_bytes", 0))
 		encrypted := bool_as_int(safe_dict_get(data, "encrypted", false))
-		db_execute(db, "INSERT INTO backup_runs (trigger_type, status, backup_path, checksum_path, size_bytes, encrypted, started_at_ms, finished_at_ms) VALUES (?, 'success', ?, ?, ?, ?, ?, ?)", [trigger_type, backup_path, checksum_path, size_bytes, encrypted, started_ms, finished_ms])
-		id_rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
+		id_rows := db_query(db, "INSERT INTO backup_runs (trigger_type, status, backup_path, checksum_path, size_bytes, encrypted, started_at_ms, finished_at_ms) VALUES (?, 'success', ?, ?, ?, ?, ?, ?) RETURNING id", [trigger_type, backup_path, checksum_path, size_bytes, encrypted, started_ms, finished_ms])
 		run_id = to_int_or_zero(id_rows[0]["id"])
 		insert_audit_event("backup_operation", "system", "success", {"trigger": trigger_type, "encrypted": encrypted == 1, "size_bytes": size_bytes})
 		BACKUP_IN_PROGRESS = false
@@ -2855,8 +2833,7 @@ func create_backup_run(trigger_type) {
 		}
 	}
 	error_message = truncate_str(redact_sensitive_text(error_message), 500)
-	db_execute(db, "INSERT INTO backup_runs (trigger_type, status, error_message, started_at_ms, finished_at_ms) VALUES (?, 'failed', ?, ?, ?)", [trigger_type, error_message, started_ms, current_timestamp()])
-	id_rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
+	id_rows := db_query(db, "INSERT INTO backup_runs (trigger_type, status, error_message, started_at_ms, finished_at_ms) VALUES (?, 'failed', ?, ?, ?) RETURNING id", [trigger_type, error_message, started_ms, current_timestamp()])
 	run_id = to_int_or_zero(id_rows[0]["id"])
 	insert_audit_event("backup_operation", "system", "failed", {"trigger": trigger_type, "reason": error_message})
 	BACKUP_IN_PROGRESS = false

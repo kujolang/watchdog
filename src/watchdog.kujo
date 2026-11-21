@@ -78,9 +78,8 @@ func watchdog_record_request_impl(wd, session_id, user_id, provider, model,
                                   total_tokens, cost_usd, latency_ms, finish_reason,
                                   error_code, error_message, prompt_summary, response_summary) {
     ts := to_string(current_timestamp())
-    db_execute(wd["db"], "INSERT INTO requests (session_id, user_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [session_id, user_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, ts])
+    rows := db_query(wd["db"], "INSERT INTO requests (session_id, user_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id", [session_id, user_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cost_usd, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, ts])
 
-    rows := db_query(wd["db"], "SELECT last_insert_rowid() AS id", [])
     if len(rows) > 0 {
         return rows[0]["id"]
     }

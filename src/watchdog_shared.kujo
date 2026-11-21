@@ -317,6 +317,7 @@ func ensure_schema(db) {
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_task_id ON requests(task_id)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_correlation_id ON requests(correlation_id)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_source_class ON requests(source_app, data_class)", [])
+	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_source_request_id ON requests(source_app, request_id)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_requests_source_pricing ON requests(source_app, pricing_kind)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_tool_calls_created_at ON tool_calls(created_at)", [])
 	db_execute(db, "CREATE INDEX IF NOT EXISTS idx_tool_calls_created_at_ms ON tool_calls(CAST(created_at AS INTEGER))", [])

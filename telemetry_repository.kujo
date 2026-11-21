@@ -447,8 +447,7 @@ func repo_insert_batch_rows(db, batch, prepared) {
 	}
 
 	received_at := to_string(current_timestamp())
-	db_execute(db, "INSERT INTO telemetry_batches_v2 (producer_name, batch_id, schema_version, sent_at, received_at, record_count, content_mode) VALUES (?,?,?,?,?,?,?)", [producer_name, batch_id, watchdog_telemetry_v2_version, repo_nullable_text(repo_get(batch, "sent_at", null), 80), received_at, len(records), repo_content_mode(records)])
-	batch_rows := db_query(db, "SELECT last_insert_rowid() AS id", [])
+	batch_rows := db_query(db, "INSERT INTO telemetry_batches_v2 (producer_name, batch_id, schema_version, sent_at, received_at, record_count, content_mode) VALUES (?,?,?,?,?,?,?) RETURNING id", [producer_name, batch_id, watchdog_telemetry_v2_version, repo_nullable_text(repo_get(batch, "sent_at", null), 80), received_at, len(records), repo_content_mode(records)])
 	batch_dbid := batch_rows[0]["id"]
 	inserted := 0
 	for record in records {
@@ -468,9 +467,7 @@ func repo_insert_batch_rows(db, batch, prepared) {
 	return {"ok": true, "error": "", "batch_dbid": batch_dbid, "records": inserted, "deduplicated": false}
 }
 
-func repo_insert_batch(db, batch) {
-	validation := repo_validate_batch(batch)
-	if validation["ok"] == false { return validation }
+func repo_insert_validated_batch(db, batch) {
 	prepared := repo_prepare_records(batch)
 	db_execute(db, "BEGIN IMMEDIATE", [])
 	try {
@@ -488,13 +485,17 @@ func repo_insert_batch(db, batch) {
 	}
 }
 
+func repo_insert_batch(db, batch) {
+	validation := repo_validate_batch(batch)
+	if validation["ok"] == false { return validation }
+	return repo_insert_validated_batch(db, batch)
+}
+
 func repo_insert_batch_fast(db, batch) {
 	validation := repo_validate_batch(batch)
 	if validation["ok"] == false { return validation }
 	if len(batch["records"]) != 1 { return {"ok": false, "error": "fast repository path requires exactly one record"} }
-	parent_error := repo_parent_graph_error(db, batch)
-	if parent_error != "" { return {"ok": false, "error": parent_error, "error_code": "invalid_semantics"} }
-	return repo_insert_batch_rows(db, batch, repo_prepare_records(batch))
+	return repo_insert_validated_batch(db, batch)
 }
 
 export watchdog_telemetry_repository_validate := repo_validate_batch
