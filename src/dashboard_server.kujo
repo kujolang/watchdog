@@ -4688,7 +4688,17 @@ server := server.route("POST", "/api/telemetry/v2/export-backfill", func(req) {
 	limit_value := to_int_or_zero(safe_dict_get(parsed["data"], "limit", 5000))
 	if limit_value < 1 { limit_value = 1 }
 	if limit_value > 5000 { limit_value = 5000 }
-	result := watchdog_delivery_backfill(db, profile_id, EXPORT_QUEUE_MAX_RECORDS, EXPORT_QUEUE_MAX_BYTES, limit_value)
+	writer := open_storage_writer()
+	owned_writer := DB_PATH != ":memory:"
+	result := {}
+	try {
+		result = watchdog_delivery_backfill(writer, profile_id, EXPORT_QUEUE_MAX_RECORDS, EXPORT_QUEUE_MAX_BYTES, limit_value)
+		if owned_writer { db_close(writer) }
+	} except err {
+		if owned_writer { try { db_close(writer) } except close_err {} }
+		print("Exporter backfill failed: " + to_string(err))
+		return api_error(500, "Exporter backfill failed")
+	}
 	insert_audit_event("telemetry_export_backfill", resolve_audit_actor_key(req, "api"), "success", result)
 	return api_ok(result)
 })

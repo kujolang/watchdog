@@ -105,7 +105,7 @@ func delivery_resume_profile(db, profile_id) {
 	return {"profile_id": profile_id, "status": "ready"}
 }
 
-func delivery_backfill(db, profile_id, max_records_per_profile, max_bytes_per_profile, limit_value) {
+func delivery_backfill_rows(db, profile_id, max_records_per_profile, max_bytes_per_profile, limit_value) {
 	count_rows := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_export_deliveries WHERE profile_id = ? AND status IN ('pending','retry')", [profile_id])
 	capacity := max_records_per_profile - count_rows[0]["n"]
 	if capacity <= 0 { return {"profile_id": profile_id, "enqueued": 0, "capacity": 0} }
@@ -125,6 +125,18 @@ func delivery_backfill(db, profile_id, max_records_per_profile, max_bytes_per_pr
 	}
 	db_execute(db, "INSERT OR IGNORE INTO telemetry_export_profile_state (profile_id, status, updated_at_ms) VALUES (?, 'ready', ?)", [profile_id, now_ms])
 	return {"profile_id": profile_id, "enqueued": enqueued, "capacity": capacity - enqueued, "byte_capacity": byte_capacity}
+}
+
+func delivery_backfill(db, profile_id, max_records_per_profile, max_bytes_per_profile, limit_value) {
+	db_execute(db, "BEGIN IMMEDIATE", [])
+	try {
+		result := delivery_backfill_rows(db, profile_id, max_records_per_profile, max_bytes_per_profile, limit_value)
+		db_execute(db, "COMMIT", [])
+		return result
+	} except err {
+		try { db_execute(db, "ROLLBACK", []) } except rollback_err {}
+		throw(err)
+	}
 }
 
 export watchdog_delivery_load_profiles := delivery_load_profiles

@@ -1,7 +1,7 @@
 from watchdog_shared import watchdog_ensure_schema
 from telemetry_repository import watchdog_telemetry_repository_insert
 from telemetry_delivery import watchdog_delivery_enqueue_batch
-from telemetry_delivery import watchdog_delivery_load_profiles
+from telemetry_delivery import watchdog_delivery_load_profiles, watchdog_delivery_backfill
 
 db_path := env("WDG_TEST_DB_PATH")
 config_path := env("WDG_TEST_EXPORTERS_PATH")
@@ -50,5 +50,16 @@ size := db_query(db, "SELECT LENGTH(canonical_json) AS chars, LENGTH(CAST(canoni
 assert(size["bytes"] > size["chars"], "Unicode fixture did not distinguish bytes from characters")
 unicode := watchdog_delivery_enqueue_batch(db, ["byte-bound"], inserted["batch_dbid"], 100, size["chars"])
 assert(unicode["enqueued"] == 0, "Unicode queue cap counted characters instead of bytes")
+
+# Failure after the first row must leave capacity and pending rows unchanged.
+db_execute(db, "CREATE TRIGGER block_backfill BEFORE INSERT ON telemetry_export_deliveries WHEN NEW.profile_id = 'backfill' AND NEW.record_dbid = 2 BEGIN SELECT RAISE(ABORT, 'fixture backfill write failed'); END", [])
+failed := false
+try { watchdog_delivery_backfill(db, "backfill", 2, 1048576, 2) } except err { failed = true }
+assert(failed, "fixture did not interrupt backfill")
+after_failure := db_query(db, "SELECT COUNT(*) AS n FROM telemetry_export_deliveries WHERE profile_id = 'backfill'", [])
+assert(after_failure[0]["n"] == 0, "backfill retained a partial write")
+db_execute(db, "DROP TRIGGER block_backfill", [])
+backfill := watchdog_delivery_backfill(db, "backfill", 2, 1048576, 2)
+assert(backfill["enqueued"] == 2 && backfill["capacity"] == 0, "retry did not fill available capacity")
 
 print("telemetry_delivery_check: PASS")
