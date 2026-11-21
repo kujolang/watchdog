@@ -273,8 +273,8 @@ func worker_send_profile(db, profile) {
 					partial = worker_int(worker_get(partial_success, "rejectedSpans", 0), 0, 0, 1000000) > 0
 				} except err {} }
 				if partial {
-					worker_mark_retry(db, delivery_rows, profile_id, status, "OTLP partial success did not identify rejected records", "", max_attempts, false)
-					return {"profile": profile_id, "status": "retry", "records": len(delivery_rows)}
+					worker_mark_dead(db, delivery_rows, profile_id, status, "OTLP partial success did not identify rejected records", "")
+					return {"profile": profile_id, "status": "dead", "records": len(delivery_rows)}
 				}
 				worker_mark_sent(db, delivery_rows, profile_id, status)
 				return {"profile": profile_id, "status": "sent", "records": len(delivery_rows)}

@@ -37,6 +37,7 @@ Redirects are disabled, response bodies are capped at 64 KiB, and remote HTTPS p
 - `401/403`: pause the profile to prevent credential hammering.
 - other `4xx`: dead-letter with bounded reason and payload hash.
 - attempt limit: dead-letter.
+- OTLP partial success with rejected spans: terminal dead-letter metadata records the affected batch. The collector gives a rejected count, so each record’s delivery outcome is unknown. The [OTLP/HTTP specification](https://opentelemetry.io/docs/specs/otlp/#partial-success-1) prohibits replaying this batch.
 - queue capacity: oldest pending/retry delivery becomes `dropped`; canonical local data remains intact.
 - queue age: pending/retry rows older than the profile bound become `dropped` before transport.
 - terminal history and dead letters are age- and count-bounded independently from canonical telemetry retention.

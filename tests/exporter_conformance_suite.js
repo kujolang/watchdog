@@ -28,7 +28,11 @@ function createCollector(port, status, protobuf = false) {
 		req.on('end', () => {
 			const body = Buffer.concat(chunks);
 			received.push({method: req.method, url: req.url, headers: req.headers, body});
-			res.writeHead(status, {'Content-Type': protobuf ? 'application/x-protobuf' : 'application/json', ...(status === 429 ? {'Retry-After': '1'} : {})});
+			res.writeHead(req.url === '/partial/v1/traces' ? 200 : status, {'Content-Type': protobuf ? 'application/x-protobuf' : 'application/json', ...(status === 429 ? {'Retry-After': '1'} : {})});
+			if (req.url === '/partial/v1/traces') {
+				res.end(protobuf ? Buffer.from([0x0a, 0x02, 0x08, 0x01]) : '{"partialSuccess":{"rejectedSpans":"1"}}');
+				return;
+			}
 			res.end(status >= 200 && status < 300 ? (protobuf ? Buffer.alloc(0) : '{}') : JSON.stringify({error: 'rate limited'}));
 		});
 	});
@@ -109,6 +113,8 @@ async function run() {
 			{id: 'honeycomb', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${successPort}/honeycomb/v1/traces`, mapping_profile: 'otel.genai.v1', headers_from_env: {'x-honeycomb-team': 'WDG_TEST_HONEYCOMB_KEY'}, batch_records: 32, timeout_seconds: 3, max_attempts: 3},
 			{id: 'retry', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${retryPort}/v1/traces`, mapping_profile: 'otel.genai.v1', batch_records: 32, timeout_seconds: 3, max_attempts: 3},
 			{id: 'protobuf', type: 'otlp_http', enabled: true, endpoint: `http://127.0.0.1:${protobufPort}/v1/traces`, mapping_profile: 'otel.genai.v1', encoding: 'protobuf', compression: 'gzip', batch_records: 32, timeout_seconds: 3, max_attempts: 3},
+			{id: 'partial-json', type: 'otlp_http', endpoint: `http://127.0.0.1:${successPort}/partial/v1/traces`},
+			{id: 'partial-protobuf', type: 'otlp_http', endpoint: `http://127.0.0.1:${protobufPort}/partial/v1/traces`, encoding: 'protobuf'},
 			{id: 'expired', type: 'otlp_http', enabled: true, endpoint: 'http://127.0.0.1:17731/v1/traces', mapping_profile: 'otel.genai.v1', batch_records: 32, timeout_seconds: 1, max_attempts: 3, max_queue_age_seconds: 60},
 		]}));
 		watchdog = await startWatchdog();
@@ -151,9 +157,9 @@ async function run() {
 		assert.match(workerOutput, /"status":"sent"/);
 		assert.match(workerOutput, /"status":"retry"/);
 		assert.match(workerOutput, /"profile":"expired"[^}]*"status":"idle"/);
-		assert.strictEqual(successCollector.received.length, 7, 'destination-profile delivery count drift');
+		assert.strictEqual(successCollector.received.length, 8, 'destination-profile delivery count drift');
 		assert.strictEqual(retryCollector.received.length, 1, 'retry collector delivery count drift');
-		assert.strictEqual(protobufCollector.received.length, 1, 'protobuf collector delivery count drift: ' + workerOutput);
+		assert.strictEqual(protobufCollector.received.length, 2, 'protobuf collector delivery count drift: ' + workerOutput);
 		const delivered = successCollector.received.find((item) => item.url === '/v1/traces');
 		assert.strictEqual(delivered.method, 'POST');
 		assert.strictEqual(delivered.url, '/v1/traces');
@@ -162,7 +168,7 @@ async function run() {
 		assert.ok(delivered.body.includes(Buffer.from('openinference.span.kind')), 'OpenInference mapping profile was not applied');
 		for (const cost of costCases) assert.ok(delivered.body.includes(Buffer.from(cost.kind)), `OTLP lost cost provenance ${cost.kind}`);
 		assert.ok(!delivered.body.includes(Buffer.from('export-content-canary')), 'exporter bypassed authoritative content policy');
-		const protobufDelivery = protobufCollector.received[0];
+		const protobufDelivery = protobufCollector.received.find(item => item.url === '/v1/traces');
 		assert.strictEqual(protobufDelivery.headers['content-type'], 'application/x-protobuf');
 		assert.strictEqual(protobufDelivery.headers['content-encoding'], 'gzip');
 		const uncompressedProtobuf = zlib.gunzipSync(protobufDelivery.body);
@@ -195,6 +201,11 @@ async function run() {
 			for (const canary of ['export-content-canary', 'exporter-secret-canary', 'datadog-secret-canary', 'honeycomb-secret-canary']) assert.ok(!bytes.includes(Buffer.from(canary)), `${path.basename(candidate)} retained ${canary}`);
 		}
 		assert.ok(rows.some((row) => row.profile_id === 'expired' && row.status === 'dropped' && row.records === 4));
+
+		for (const profile of ['partial-json', 'partial-protobuf']) {
+			assert.ok(rows.some(row => row.profile_id === profile && row.status === 'dead' && row.records === 4),
+				`partial success on ${profile} must be terminal`);
+		}
 
 		const boundDb = new DatabaseSync(dbPath);
 		try {
