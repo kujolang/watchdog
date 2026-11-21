@@ -40,6 +40,27 @@ function metadataOnlyBatch(input) {
 	};
 }
 
+function encodeBatch(batch) {
+	const encoded = JSON.stringify(batch);
+	if (Buffer.byteLength(encoded) > MAX_BATCH_BYTES) {
+		throw new Error('Telemetry batch exceeds the 512 KiB client limit');
+	}
+	return encoded;
+}
+
+async function readSpoolBatch(file) {
+	const stats = await file.stat();
+	if (!stats.isFile() || stats.size > MAX_BATCH_BYTES) return null;
+	const buffer = Buffer.allocUnsafe(stats.size + 1);
+	let offset = 0;
+	while (offset < buffer.length) {
+		const {bytesRead} = await file.read(buffer, offset, buffer.length - offset, offset);
+		if (bytesRead === 0) break;
+		offset += bytesRead;
+	}
+	return offset === stats.size ? buffer.toString('utf8', 0, offset) : null;
+}
+
 class DurableSpool {
 	constructor(options) {
 		this.directory = options.directory;
@@ -62,9 +83,8 @@ class DurableSpool {
 
 	async append(batch) {
 		const operation = async () => {
-			const encoded = JSON.stringify(batch);
+			const encoded = encodeBatch(batch);
 			const bytes = Buffer.byteLength(encoded);
-			if (bytes > MAX_BATCH_BYTES) throw new Error('Telemetry batch exceeds 512 KiB client spool bound');
 			if (bytes > this.maxBytes) throw new Error('Telemetry batch exceeds configured spool byte limit');
 			await mkdir(this.directory, {recursive: true, mode: 0o700});
 			const name = `${String(Date.now()).padStart(13, '0')}-${randomUUID()}.json`;
@@ -135,14 +155,14 @@ export function createWatchdogTelemetryClient(options = {}) {
 	const timeoutMs = boundedInt(options.timeoutMs, 3000, 100, 30000);
 	const token = options.token ? String(options.token) : '';
 
-	async function send(batch) {
+	async function send(encoded) {
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), timeoutMs);
 		try {
 			const response = await fetch(endpoint, {
 				method: 'POST', redirect: 'manual', signal: controller.signal,
 				headers: {'Content-Type': 'application/json', ...(token ? {Authorization: `Bearer ${token}`} : {})},
-				body: JSON.stringify(batch),
+				body: encoded,
 			});
 			return {ok: response.ok, status: response.status, retryable: response.status === 408 || response.status === 429 || response.status >= 500 || response.status === 401 || response.status === 403};
 		} catch (error) {
@@ -165,8 +185,7 @@ export function createWatchdogTelemetryClient(options = {}) {
 			try {
 				const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
 				try {
-					if (!(await file.stat()).isFile()) continue;
-					text = await file.readFile('utf8');
+					text = await readSpoolBatch(file);
 				} finally {
 					await file.close();
 				}
@@ -174,13 +193,16 @@ export function createWatchdogTelemetryClient(options = {}) {
 				if (error.code === 'ENOENT' || error.code === 'ELOOP') continue;
 				throw error;
 			}
-			let batch;
-			try { batch = JSON.parse(text); } catch (error) {
+			if (text === null) {
+				await rm(path, {force: true});
+				continue;
+			}
+			try { JSON.parse(text); } catch (error) {
 				if (!(error instanceof SyntaxError)) throw error;
 				await rm(path, {force: true});
 				continue;
 			}
-			const result = await send(batch);
+			const result = await send(text);
 			if (result.ok) { await rm(path, {force: true}); sent += 1; continue; }
 			if (!result.retryable) { await rm(path, {force: true}); continue; }
 			retained += 1;
@@ -197,7 +219,7 @@ export function createWatchdogTelemetryClient(options = {}) {
 
 	async function submit(input) {
 		const batch = metadataOnlyBatch(input);
-		const result = await send(batch);
+		const result = await send(encodeBatch(batch));
 		if (result.ok) return {...result, spooled: false};
 		if (result.retryable) { await spool.append(batch); return {...result, spooled: true}; }
 		return {...result, spooled: false};

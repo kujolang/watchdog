@@ -68,8 +68,20 @@ try {
 	oversized.records[0].attributes = {fixture: 'x'.repeat(2048)};
 	await assert.rejects(bounded.submit(oversized), /configured spool byte limit/);
 	assert.deepEqual(await bounded.spool.files(), [queued]);
-	globalThis.fetch = async () => ({ok: true, status: 200});
+	let networkCalls = 0;
+	globalThis.fetch = async () => { networkCalls++; return {ok: true, status: 200}; };
+	const overWireLimit = structuredClone(original);
+	overWireLimit.records[0].attributes = {fixture: 'é'.repeat(256 * 1024)};
+	await assert.rejects(bounded.submit(overWireLimit), /512 KiB client limit/);
+	assert.equal(networkCalls, 0, 'over-limit batch reached the HTTP transport');
 	assert.deepEqual(await bounded.flush(), {sent: 1, retained: 0}, 'failed append poisoned subsequent flush');
+	const replay = createWatchdogTelemetryClient({spoolDirectory: join(temp, 'replay')});
+	await replay.spool.initialize();
+	const overLimitOnDisk = join(replay.spool.directory, queued);
+	await writeFile(overLimitOnDisk, JSON.stringify(overWireLimit));
+	assert.deepEqual(await replay.flush(), {sent: 0, retained: 0});
+	assert.equal(networkCalls, 1, 'oversized persisted batch reached the HTTP transport');
+	assert.deepEqual(await replay.spool.files(), []);
 	assert.equal(await readFile(unrelated, 'utf8'), '{"keep":true}');
 
 	const unavailable = createWatchdogTelemetryClient({spoolDirectory: join(temp, 'unavailable')});
