@@ -77,7 +77,7 @@ curl -s "http://127.0.0.1:7700/api/charts/status-breakdown?project_id=example_pr
 curl -s http://127.0.0.1:7700/api/admin/diagnostics -H 'X-Watchdog-Token: replace-with-long-random-token'
 curl -s http://127.0.0.1:7700/api/export -H 'X-Watchdog-Token: replace-with-long-random-token'
 curl -s http://127.0.0.1:7700/proxy/v1/models -H 'X-Watchdog-Proxy-Token: replace-with-long-random-proxy-token'
-curl -s http://127.0.0.1:7700/ | grep -q 'integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD"'
+curl -fsS http://127.0.0.1:7700/ | grep -Fq 'src="/assets/vendor/dither-charts.js"'
 ```
 
 Expected shape for successful API checks:
@@ -104,12 +104,11 @@ Optional benchmark baseline check:
 node scripts/benchmark_profiles.js --profiles=quick,soak --json-out=tmp/benchmark-report.json
 ```
 
-Optional restricted-network dashboard fallback setup:
+The dashboard serves its checked-in chart assets locally. Verify both asset routes in restricted-network deployments.
 
 ```bash
-mkdir -p "$WATCHDOG_ROOT/vendor"
-# Copy vetted chart.umd.min.js to $WATCHDOG_ROOT/vendor/chart.umd.min.js
-curl -s http://127.0.0.1:7700/assets/vendor/chart.umd.min.js | head -c 80
+curl -fsS http://127.0.0.1:7700/assets/vendor/dither-charts.js -o /dev/null
+curl -fsS http://127.0.0.1:7700/assets/vendor/dither-charts.css -o /dev/null
 ```
 
 ## 4. Retention Tuning And Pruning
