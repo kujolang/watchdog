@@ -55,7 +55,7 @@ The deletion fixture used native canonical rows. OTLP classification is rechecke
 ## Remaining work
 
 - **P1** Backup scratch recovery after abrupt process termination needs ownership and recovery review. The directories observed on this host predate this pass.
-- **P1, carried forward** The nonstream and time-to-first-output proxy budgets remain advisory and missed their targets. An independent edge limiter is necessary for untrusted traffic because Watchdog's grouping hints are supplied by callers.
+- **P1, carried forward** The nonstream overhead, time-to-first-output overhead and exporter-outage isolation budgets remain advisory. All three missed their targets in the final isolated run. An independent edge limiter is necessary for untrusted traffic because Watchdog's grouping hints are supplied by callers.
 - **Cross-repository** Both optional integrations passed against their existing interfaces.
 - **Verification limits** The runtime was exercised on macOS. Hosted CI covers Linux. Live providers, collectors, remote deployments and Windows remain outside the verified environment. Connected Sources file mutation uses the Kujo POSIX file lock and private-file primitives.
 
