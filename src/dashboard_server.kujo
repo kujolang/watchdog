@@ -1623,8 +1623,8 @@ func insert_tool_call_row(request_dbid, session_id, tool_name, tool_args, tool_r
 	db_execute(db, "INSERT INTO tool_calls (request_dbid, session_id, tool_name, tool_args, tool_result, status, latency_ms, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", [request_dbid, session_id, tool_name, args_str, result_str, status, latency_ms, "watchdog-proxy", "live", ts])
 }
 
-func append_agent_step(session_id, agent_id, step_type, content, metadata, source_app, data_class, created_at) {
-	db_execute(db, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) SELECT ?, ?, COALESCE(MAX(step_number), 0) + 1, ?, ?, ?, ?, ?, ? FROM agent_steps WHERE session_id = ?", [session_id, agent_id, step_type, content, metadata, source_app, data_class, created_at, session_id])
+func append_agent_step(writer, session_id, agent_id, step_type, content, metadata, source_app, data_class, created_at) {
+	db_execute(writer, "INSERT INTO agent_steps (session_id, agent_id, step_number, step_type, content, metadata, source_app, data_class, created_at) SELECT ?, ?, COALESCE(MAX(step_number), 0) + 1, ?, ?, ?, ?, ?, ? FROM agent_steps WHERE session_id = ?", [session_id, agent_id, step_type, content, metadata, source_app, data_class, created_at, session_id])
 }
 
 func insert_agent_step_row(session_id, agent_id, step_type, content, metadata) {
@@ -1636,7 +1636,7 @@ func insert_agent_step_row(session_id, agent_id, step_type, content, metadata) {
 		meta_str := redact_sensitive_text(meta_str)
 	}
 	clean_content := truncate_str(redact_sensitive_text(content), 500)
-	append_agent_step(session_id, agent_id, step_type, clean_content, meta_str, "watchdog-proxy", "live", ts)
+	append_agent_step(db, session_id, agent_id, step_type, clean_content, meta_str, "watchdog-proxy", "live", ts)
 }
 
 func external_text(body, key, fallback_value, max_len) {
@@ -1984,20 +1984,27 @@ func jsonl_v2_response(rows, exported_at, start_cursor) {
 	return apply_default_security_headers(response)
 }
 
+# SQLite transactions belong to their connection. Each file-backed call
+# owns a writer so an overlapping callback cannot join its transaction.
+func open_storage_writer() {
+	if DB_PATH == ":memory:" { return db }
+	writer := db_connect("sqlite", DB_PATH)
+	try {
+		db_query(writer, "PRAGMA busy_timeout=5000", [])
+		db_query(writer, "PRAGMA synchronous=NORMAL", [])
+		db_query(writer, "PRAGMA foreign_keys=ON", [])
+	} except err {
+		try { db_close(writer) } except close_err {}
+		throw(err)
+	}
+	return writer
+}
+
 func persist_approved_canonical_batch(approved) {
-	# HTTP callbacks can overlap. A SQLite transaction belongs to its connection,
-	# so durable canonical writers must not share the dashboard's connection.
-	# Preserve the existing single-connection semantics for private :memory: stores.
-	writer := db
+	writer := open_storage_writer()
 	owned_writer := DB_PATH != ":memory:"
-	if owned_writer { writer = db_connect("sqlite", DB_PATH) }
 	result := {}
 	try {
-		if owned_writer {
-			db_query(writer, "PRAGMA busy_timeout=5000", [])
-			db_query(writer, "PRAGMA synchronous=NORMAL", [])
-			db_query(writer, "PRAGMA foreign_keys=ON", [])
-		}
 		delivery_config := null
 		if len(EXPORTER_PROFILE_IDS) > 0 {
 			delivery_config = {"profiles": EXPORTER_PROFILE_IDS, "max_records": EXPORT_QUEUE_MAX_RECORDS, "max_bytes": EXPORT_QUEUE_MAX_BYTES}
@@ -2056,7 +2063,7 @@ func persist_v1_canonical_copy(body, source_app, session_id) {
 	return persist_canonical_batch(translated["batch"])
 }
 
-func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class) {
+func insert_trace_bundle(writer, request_dbid, body, source_app, session_id, data_class) {
 	trace := safe_dict_get(body, "trace", {})
 	has_trace_payload := has_key(body, "trace") != 0 && type(trace) == "dict"
 	if type(trace) != "dict" {
@@ -2079,7 +2086,7 @@ func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class)
 	model_name := external_text(body, "model", external_text(trace, "model", "", 160), 160)
 	pricing := watchdog_cost_breakdown(model_name, input_tokens * 1.0, output_tokens * 1.0, cached_tokens * 1.0, cache_write_tokens * 1.0)
 	if has_trace_payload {
-		db_execute(db, "INSERT INTO traces (trace_id, schema_version, request_dbid, session_id, source_app, data_class, model, name, status, started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_input_tokens, cache_write_input_tokens, input_cost_usd, output_cost_usd, cached_input_cost_usd, cache_write_input_cost_usd, input_rate_per_million, output_rate_per_million, cached_input_rate_per_million, cache_write_input_rate_per_million, pricing_source, pricing_kind, priced_model, attributes_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trace_id) DO UPDATE SET schema_version = excluded.schema_version, request_dbid = CASE WHEN traces.request_dbid = 0 THEN excluded.request_dbid ELSE traces.request_dbid END, session_id = CASE WHEN excluded.session_id <> '' THEN excluded.session_id ELSE traces.session_id END, model = CASE WHEN excluded.model <> '' THEN excluded.model ELSE traces.model END, name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE traces.name END, status = excluded.status, started_at_ms = CASE WHEN traces.started_at_ms = 0 OR (excluded.started_at_ms > 0 AND excluded.started_at_ms < traces.started_at_ms) THEN excluded.started_at_ms ELSE traces.started_at_ms END, ended_at_ms = CASE WHEN excluded.ended_at_ms > traces.ended_at_ms THEN excluded.ended_at_ms ELSE traces.ended_at_ms END, duration_ms = CASE WHEN excluded.duration_ms > traces.duration_ms THEN excluded.duration_ms ELSE traces.duration_ms END, input_tokens = CASE WHEN excluded.input_tokens > traces.input_tokens THEN excluded.input_tokens ELSE traces.input_tokens END, output_tokens = CASE WHEN excluded.output_tokens > traces.output_tokens THEN excluded.output_tokens ELSE traces.output_tokens END, cached_input_tokens = CASE WHEN excluded.cached_input_tokens > traces.cached_input_tokens THEN excluded.cached_input_tokens ELSE traces.cached_input_tokens END, cache_write_input_tokens = CASE WHEN excluded.cache_write_input_tokens > traces.cache_write_input_tokens THEN excluded.cache_write_input_tokens ELSE traces.cache_write_input_tokens END, input_cost_usd = CASE WHEN excluded.input_cost_usd > traces.input_cost_usd THEN excluded.input_cost_usd ELSE traces.input_cost_usd END, output_cost_usd = CASE WHEN excluded.output_cost_usd > traces.output_cost_usd THEN excluded.output_cost_usd ELSE traces.output_cost_usd END, cached_input_cost_usd = CASE WHEN excluded.cached_input_cost_usd > traces.cached_input_cost_usd THEN excluded.cached_input_cost_usd ELSE traces.cached_input_cost_usd END, cache_write_input_cost_usd = CASE WHEN excluded.cache_write_input_cost_usd > traces.cache_write_input_cost_usd THEN excluded.cache_write_input_cost_usd ELSE traces.cache_write_input_cost_usd END, input_rate_per_million = CASE WHEN excluded.model <> '' THEN excluded.input_rate_per_million ELSE traces.input_rate_per_million END, output_rate_per_million = CASE WHEN excluded.model <> '' THEN excluded.output_rate_per_million ELSE traces.output_rate_per_million END, cached_input_rate_per_million = CASE WHEN excluded.model <> '' THEN excluded.cached_input_rate_per_million ELSE traces.cached_input_rate_per_million END, cache_write_input_rate_per_million = CASE WHEN excluded.model <> '' THEN excluded.cache_write_input_rate_per_million ELSE traces.cache_write_input_rate_per_million END, pricing_source = CASE WHEN excluded.model <> '' THEN excluded.pricing_source ELSE traces.pricing_source END, pricing_kind = CASE WHEN excluded.model <> '' THEN excluded.pricing_kind ELSE traces.pricing_kind END, priced_model = CASE WHEN excluded.model <> '' THEN excluded.priced_model ELSE traces.priced_model END, attributes_json = CASE WHEN excluded.attributes_json <> '{}' THEN excluded.attributes_json ELSE traces.attributes_json END", [trace_id, schema_version, request_dbid, session_id, source_app, data_class, model_name, external_text(trace, "name", "interactive_chat", 120), external_text(trace, "status", "success", 32), started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, pricing["input_cost_usd"], pricing["output_cost_usd"], pricing["cached_input_cost_usd"], pricing["cache_write_input_cost_usd"], pricing["input_rate_per_million"], pricing["output_rate_per_million"], pricing["cached_input_rate_per_million"], pricing["cache_write_input_rate_per_million"], pricing["pricing_source"], pricing["pricing_kind"], pricing["priced_model"], external_json_summary(safe_dict_get(trace, "attributes", {}), 12000), ts])
+		db_execute(writer, "INSERT INTO traces (trace_id, schema_version, request_dbid, session_id, source_app, data_class, model, name, status, started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_input_tokens, cache_write_input_tokens, input_cost_usd, output_cost_usd, cached_input_cost_usd, cache_write_input_cost_usd, input_rate_per_million, output_rate_per_million, cached_input_rate_per_million, cache_write_input_rate_per_million, pricing_source, pricing_kind, priced_model, attributes_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trace_id) DO UPDATE SET schema_version = excluded.schema_version, request_dbid = CASE WHEN traces.request_dbid = 0 THEN excluded.request_dbid ELSE traces.request_dbid END, session_id = CASE WHEN excluded.session_id <> '' THEN excluded.session_id ELSE traces.session_id END, model = CASE WHEN excluded.model <> '' THEN excluded.model ELSE traces.model END, name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE traces.name END, status = excluded.status, started_at_ms = CASE WHEN traces.started_at_ms = 0 OR (excluded.started_at_ms > 0 AND excluded.started_at_ms < traces.started_at_ms) THEN excluded.started_at_ms ELSE traces.started_at_ms END, ended_at_ms = CASE WHEN excluded.ended_at_ms > traces.ended_at_ms THEN excluded.ended_at_ms ELSE traces.ended_at_ms END, duration_ms = CASE WHEN excluded.duration_ms > traces.duration_ms THEN excluded.duration_ms ELSE traces.duration_ms END, input_tokens = CASE WHEN excluded.input_tokens > traces.input_tokens THEN excluded.input_tokens ELSE traces.input_tokens END, output_tokens = CASE WHEN excluded.output_tokens > traces.output_tokens THEN excluded.output_tokens ELSE traces.output_tokens END, cached_input_tokens = CASE WHEN excluded.cached_input_tokens > traces.cached_input_tokens THEN excluded.cached_input_tokens ELSE traces.cached_input_tokens END, cache_write_input_tokens = CASE WHEN excluded.cache_write_input_tokens > traces.cache_write_input_tokens THEN excluded.cache_write_input_tokens ELSE traces.cache_write_input_tokens END, input_cost_usd = CASE WHEN excluded.input_cost_usd > traces.input_cost_usd THEN excluded.input_cost_usd ELSE traces.input_cost_usd END, output_cost_usd = CASE WHEN excluded.output_cost_usd > traces.output_cost_usd THEN excluded.output_cost_usd ELSE traces.output_cost_usd END, cached_input_cost_usd = CASE WHEN excluded.cached_input_cost_usd > traces.cached_input_cost_usd THEN excluded.cached_input_cost_usd ELSE traces.cached_input_cost_usd END, cache_write_input_cost_usd = CASE WHEN excluded.cache_write_input_cost_usd > traces.cache_write_input_cost_usd THEN excluded.cache_write_input_cost_usd ELSE traces.cache_write_input_cost_usd END, input_rate_per_million = CASE WHEN excluded.model <> '' THEN excluded.input_rate_per_million ELSE traces.input_rate_per_million END, output_rate_per_million = CASE WHEN excluded.model <> '' THEN excluded.output_rate_per_million ELSE traces.output_rate_per_million END, cached_input_rate_per_million = CASE WHEN excluded.model <> '' THEN excluded.cached_input_rate_per_million ELSE traces.cached_input_rate_per_million END, cache_write_input_rate_per_million = CASE WHEN excluded.model <> '' THEN excluded.cache_write_input_rate_per_million ELSE traces.cache_write_input_rate_per_million END, pricing_source = CASE WHEN excluded.model <> '' THEN excluded.pricing_source ELSE traces.pricing_source END, pricing_kind = CASE WHEN excluded.model <> '' THEN excluded.pricing_kind ELSE traces.pricing_kind END, priced_model = CASE WHEN excluded.model <> '' THEN excluded.priced_model ELSE traces.priced_model END, attributes_json = CASE WHEN excluded.attributes_json <> '{}' THEN excluded.attributes_json ELSE traces.attributes_json END", [trace_id, schema_version, request_dbid, session_id, source_app, data_class, model_name, external_text(trace, "name", "interactive_chat", 120), external_text(trace, "status", "success", 32), started_at_ms, ended_at_ms, duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, pricing["input_cost_usd"], pricing["output_cost_usd"], pricing["cached_input_cost_usd"], pricing["cache_write_input_cost_usd"], pricing["input_rate_per_million"], pricing["output_rate_per_million"], pricing["cached_input_rate_per_million"], pricing["cache_write_input_rate_per_million"], pricing["pricing_source"], pricing["pricing_kind"], pricing["priced_model"], external_json_summary(safe_dict_get(trace, "attributes", {}), 12000), ts])
 	}
 
 	span_count := 0
@@ -2092,7 +2099,7 @@ func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class)
 					span_started := to_int_or_zero(safe_dict_get(span, "started_at_ms", started_at_ms))
 					span_ended := to_int_or_zero(safe_dict_get(span, "ended_at_ms", span_started))
 					span_duration := to_int_or_zero(safe_dict_get(span, "duration_ms", span_ended - span_started))
-					db_execute(db, "INSERT INTO trace_spans (trace_id, span_id, parent_span_id, request_dbid, session_id, source_app, data_class, span_kind, name, status, started_at_ms, ended_at_ms, duration_ms, attributes_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trace_id, span_id) DO UPDATE SET parent_span_id = CASE WHEN excluded.parent_span_id <> '' THEN excluded.parent_span_id ELSE trace_spans.parent_span_id END, request_dbid = CASE WHEN trace_spans.request_dbid = 0 THEN excluded.request_dbid ELSE trace_spans.request_dbid END, status = excluded.status, ended_at_ms = CASE WHEN excluded.ended_at_ms > trace_spans.ended_at_ms THEN excluded.ended_at_ms ELSE trace_spans.ended_at_ms END, duration_ms = CASE WHEN excluded.duration_ms > trace_spans.duration_ms THEN excluded.duration_ms ELSE trace_spans.duration_ms END, attributes_json = excluded.attributes_json", [trace_id, span_id, external_text(span, "parent_span_id", "", 160), request_dbid, session_id, source_app, data_class, external_text(span, "span_kind", "internal", 40), external_text(span, "name", "span", 120), external_text(span, "status", "success", 32), span_started, span_ended, span_duration, external_json_summary(safe_dict_get(span, "attributes", {}), 12000), ts])
+					db_execute(writer, "INSERT INTO trace_spans (trace_id, span_id, parent_span_id, request_dbid, session_id, source_app, data_class, span_kind, name, status, started_at_ms, ended_at_ms, duration_ms, attributes_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trace_id, span_id) DO UPDATE SET parent_span_id = CASE WHEN excluded.parent_span_id <> '' THEN excluded.parent_span_id ELSE trace_spans.parent_span_id END, request_dbid = CASE WHEN trace_spans.request_dbid = 0 THEN excluded.request_dbid ELSE trace_spans.request_dbid END, status = excluded.status, ended_at_ms = CASE WHEN excluded.ended_at_ms > trace_spans.ended_at_ms THEN excluded.ended_at_ms ELSE trace_spans.ended_at_ms END, duration_ms = CASE WHEN excluded.duration_ms > trace_spans.duration_ms THEN excluded.duration_ms ELSE trace_spans.duration_ms END, attributes_json = excluded.attributes_json", [trace_id, span_id, external_text(span, "parent_span_id", "", 160), request_dbid, session_id, source_app, data_class, external_text(span, "span_kind", "internal", 40), external_text(span, "name", "span", 120), external_text(span, "status", "success", 32), span_started, span_ended, span_duration, external_json_summary(safe_dict_get(span, "attributes", {}), 12000), ts])
 					span_count = span_count + 1
 				}
 			}
@@ -2105,7 +2112,7 @@ func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class)
 		for event in events {
 			if event_count < 512 && type(event) == "dict" {
 				event_id := external_text(event, "event_id", "event-" + to_string(event_count), 160)
-				db_execute(db, "INSERT OR IGNORE INTO trace_events (event_id, trace_id, span_id, sequence, event_name, occurred_at_ms, attributes_json, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", [event_id, trace_id, external_text(event, "span_id", "", 160), to_int_or_zero(safe_dict_get(event, "sequence", event_count)), external_text(event, "event_name", "event", 120), to_int_or_zero(safe_dict_get(event, "occurred_at_ms", started_at_ms)), external_json_summary(safe_dict_get(event, "attributes", {}), 12000), source_app, data_class, ts])
+				db_execute(writer, "INSERT OR IGNORE INTO trace_events (event_id, trace_id, span_id, sequence, event_name, occurred_at_ms, attributes_json, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", [event_id, trace_id, external_text(event, "span_id", "", 160), to_int_or_zero(safe_dict_get(event, "sequence", event_count)), external_text(event, "event_name", "event", 120), to_int_or_zero(safe_dict_get(event, "occurred_at_ms", started_at_ms)), external_json_summary(safe_dict_get(event, "attributes", {}), 12000), source_app, data_class, ts])
 				event_count = event_count + 1
 			}
 		}
@@ -2117,22 +2124,24 @@ func insert_trace_bundle(request_dbid, body, source_app, session_id, data_class)
 		for tool_call in tool_calls {
 			if tool_count < 64 && type(tool_call) == "dict" {
 				tool_call_id := external_text(tool_call, "tool_call_id", "", 160)
-				db_execute(db, "INSERT OR IGNORE INTO tool_calls (request_dbid, session_id, tool_call_id, tool_name, tool_args, tool_result, status, latency_ms, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", [request_dbid, session_id, tool_call_id, external_text(tool_call, "tool_name", "unknown", 120), external_json_summary(safe_dict_get(tool_call, "arguments", {}), 4000), external_json_summary(safe_dict_get(tool_call, "result", {}), 8000), external_text(tool_call, "status", "success", 32), to_int_or_zero(safe_dict_get(tool_call, "latency_ms", 0)), source_app, data_class, ts])
+				db_execute(writer, "INSERT OR IGNORE INTO tool_calls (request_dbid, session_id, tool_call_id, tool_name, tool_args, tool_result, status, latency_ms, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", [request_dbid, session_id, tool_call_id, external_text(tool_call, "tool_name", "unknown", 120), external_json_summary(safe_dict_get(tool_call, "arguments", {}), 4000), external_json_summary(safe_dict_get(tool_call, "result", {}), 8000), external_text(tool_call, "status", "success", 32), to_int_or_zero(safe_dict_get(tool_call, "latency_ms", 0)), source_app, data_class, ts])
 				tool_count = tool_count + 1
 			}
 		}
 	}
 
-	canonical_result := {"ok": true, "deduplicated": false, "records": 0}
-	if data_class != "live" {
-		try {
-			canonical_result = persist_v1_canonical_copy(body, source_app, session_id)
-		} except err {
-			print("Canonical v2 compatibility write failed: " + to_string(err))
-			canonical_result = {"ok": false, "error": "canonical compatibility write failed", "deduplicated": false, "records": 0}
-		}
+	return {"trace_id": trace_id, "spans": span_count, "events": event_count, "tool_calls": tool_count}
+}
+
+func attach_v1_canonical_copy(trace_result, body, source_app, session_id) {
+	if trace_result["trace_id"] == "" { return trace_result }
+	try {
+		trace_result["canonical"] = persist_v1_canonical_copy(body, source_app, session_id)
+	} except err {
+		print("Canonical v2 compatibility write failed: " + to_string(err))
+		trace_result["canonical"] = {"ok": false, "error": "canonical compatibility write failed", "deduplicated": false, "records": 0}
 	}
-	return {"trace_id": trace_id, "spans": span_count, "events": event_count, "tool_calls": tool_count, "canonical": canonical_result}
+	return trace_result
 }
 
 func proxy_canonical_source(observability) {
@@ -2153,7 +2162,7 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 	span_id := "proxy-model-" + to_string(request_dbid)
 	completion_event_name := "stream_completed"
 	if status != "success" { completion_event_name = "response_failed" }
-	if has_explicit_trace { insert_trace_bundle(request_dbid, {
+	if has_explicit_trace { insert_trace_bundle(db, request_dbid, {
 		"schema_version": TELEMETRY_SCHEMA_VERSION,
 		"trace_id": trace_id,
 		"trace": {
@@ -2294,7 +2303,7 @@ func insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id
 	}
 }
 
-func insert_external_agent_steps(request_dbid, body, source_app, session_id) {
+func insert_external_agent_steps(writer, request_dbid, body, source_app, session_id) {
 	step_count := 0
 	agent_id := external_text(body, "agent_id", source_app, 120)
 	steps := safe_dict_get(body, "agent_steps", [])
@@ -2323,14 +2332,14 @@ func insert_external_agent_steps(request_dbid, body, source_app, session_id) {
 			"usage": safe_dict_get(step, "usage", {})
 		}
 		ts := to_string(current_timestamp())
-		append_agent_step(session_id, agent_id, step_type, content, to_json(redact_dict_shallow(metadata)), source_app, "external", ts)
+		append_agent_step(writer, session_id, agent_id, step_type, content, to_json(redact_dict_shallow(metadata)), source_app, "external", ts)
 		step_count = step_count + 1
 	}
 
 	return step_count
 }
 
-func insert_external_derived_agent_steps(request_dbid, body, source_app, session_id) {
+func insert_external_derived_agent_steps(writer, request_dbid, body, source_app, session_id) {
 	step_count := 0
 	agent_id := external_text(body, "agent_id", source_app, 120)
 	task_id := external_text(body, "task_id", "", 160)
@@ -2347,12 +2356,12 @@ func insert_external_derived_agent_steps(request_dbid, body, source_app, session
 				continue
 			}
 			ts := to_string(current_timestamp())
-			append_agent_step(session_id, agent_id, "thread_started", "Thread started", to_json({"request_dbid": request_dbid, "task_id": task_id, "correlation_id": correlation_id, "event_name": event_name}), source_app, "external", ts)
+			append_agent_step(writer, session_id, agent_id, "thread_started", "Thread started", to_json({"request_dbid": request_dbid, "task_id": task_id, "correlation_id": correlation_id, "event_name": event_name}), source_app, "external", ts)
 			step_count = step_count + 1
 		}
 	}
 
-	tool_rows := db_query(db, "SELECT id, tool_name, tool_args, tool_result, status, latency_ms FROM tool_calls WHERE request_dbid = ? ORDER BY id ASC LIMIT 1", [request_dbid])
+	tool_rows := db_query(writer, "SELECT id, tool_name, tool_args, tool_result, status, latency_ms FROM tool_calls WHERE request_dbid = ? ORDER BY id ASC LIMIT 1", [request_dbid])
 	if step_count < 256 && len(tool_rows) > 0 {
 		tool_row := tool_rows[0]
 		step_type := truncate_str(to_string(tool_row["tool_name"]), 80)
@@ -2370,7 +2379,7 @@ func insert_external_derived_agent_steps(request_dbid, body, source_app, session
 				"latency_ms": to_int_or_zero(tool_row["latency_ms"])
 			}
 			ts := to_string(current_timestamp())
-			append_agent_step(session_id, agent_id, step_type, content, to_json(redact_dict_shallow(metadata)), source_app, "external", ts)
+			append_agent_step(writer, session_id, agent_id, step_type, content, to_json(redact_dict_shallow(metadata)), source_app, "external", ts)
 			step_count = step_count + 1
 		}
 	}
@@ -2378,14 +2387,13 @@ func insert_external_derived_agent_steps(request_dbid, body, source_app, session
 	return step_count
 }
 
-func insert_external_request(body) {
-	source_app := external_text(body, "source_app", "external", 80)
+func insert_external_request(writer, body, source_app, session_id) {
 	request_id := external_text(body, "request_id", "", 160)
 	if request_id == "" {
 		return {"ok": false, "error": "request_id is required"}
 	}
 
-	existing := db_query(db, "SELECT id FROM requests WHERE source_app = ? AND request_id = ? ORDER BY id ASC LIMIT 1", [source_app, request_id])
+	existing := db_query(writer, "SELECT id FROM requests WHERE source_app = ? AND request_id = ? ORDER BY id ASC LIMIT 1", [source_app, request_id])
 	if len(existing) > 0 {
 		return {"ok": true, "id": existing[0]["id"], "deduplicated": true}
 	}
@@ -2418,20 +2426,14 @@ func insert_external_request(body) {
 	latency_ms := to_int_or_zero(safe_dict_get(body, "latency_ms", 0))
 	ts := to_string(current_timestamp())
 
-	rows := db_query(db, "INSERT INTO requests (session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cached_input_tokens, cache_write_input_tokens, cost_usd, input_cost_usd, output_cost_usd, cached_input_cost_usd, cache_write_input_cost_usd, input_rate_per_million, output_rate_per_million, cached_input_rate_per_million, cache_write_input_rate_per_million, pricing_source, pricing_kind, priced_model, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, source_app, data_class, created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM requests WHERE source_app = ? AND request_id = ?) RETURNING id", [external_text(body, "session_id", request_id, 160), external_text(body, "user_id", "", 120), external_text(body, "tenant_id", "", 120), external_text(body, "project_id", "", 120), external_text(body, "workflow_id", "", 120), external_text(body, "task_id", "", 160), external_text(body, "correlation_id", "", 160), external_text(body, "provider", "external", 160), model_name, request_id, status, input_tokens, output_tokens, total_tokens, cached_input_tokens, cache_write_input_tokens, cost_usd, pricing["input_cost_usd"], pricing["output_cost_usd"], pricing["cached_input_cost_usd"], pricing["cache_write_input_cost_usd"], pricing["input_rate_per_million"], pricing["output_rate_per_million"], pricing["cached_input_rate_per_million"], pricing["cache_write_input_rate_per_million"], pricing["pricing_source"], pricing["pricing_kind"], pricing["priced_model"], latency_ms, external_text(body, "finish_reason", "", 80), external_text(body, "error_code", "", 80), external_text(body, "error_message", "", 500), external_text(body, "prompt_summary", "", 500), external_text(body, "response_summary", "", 500), source_app, "external", ts, source_app, request_id])
-	if len(rows) == 0 {
-		existing = db_query(db, "SELECT id FROM requests WHERE source_app = ? AND request_id = ? ORDER BY id ASC LIMIT 1", [source_app, request_id])
-		if len(existing) == 0 { throw("external request disappeared during deduplication") }
-		return {"ok": true, "id": existing[0]["id"], "deduplicated": true}
-	}
+	rows := db_query(writer, "INSERT INTO requests (session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, provider, model, request_id, status, input_tokens, output_tokens, total_tokens, cached_input_tokens, cache_write_input_tokens, cost_usd, input_cost_usd, output_cost_usd, cached_input_cost_usd, cache_write_input_cost_usd, input_rate_per_million, output_rate_per_million, cached_input_rate_per_million, cache_write_input_rate_per_million, pricing_source, pricing_kind, priced_model, latency_ms, finish_reason, error_code, error_message, prompt_summary, response_summary, source_app, data_class, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id", [session_id, external_text(body, "user_id", "", 120), external_text(body, "tenant_id", "", 120), external_text(body, "project_id", "", 120), external_text(body, "workflow_id", "", 120), external_text(body, "task_id", "", 160), external_text(body, "correlation_id", "", 160), external_text(body, "provider", "external", 160), model_name, request_id, status, input_tokens, output_tokens, total_tokens, cached_input_tokens, cache_write_input_tokens, cost_usd, pricing["input_cost_usd"], pricing["output_cost_usd"], pricing["cached_input_cost_usd"], pricing["cache_write_input_cost_usd"], pricing["input_rate_per_million"], pricing["output_rate_per_million"], pricing["cached_input_rate_per_million"], pricing["cache_write_input_rate_per_million"], pricing["pricing_source"], pricing["pricing_kind"], pricing["priced_model"], latency_ms, external_text(body, "finish_reason", "", 80), external_text(body, "error_code", "", 80), external_text(body, "error_message", "", 500), external_text(body, "prompt_summary", "", 500), external_text(body, "response_summary", "", 500), source_app, "external", ts])
 	request_dbid := rows[0]["id"]
 
-	session_id := external_text(body, "session_id", request_id, 160)
-	explicit_step_count := insert_external_agent_steps(request_dbid, body, source_app, session_id)
-	trace_result := insert_trace_bundle(request_dbid, body, source_app, session_id, "external")
+	explicit_step_count := insert_external_agent_steps(writer, request_dbid, body, source_app, session_id)
+	trace_result := insert_trace_bundle(writer, request_dbid, body, source_app, session_id, "external")
 	derived_step_count := 0
 	if explicit_step_count == 0 {
-		derived_step_count = insert_external_derived_agent_steps(request_dbid, body, source_app, session_id)
+		derived_step_count = insert_external_derived_agent_steps(writer, request_dbid, body, source_app, session_id)
 	}
 	if explicit_step_count == 0 && derived_step_count == 0 {
 		fallback_step_type := external_text(body, "step_type", "request_completed", 80)
@@ -2445,9 +2447,43 @@ func insert_external_request(body) {
 				fallback_content = truncate_str(redact_sensitive_text(first_tool_name + " completed"), 500)
 			}
 		}
-		append_agent_step(session_id, external_text(body, "agent_id", source_app, 120), fallback_step_type, fallback_content, to_json({"request_dbid": request_dbid, "task_id": external_text(body, "task_id", "", 160), "correlation_id": external_text(body, "correlation_id", "", 160)}), source_app, "external", ts)
+		append_agent_step(writer, session_id, external_text(body, "agent_id", source_app, 120), fallback_step_type, fallback_content, to_json({"request_dbid": request_dbid, "task_id": external_text(body, "task_id", "", 160), "correlation_id": external_text(body, "correlation_id", "", 160)}), source_app, "external", ts)
 	}
 	return {"ok": true, "id": request_dbid, "deduplicated": false, "trace": trace_result}
+}
+
+func persist_external_telemetry(body, include_request) {
+	source_app := external_text(body, "source_app", "external", 80)
+	fallback_session := ""
+	if include_request { fallback_session = external_text(body, "request_id", "", 160) }
+	session_id := external_text(body, "session_id", fallback_session, 160)
+	writer := open_storage_writer()
+	owned_writer := DB_PATH != ":memory:"
+	in_transaction := false
+	result := {}
+	try {
+		db_execute(writer, "BEGIN IMMEDIATE", [])
+		in_transaction = true
+		if include_request {
+			result = insert_external_request(writer, body, source_app, session_id)
+		} else {
+			result = insert_trace_bundle(writer, to_int_or_zero(safe_dict_get(body, "request_dbid", 0)), body, source_app, session_id, "external")
+		}
+		db_execute(writer, "COMMIT", [])
+		in_transaction = false
+		if owned_writer { db_close(writer) }
+	} except err {
+		if in_transaction { try { db_execute(writer, "ROLLBACK", []) } except rollback_err {} }
+		if owned_writer { try { db_close(writer) } except close_err {} }
+		throw(err)
+	}
+	if include_request {
+		if result["ok"] && result["deduplicated"] == false {
+			result["trace"] = attach_v1_canonical_copy(result["trace"], body, source_app, session_id)
+		}
+		return result
+	}
+	return attach_v1_canonical_copy(result, body, source_app, session_id)
 }
 
 func insert_audit_event(action, actor_key, result, metadata) {
@@ -4314,7 +4350,7 @@ server := server.route("POST", "/api/telemetry/requests", func(req) {
 		return api_error(400, metric_error)
 	}
 	try {
-		result := insert_external_request(body_parse["data"])
+		result := persist_external_telemetry(body_parse["data"], true)
 		if !result["ok"] {
 			return api_error(400, result["error"])
 		}
@@ -4360,10 +4396,12 @@ server := server.route("POST", "/api/telemetry/traces", func(req) {
 	if trace_id == "" {
 		return api_error(400, "trace_id is required")
 	}
-	source_app := external_text(body, "source_app", "external", 80)
-	session_id := external_text(body, "session_id", "", 160)
-	result := insert_trace_bundle(to_int_or_zero(safe_dict_get(body, "request_dbid", 0)), body, source_app, session_id, "external")
-	return api_ok(result)
+	try {
+		return api_ok(persist_external_telemetry(body, false))
+	} except err {
+		print("External trace intake failed: " + to_string(err))
+		return api_error(500, "External trace intake failed")
+	}
 })
 
 # Canonical ingestion is separate from dashboard/internal API routes. Adapters

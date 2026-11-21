@@ -376,6 +376,35 @@ async function run() {
 			}
 		} finally { persisted.close(); }
 
+		const failures = new DatabaseSync(DB_PATH);
+		try {
+			const interrupted = {
+				source_app: 'rollback-fixture', request_id: 'rollback-request', session_id: 'rollback-session',
+				trace: {trace_id: 'rollback-trace', started_at_ms: 1000, ended_at_ms: 2000},
+				spans: [{span_id: 'rollback-span', started_at_ms: 1000, ended_at_ms: 2000}],
+				agent_steps: [{step_type: 'completed', title: 'rollback step'}]
+			};
+			failures.exec("CREATE TRIGGER block_step BEFORE INSERT ON agent_steps WHEN NEW.session_id = 'rollback-session' BEGIN SELECT RAISE(ABORT, 'fixture step write failed'); END");
+			const rejected = await httpPost('/api/telemetry/requests', interrupted);
+			assert.strictEqual(rejected.status, 500, rejected.body);
+			assert.strictEqual(failures.prepare("SELECT COUNT(*) AS n FROM requests WHERE request_id = 'rollback-request'").get().n, 0);
+			failures.exec('DROP TRIGGER block_step');
+
+			const traceOnly = {...interrupted, trace: {...interrupted.trace, trace_id: 'rollback-trace-only'}};
+			failures.exec("CREATE TRIGGER block_span BEFORE INSERT ON trace_spans WHEN NEW.trace_id = 'rollback-trace-only' BEGIN SELECT RAISE(ABORT, 'fixture span write failed'); END");
+			const rejectedTrace = await httpPost('/api/telemetry/traces', traceOnly);
+			assert.strictEqual(rejectedTrace.status, 500, rejectedTrace.body);
+			assert.strictEqual(failures.prepare("SELECT COUNT(*) AS n FROM traces WHERE trace_id = 'rollback-trace-only'").get().n, 0);
+			failures.exec('DROP TRIGGER block_span');
+
+			const retried = await httpPost('/api/telemetry/requests', interrupted);
+			assert.strictEqual(retried.status, 200, retried.body);
+			const receipt = parseJson(retried.body, 'replayed intake').data;
+			assert.strictEqual(receipt.deduplicated, false);
+			assert.strictEqual(failures.prepare("SELECT request_dbid FROM traces WHERE trace_id = 'rollback-trace'").get().request_dbid, receipt.id);
+			assert.strictEqual((await httpPost('/api/telemetry/traces', traceOnly)).status, 200);
+		} finally { failures.close(); }
+
 		console.log('watchdog_api_route_suite: PASS');
 	} finally {
 		await stopServer(server);

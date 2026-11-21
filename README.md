@@ -515,8 +515,8 @@ API responses include `X-Watchdog-API-Version: v1` so consumers can pin behavior
 | `POST` | `/api/sources/:id/verify` | Verify accepted local telemetry without network contact |
 | `GET` | `/api/stats` | Overview stats |
 | `GET` | `/api/requests` | Latest request logs; filter by `source_app`, `data_class`, or `pricing_kind` |
-| `POST` | `/api/telemetry/requests` | Authenticated, idempotent intake for telemetry from trusted local apps |
-| `POST` | `/api/telemetry/traces` | Append independent spans/events to a trace without creating a model-request row |
+| `POST` | `/api/telemetry/requests` | Atomically record the request and related legacy telemetry from trusted local apps. Retries are idempotent per source. |
+| `POST` | `/api/telemetry/traces` | Atomically append independent spans and events to a trace |
 | `GET` | `/api/traces` | Latest granular traces |
 | `GET` | `/api/trace-spans` | Latest spans; filter by `trace_id` |
 | `GET` | `/api/trace-events` | Latest events; filter by `trace_id` |
