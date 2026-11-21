@@ -54,7 +54,7 @@ Start server:
 
 ## 2. Network Exposure Guidance
 
-- Watchdog defaults to all interfaces (`0.0.0.0`); set `WDG_HOST=127.0.0.1` for loopback-only access.
+- Watchdog defaults to `127.0.0.1`. For an explicitly networked deployment, set `WDG_HOST` to the intended interface and apply the authentication and network controls in this runbook.
 - For non-local deployments, do not rely on network defaults alone.
 - Require `WDG_API_AUTH_MODE=token`.
 - Require `WDG_PROXY_AUTHZ_MODE=token`.

@@ -1439,7 +1439,7 @@ func resolve_override_api_key(cfg) {
 }
 
 PORT := parse_int_env_many(["WDG_PORT"], DEFAULT_PORT)
-BIND_HOST := env_or("WDG_HOST", "0.0.0.0")
+BIND_HOST := env_or("WDG_HOST", "127.0.0.1")
 DB_PATH := env_or_many(["WDG_DB_PATH"], DEFAULT_DB_PATH)
 PROXY_CONFIG_PATH := env_or_many(["WDG_PROXY_CONFIG_PATH"], DEFAULT_PROXY_CONFIG_PATH)
 SOURCES_CONFIG_PATH := env_or_many(["WDG_SOURCES_CONFIG_PATH"], DEFAULT_SOURCES_CONFIG_PATH)

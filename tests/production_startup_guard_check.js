@@ -68,6 +68,7 @@ async function startServer(port, dbPath, extraEnv = {}) {
 		env: {
 			...process.env,
 			WDG_PORT: String(port),
+			WDG_HOST: '',
 			WDG_DB_PATH: dbPath,
 			...extraEnv,
 		},
@@ -98,6 +99,7 @@ async function expectStartupFailure(port, dbPath, extraEnv = {}) {
 		env: {
 			...process.env,
 			WDG_PORT: String(port),
+			WDG_HOST: '',
 			WDG_DB_PATH: dbPath,
 			...extraEnv,
 		},
@@ -181,6 +183,7 @@ async function run() {
 			WDG_PROXY_AUTHZ_TOKEN: 'startup-proxy-token',
 		});
 
+		assert.match(secureHandle.outputRef(), /Server listening on http:\/\/127\.0\.0\.1:7722/);
 		const secureNoToken = await httpRequest(7722, 'GET', '/api/stats');
 		assert.strictEqual(secureNoToken.status, 401, 'production profile should enforce API token auth when configured securely');
 

@@ -126,7 +126,7 @@ Environment variables:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `WDG_HOST` | `0.0.0.0` | Bind address; use `127.0.0.1` for a local-only instance |
+| `WDG_HOST` | `127.0.0.1` | Bind address. Set an explicit interface for remote access. |
 | `WDG_PORT` | `7700` | HTTP port for Watchdog + proxy |
 | `WDG_DB_PATH` | `data/watchdog.db` | SQLite path for logs |
 | `WDG_PROXY_CONFIG_PATH` | `watchdog_proxy_config.json` | JSON config file path |
@@ -307,7 +307,7 @@ kujo run dashboard_server.kujo
 
 ## Non-local deployment hardening
 
-- Set `WDG_HOST=127.0.0.1` for loopback-only access; the default is `0.0.0.0` (all interfaces).
+- Watchdog binds to IPv4 loopback by default. Deployments that previously relied on the all-interface default can set `WDG_HOST=0.0.0.0` explicitly after configuring the production authentication and network controls below.
 - Treat `WDG_API_AUTH_MODE=off` as local-only usage.
 - For non-local access, enable `WDG_API_AUTH_MODE=token`, enable `WDG_PROXY_AUTHZ_MODE=token`, and place Watchdog behind firewall rules or a reverse proxy.
 
