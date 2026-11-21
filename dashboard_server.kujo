@@ -2767,6 +2767,18 @@ func create_backup_run(trigger_type) {
 		return {"ok": false, "error": "A Watchdog backup is already in progress"}
 	}
 	BACKUP_IN_PROGRESS = true
+	result := {}
+	try {
+		result = perform_backup_run(trigger_type)
+	} except err {
+		BACKUP_IN_PROGRESS = false
+		throw(err)
+	}
+	BACKUP_IN_PROGRESS = false
+	return result
+}
+
+func perform_backup_run(trigger_type) {
 	started_ms := current_timestamp()
 	settings := read_backup_settings()
 	run_id := 0
@@ -2775,7 +2787,6 @@ func create_backup_run(trigger_type) {
 		error_message := "Backup encryption is enabled but WDG_BACKUP_ENCRYPTION_KEY_FILE is not configured"
 		db_execute(db, "INSERT INTO backup_runs (trigger_type, status, error_message, started_at_ms, finished_at_ms) VALUES (?, 'failed', ?, ?, ?)", [trigger_type, error_message, started_ms, current_timestamp()])
 		insert_audit_event("backup_operation", "system", "failed", {"trigger": trigger_type, "reason": "encryption_key_not_configured"})
-		BACKUP_IN_PROGRESS = false
 		return {"ok": false, "error": error_message}
 	}
 
@@ -2817,7 +2828,6 @@ func create_backup_run(trigger_type) {
 		id_rows := db_query(db, "INSERT INTO backup_runs (trigger_type, status, backup_path, checksum_path, size_bytes, encrypted, started_at_ms, finished_at_ms) VALUES (?, 'success', ?, ?, ?, ?, ?, ?) RETURNING id", [trigger_type, backup_path, checksum_path, size_bytes, encrypted, started_ms, finished_ms])
 		run_id = to_int_or_zero(id_rows[0]["id"])
 		insert_audit_event("backup_operation", "system", "success", {"trigger": trigger_type, "encrypted": encrypted == 1, "size_bytes": size_bytes})
-		BACKUP_IN_PROGRESS = false
 		return {"ok": true, "run_id": run_id, "backup_path": backup_path, "checksum_path": checksum_path, "size_bytes": size_bytes, "encrypted": encrypted == 1}
 	}
 
@@ -2836,7 +2846,6 @@ func create_backup_run(trigger_type) {
 	id_rows := db_query(db, "INSERT INTO backup_runs (trigger_type, status, error_message, started_at_ms, finished_at_ms) VALUES (?, 'failed', ?, ?, ?) RETURNING id", [trigger_type, error_message, started_ms, current_timestamp()])
 	run_id = to_int_or_zero(id_rows[0]["id"])
 	insert_audit_event("backup_operation", "system", "failed", {"trigger": trigger_type, "reason": error_message})
-	BACKUP_IN_PROGRESS = false
 	return {"ok": false, "run_id": run_id, "error": error_message}
 }
 

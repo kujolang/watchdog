@@ -6,6 +6,13 @@ const {spawnSync} = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const out = path.resolve(root, process.env.WDG_VERIFICATION_DIR || 'tmp/verification');
 fs.mkdirSync(out, {recursive: true});
+// Backup tests set their own private directories. Other fixtures must never
+// schedule backups or run retention in an operator's configured folder.
+const testEnv = {
+	...process.env,
+	WDG_BACKUP_ENABLED: 'false',
+	WDG_BACKUP_DIR: path.join(out, 'backup-fixtures'),
+};
 const tests = fs.readdirSync(path.join(root, 'tests')).filter(name => /\.(?:js|mjs)$/.test(name) && !name.startsWith('_')).sort();
 const results = [];
 for (const name of tests) {
@@ -18,7 +25,7 @@ for (const name of tests) {
 	const start = performance.now();
 	let result;
 	try {
-		result = spawnSync(process.execPath, [path.join('tests', name)], {cwd: root, env: process.env, stdio: ['ignore', fd, fd]});
+		result = spawnSync(process.execPath, [path.join('tests', name)], {cwd: root, env: testEnv, stdio: ['ignore', fd, fd]});
 	} finally { fs.closeSync(fd); }
 	const passed = !result.error && result.status === 0;
 	results.push({test: name, status: passed ? 'passed' : 'failed', exit_code: result.status, signal: result.signal, seconds: (performance.now() - start) / 1000, log, ...(result.error ? {error: result.error.message} : {})});

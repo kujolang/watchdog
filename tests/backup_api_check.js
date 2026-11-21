@@ -3,6 +3,7 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const {DatabaseSync} = require('node:sqlite');
 const { spawn, spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
@@ -24,7 +25,10 @@ function request(port, method, pathname, token, payload) {
 		const req = http.request({ host: '127.0.0.1', port, method, path: pathname, headers }, res => {
 			let text = '';
 			res.on('data', chunk => { text += chunk.toString(); });
-			res.on('end', () => resolve({ status: res.statusCode || 0, json: JSON.parse(text) }));
+			res.on('end', () => {
+				const json = res.headers['content-type']?.includes('application/json') ? JSON.parse(text) : null;
+				resolve({status: res.statusCode || 0, json, text});
+			});
 		});
 		req.on('error', reject);
 		if (body) req.write(body);
@@ -136,6 +140,15 @@ async function run() {
 		assert.strictEqual(fs.existsSync(folderOnlyPath + '.sha256'), false);
 		assert.strictEqual(deletedFolderOnly.json.data.status.active_runs.length, 0);
 		assert.strictEqual(deletedFolderOnly.json.data.status.archived_runs.length, 1);
+		const db = new DatabaseSync(dbPath);
+		try {
+			db.exec("CREATE TRIGGER block_backup_receipt BEFORE INSERT ON backup_runs BEGIN SELECT RAISE(ABORT, 'backup receipt fixture'); END");
+			const failure = await request(port, 'POST', '/api/admin/backups/run', token, null);
+			assert.strictEqual(failure.status, 500, failure.text);
+			db.exec('DROP TRIGGER block_backup_receipt');
+			const recovered = await request(port, 'POST', '/api/admin/backups/run', token, null);
+			assert.strictEqual(recovered.status, 200, recovered.text);
+		} finally { db.close(); }
 		console.log('backup_api_check: PASS');
 	} finally {
 		child.kill('SIGTERM');

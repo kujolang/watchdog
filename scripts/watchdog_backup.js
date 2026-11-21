@@ -72,25 +72,25 @@ function assertSecureKeyFile(keyPath) {
 function pruneOldBackups(outDir, retentionCount, latestPath) {
 	const manifestPath = path.join(outDir, '.watchdog-backups.json');
 	const knownPattern = /^watchdog-backup-\d{8}T\d{9}Z-[a-f0-9]{6}\.db(?:\.enc)?$/;
-	const candidates = [...new Set([
-		...fs.readdirSync(outDir)
-			.filter(name => knownPattern.test(name))
-			.map(name => path.join(outDir, name)),
-		latestPath,
-	])]
-		.filter(target => fs.existsSync(target) && path.dirname(target) === outDir && knownPattern.test(path.basename(target)))
+	const candidates = fs.readdirSync(outDir, {withFileTypes: true})
+		.filter(entry => entry.isFile() && knownPattern.test(entry.name))
+		.map(entry => path.join(outDir, entry.name))
+		.filter(target => target !== latestPath)
 		.sort();
-	const removeCount = Math.max(0, candidates.length - retentionCount);
-	const removed = [];
-	for (const target of candidates.slice(0, removeCount)) {
+	const removeCount = Math.max(0, candidates.length + 1 - retentionCount);
+	const removed = candidates.slice(0, removeCount);
+	for (const target of removed) {
 		fs.rmSync(target, { force: true });
 		fs.rmSync(target + '.sha256', { force: true });
-		removed.push(target);
 	}
-	const retained = candidates.slice(removeCount);
-	const manifestTemp = manifestPath + '.tmp';
-	fs.writeFileSync(manifestTemp, JSON.stringify(retained, null, 2) + '\n', { mode: 0o600 });
-	fs.renameSync(manifestTemp, manifestPath);
+	const retained = [...candidates.slice(removeCount), latestPath].sort();
+	const manifestTemp = manifestPath + '.' + crypto.randomUUID() + '.tmp';
+	try {
+		fs.writeFileSync(manifestTemp, JSON.stringify(retained, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+		fs.renameSync(manifestTemp, manifestPath);
+	} finally {
+		fs.rmSync(manifestTemp, { force: true });
+	}
 	return removed;
 }
 
@@ -108,17 +108,22 @@ function main(args) {
 
 	const stamp = utcStamp();
 	const baseName = 'watchdog-backup-' + stamp + '-' + crypto.randomBytes(3).toString('hex') + '.db';
-	const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-backup-'));
-	const plainTemp = path.join(workDir, baseName);
-	const encryptedTemp = path.join(workDir, baseName + '.enc');
 	const finalPath = path.join(outDir, baseName + (args.encryptionKeyFile ? '.enc' : ''));
-	const destinationTemp = path.join(outDir, '.' + path.basename(finalPath) + '.upload.tmp');
-	const checksumTemp = finalPath + '.sha256.tmp';
 	const checksumPath = finalPath + '.sha256';
 	let resultPayload = null;
 
-	if (fs.existsSync(finalPath)) throw new Error('A backup with this timestamp already exists');
+	if (fs.existsSync(finalPath) || fs.existsSync(checksumPath)) throw new Error('A backup with this timestamp already exists');
+	const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-backup-'));
+	const plainTemp = path.join(workDir, baseName);
+	const encryptedTemp = path.join(workDir, baseName + '.enc');
+	let publishDir;
+	let checksumPublished = false;
+	let backupPublished = false;
 	try {
+		// Keep staging private and on the destination volume for atomic publication.
+		publishDir = fs.mkdtempSync(path.join(outDir, '.watchdog-backup-'));
+		const destinationTemp = path.join(publishDir, 'backup');
+		const checksumTemp = path.join(publishDir, 'checksum');
 		run('sqlite3', [dbPath, '.timeout 10000', 'VACUUM INTO ' + sqliteStringLiteral(plainTemp) + ';'], 'SQLite online backup');
 		const quickCheck = run('sqlite3', [plainTemp, 'PRAGMA quick_check;'], 'Backup integrity check');
 		if (quickCheck.trim().toLowerCase() !== 'ok') throw new Error('Backup integrity check did not return ok');
@@ -134,13 +139,15 @@ function main(args) {
 		const completedTemp = args.encryptionKeyFile ? encryptedTemp : plainTemp;
 		fs.copyFileSync(completedTemp, destinationTemp, fs.constants.COPYFILE_EXCL);
 		fs.chmodSync(destinationTemp, 0o600);
-		fs.renameSync(destinationTemp, finalPath);
-
-		const digest = sha256(finalPath);
-		fs.writeFileSync(checksumTemp, digest + '  ' + path.basename(finalPath) + '\n', { mode: 0o600 });
+		const stat = fs.statSync(destinationTemp);
+		const digest = sha256(destinationTemp);
+		fs.writeFileSync(checksumTemp, digest + '  ' + path.basename(finalPath) + '\n', { mode: 0o600, flag: 'wx' });
 		fs.renameSync(checksumTemp, checksumPath);
+		checksumPublished = true;
+		// The dashboard discovers the backup by its final database filename.
+		fs.renameSync(destinationTemp, finalPath);
+		backupPublished = true;
 		const removed = pruneOldBackups(outDir, args.retentionCount, finalPath);
-		const stat = fs.statSync(finalPath);
 		resultPayload = {
 			ok: true,
 			path: finalPath,
@@ -151,8 +158,8 @@ function main(args) {
 			retention_removed: removed.length,
 		};
 	} finally {
-		fs.rmSync(destinationTemp, { force: true });
-		fs.rmSync(checksumTemp, { force: true });
+		if (checksumPublished && !backupPublished) fs.rmSync(checksumPath, { force: true });
+		if (publishDir) fs.rmSync(publishDir, { recursive: true, force: true });
 		fs.rmSync(workDir, { recursive: true, force: true });
 	}
 	return resultPayload;

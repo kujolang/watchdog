@@ -379,7 +379,7 @@ Watchdog enables verified SQLite backups by default every 24 hours. Open the
 retention count, encryption setting, or to create a backup immediately.
 
 - Backups use SQLite's online `VACUUM INTO` path, so Watchdog does not need to stop.
-- Each backup is checked with `PRAGMA quick_check` and receives a `.sha256` sidecar.
+- Each backup is checked with `PRAGMA quick_check` and published after its `.sha256` sidecar is ready. Use a separate destination folder for each database.
 - A Dropbox or Google Drive folder can be selected by entering its local synced path.
 - Scheduling is activity-aware: startup, dashboard refreshes, proxy traffic, and direct telemetry trigger a due check. If Watchdog is idle, the next activity creates the overdue backup before continuing.
 - Generated files use `watchdog-backup-<UTC timestamp>-<suffix>.db` or `.db.enc`; retention only removes files matching that pattern.
@@ -689,7 +689,8 @@ are not qualified for concurrent intake. Run the bounded regression with
 
 Run `KUJO_BIN=/path/to/kujo npm test` for all self-contained JavaScript and MJS
 checks. Logs and a structured receipt are saved in `tmp/verification/`; override
-that directory with `WDG_VERIFICATION_DIR`. Set `AGENTS_SDK_PATH` to include the
+that directory with `WDG_VERIFICATION_DIR`. The suite disables scheduled
+backups and gives backup fixtures dedicated destinations. Set `AGENTS_SDK_PATH` to include the
 external Agents SDK integration (otherwise explicitly reported as skipped).
 Run `npm ci --ignore-scripts`, `npm run build:charts`, and `npm run typecheck`
 for dashboard assets. CI also rejects generated asset drift.

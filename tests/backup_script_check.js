@@ -7,8 +7,8 @@ const { spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 
-function run(args) {
-	return spawnSync(process.execPath, ['scripts/watchdog_backup.js', ...args], {
+function run(args, nodeArgs = []) {
+	return spawnSync(process.execPath, [...nodeArgs, 'scripts/watchdog_backup.js', ...args], {
 		cwd: ROOT,
 		encoding: 'utf8',
 	});
@@ -70,6 +70,21 @@ function runTest() {
 		fs.writeFileSync(path.join(backups, orphanName + '.sha256'), 'stale checksum');
 		result = run(['--db', db, '--out-dir', backups, '--retention-count', '2']);
 		assert.strictEqual(result.status, 0, result.stderr || result.stdout);
+		const failedPublishDir = path.join(temp, 'failed-checksum');
+		const injectFailure = path.join(temp, 'fail-checksum.cjs');
+		fs.writeFileSync(injectFailure, `
+			const fs = require('node:fs');
+			const rename = fs.renameSync;
+			fs.renameSync = (from, to) => {
+				if (to.endsWith('.sha256')) throw new Error('fixture checksum publication failed');
+				return rename(from, to);
+			};
+		`);
+		const failure = run(['--db', db, '--out-dir', failedPublishDir], ['--require', injectFailure]);
+		assert.strictEqual(failure.status, 1, failure.stderr || failure.stdout);
+		assert.match(parseResult(failure).error, /fixture checksum publication failed/);
+		assert.deepStrictEqual(fs.readdirSync(failedPublishDir), [], 'failed checksum publication left a discoverable backup');
+
 		const retainedAfterManifestLoss = fs.readdirSync(backups).filter(name => /^watchdog-backup-.*\.db(?:\.enc)?$/.test(name));
 		assert.strictEqual(retainedAfterManifestLoss.length, 2, 'retention should inventory files even when the manifest is missing');
 		assert.strictEqual(fs.existsSync(path.join(backups, orphanName)), false, 'old orphaned backup should be pruned');
