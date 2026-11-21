@@ -2,7 +2,7 @@
 
 Watchdog exports policy-approved canonical telemetry through a bounded SQLite delivery journal. Canonical ingestion commits accepted records and their configured delivery references in one SQLite transaction. Ingestion only enqueues local references; remote latency and outages do not sit on the model/proxy request path. `export_worker.kujo` maps and sends due deliveries. Run it once from a scheduler or with `--watch` under a local supervisor.
 
-Copy `config/exporters.example.json` to an operator-owned path and set `WDG_EXPORTERS_CONFIG_PATH`. A profile has an independent ID, endpoint, mapping profile, retry state, and delivery row. Up to 16 enabled OTLP/HTTP profiles may run together. Watchdog supports OTLP/HTTP JSON; direct it to an OpenTelemetry Collector or a destination’s documented OTLP endpoint.
+Copy `config/exporters.example.json` to an operator-owned path and set `WDG_EXPORTERS_CONFIG_PATH`. A profile has an independent ID, endpoint, mapping profile, retry state, and delivery row. Up to 16 enabled OTLP/HTTP profiles may run together. Watchdog supports OTLP/HTTP JSON and Protobuf; direct it to an OpenTelemetry Collector or a destination’s documented OTLP endpoint.
 
 Supported mapping profiles:
 
@@ -32,7 +32,12 @@ Redirects are disabled, response bodies are capped at 64 KiB, and remote HTTPS p
 
 ## Delivery semantics
 
-- `2xx`: sent, unless OTLP reports rejected spans; unidentifiable partial failures retry the batch with documented duplicate risk.
+A file-backed database has one exporter worker at a time. Watchdog takes a write reservation in the separate SQLite file `<database>.watchdog-export.lock` beside the resolved telemetry database. A second invocation exits with a lock error and can be retried by its supervisor. Use one scheduler or one `--watch` process per database. Keep the lock file in place while workers run. A process exit releases the lock.
+
+A collector response and its journal updates are committed as one SQLite transaction after network I/O. An interruption between the response and the local commit can still cause replay, so delivery remains at least once. Queue eviction during a request remains terminal in the journal.
+
+
+- `2xx`: sent when the collector reports no rejected spans.
 - network errors, timeouts, `408`, `429`, and `5xx`: retry with capped exponential jitter; integer `Retry-After` is honored up to five minutes.
 - `401/403`: pause the profile to prevent credential hammering.
 - other `4xx`: dead-letter with bounded reason and payload hash.

@@ -22,12 +22,14 @@ function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 function createCollector(port, status, protobuf = false) {
 	const received = [];
+	let holdResponse;
 	const server = http.createServer((req, res) => {
 		const chunks = [];
 		req.on('data', (chunk) => { chunks.push(chunk); });
-		req.on('end', () => {
+		req.on('end', async () => {
 			const body = Buffer.concat(chunks);
 			received.push({method: req.method, url: req.url, headers: req.headers, body});
+			if (holdResponse) await holdResponse();
 			res.writeHead(req.url === '/partial/v1/traces' ? 200 : status, {'Content-Type': protobuf ? 'application/x-protobuf' : 'application/json', ...(status === 429 ? {'Retry-After': '1'} : {})});
 			if (req.url === '/partial/v1/traces') {
 				res.end(protobuf ? Buffer.from([0x0a, 0x02, 0x08, 0x01]) : '{"partialSuccess":{"rejectedSpans":"1"}}');
@@ -38,7 +40,7 @@ function createCollector(port, status, protobuf = false) {
 	});
 	return new Promise((resolve, reject) => {
 		server.once('error', reject);
-		server.listen(port, '127.0.0.1', () => resolve({server, received}));
+		server.listen(port, '127.0.0.1', () => resolve({server, received, hold: callback => { holdResponse = callback; }}));
 	});
 }
 
@@ -211,7 +213,7 @@ async function run() {
 		try {
 			assert.strictEqual(boundDb.prepare("SELECT DISTINCT last_http_status FROM telemetry_export_deliveries WHERE profile_id = 'success'").get().last_http_status, 202);
 			const profile = JSON.parse(fs.readFileSync(configPath, 'utf8')).exporters.find(entry => entry.id === 'success');
-			fs.writeFileSync(configPath, JSON.stringify({exporters: [profile]}));
+			fs.writeFileSync(configPath, JSON.stringify({exporters: [{...profile, timeout_seconds: 30}]}));
 			const batchId = boundDb.prepare('SELECT batch_dbid FROM telemetry_records_v2 LIMIT 1').get().batch_dbid;
 			const insertRecord = boundDb.prepare("INSERT INTO telemetry_records_v2 (batch_dbid, producer_name, record_id, record_type, trace_id, observed_at, canonical_json, created_at) VALUES (?, 'fixture', ?, 'span', ?, ?, ?, ?)");
 			const enqueue = boundDb.prepare("INSERT INTO telemetry_export_deliveries (profile_id, record_dbid, status, created_at_ms, updated_at_ms) VALUES ('success', ?, 'pending', ?, ?)");
@@ -234,6 +236,42 @@ async function run() {
 			const [span] = JSON.parse(item.body).resourceSpans[0].scopeSpans[0].spans;
 			return span.attributes.find(attribute => attribute.key === 'watchdog.record.id').value.stringValue;
 		}), ['bound-0', 'bound-1']);
+
+		const journal = new DatabaseSync(dbPath);
+		try {
+			const ids = journal.prepare("SELECT id FROM telemetry_export_deliveries WHERE profile_id = 'success' ORDER BY id LIMIT 2").all().map(row => row.id);
+			journal.prepare("UPDATE telemetry_export_deliveries SET status = 'pending', attempts = 0 WHERE id IN (?, ?)").run(...ids);
+			const countBeforeOverlap = successCollector.received.length;
+			let respond;
+			const responseBarrier = new Promise(resolve => { respond = resolve; });
+			const received = new Promise(resolve => successCollector.hold(() => {
+				successCollector.hold(null);
+				resolve();
+				return responseBarrier;
+			}));
+			const firstWorker = runWorker();
+			try {
+				await Promise.race([received, firstWorker.then(() => assert.fail('worker exited before reaching the collector'))]);
+				await assert.rejects(runWorker(), /database is locked/i);
+				assert.strictEqual(successCollector.received.length, countBeforeOverlap + 1, 'overlapping worker sent another request');
+			} finally {
+				respond();
+				successCollector.hold(null);
+				await firstWorker;
+			}
+
+			journal.prepare("UPDATE telemetry_export_deliveries SET status = 'pending', attempts = 0 WHERE id IN (?, ?)").run(...ids);
+			journal.exec(`CREATE TRIGGER block_worker_ack BEFORE UPDATE ON telemetry_export_deliveries
+				WHEN NEW.id = ${ids[1]} AND NEW.status = 'sent'
+				BEGIN SELECT RAISE(ABORT, 'fixture acknowledgement failed'); END`);
+			await assert.rejects(runWorker(), /fixture acknowledgement failed/);
+			const states = journal.prepare('SELECT status, attempts FROM telemetry_export_deliveries WHERE id IN (?, ?) ORDER BY id');
+			assert.deepStrictEqual(states.all(...ids).map(row => [row.status, row.attempts]), [['pending', 0], ['pending', 0]],
+				'first acknowledgement survived rollback of the second');
+			journal.exec('DROP TRIGGER block_worker_ack');
+			await runWorker();
+			assert.deepStrictEqual(states.all(...ids).map(row => [row.status, row.attempts]), [['sent', 1], ['sent', 1]]);
+		} finally { journal.close(); }
 	} catch (error) {
 		if (watchdog) error.stack += `\nWatchdog output:\n${watchdog.output().slice(-4000)}`;
 		throw error;

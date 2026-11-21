@@ -105,7 +105,7 @@ func worker_expire_queue(db, profile_id, max_queue_age_seconds) {
 
 func worker_mark_sent(db, delivery_rows, profile_id, http_status) {
 	now_ms := current_timestamp()
-	for row in delivery_rows { db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'sent', attempts = attempts + 1, last_http_status = ?, last_error = '', updated_at_ms = ? WHERE id = ?", [http_status, now_ms, row["delivery_id"]]) }
+	for row in delivery_rows { db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'sent', attempts = attempts + 1, last_http_status = ?, last_error = '', updated_at_ms = ? WHERE id = ? AND status IN ('pending','retry')", [http_status, now_ms, row["delivery_id"]]) }
 	worker_mark_state(db, profile_id, "ready", true, "")
 }
 
@@ -114,11 +114,12 @@ func worker_mark_retry(db, delivery_rows, profile_id, http_status, reason, retry
 	for row in delivery_rows {
 		next_attempt := worker_int(row["attempts"], 0, 0, 1000) + 1
 		if next_attempt >= max_attempts {
-			db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'dead', attempts = ?, last_http_status = ?, last_error = ?, updated_at_ms = ? WHERE id = ?", [next_attempt, http_status, substring(to_string(reason), 0, 500), now_ms, row["delivery_id"]])
+			changed := db_query(db, "UPDATE telemetry_export_deliveries SET status = 'dead', attempts = ?, last_http_status = ?, last_error = ?, updated_at_ms = ? WHERE id = ? AND status IN ('pending','retry') RETURNING id", [next_attempt, http_status, substring(to_string(reason), 0, 500), now_ms, row["delivery_id"]])
+			if len(changed) == 0 { continue }
 			db_execute(db, "INSERT INTO telemetry_export_dead_letters (delivery_id, profile_id, record_dbid, reason, payload_sha256, created_at_ms) VALUES (?,?,?,?,?,?)", [row["delivery_id"], profile_id, row["record_dbid"], substring(to_string(reason), 0, 500), "", now_ms])
 		} else {
 			delay_ms := worker_backoff_ms(next_attempt, retry_after)
-			db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'retry', attempts = ?, next_attempt_ms = ?, last_http_status = ?, last_error = ?, updated_at_ms = ? WHERE id = ?", [next_attempt, now_ms + delay_ms, http_status, substring(to_string(reason), 0, 500), now_ms, row["delivery_id"]])
+			db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'retry', attempts = ?, next_attempt_ms = ?, last_http_status = ?, last_error = ?, updated_at_ms = ? WHERE id = ? AND status IN ('pending','retry')", [next_attempt, now_ms + delay_ms, http_status, substring(to_string(reason), 0, 500), now_ms, row["delivery_id"]])
 		}
 	}
 	state_status := "degraded"
@@ -129,10 +130,24 @@ func worker_mark_retry(db, delivery_rows, profile_id, http_status, reason, retry
 func worker_mark_dead(db, delivery_rows, profile_id, http_status, reason, payload_hash) {
 	now_ms := current_timestamp()
 	for row in delivery_rows {
-		db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'dead', attempts = attempts + 1, last_http_status = ?, last_error = ?, updated_at_ms = ? WHERE id = ?", [http_status, substring(to_string(reason), 0, 500), now_ms, row["delivery_id"]])
+		changed := db_query(db, "UPDATE telemetry_export_deliveries SET status = 'dead', attempts = attempts + 1, last_http_status = ?, last_error = ?, updated_at_ms = ? WHERE id = ? AND status IN ('pending','retry') RETURNING id", [http_status, substring(to_string(reason), 0, 500), now_ms, row["delivery_id"]])
+		if len(changed) == 0 { continue }
 		db_execute(db, "INSERT INTO telemetry_export_dead_letters (delivery_id, profile_id, record_dbid, reason, payload_sha256, created_at_ms) VALUES (?,?,?,?,?,?)", [row["delivery_id"], profile_id, row["record_dbid"], substring(to_string(reason), 0, 500), payload_hash, now_ms])
 	}
 	worker_mark_state(db, profile_id, "degraded", false, reason)
+}
+
+# Keep the acknowledgement, per-record state and dead letters together.
+# The transaction starts only after mapping and network I/O are finished.
+func worker_finish_delivery(db, update) {
+	db_execute(db, "BEGIN IMMEDIATE", [])
+	try {
+		update()
+		db_execute(db, "COMMIT", [])
+	} except err {
+		try { db_execute(db, "ROLLBACK", []) } except rollback_err {}
+		throw(err)
+	}
 }
 
 func worker_due_rows(db, profile_id, limit_value) {
@@ -233,18 +248,18 @@ func worker_send_profile(db, profile) {
 	selected := worker_select_payload(rows, mapping_profile, encoding)
 	delivery_rows := selected["rows"]
 	if len(delivery_rows) == 0 {
-		worker_mark_dead(db, [rows[0]], profile_id, 0, "mapped payload exceeds 512 KiB or record is malformed", "")
+		worker_finish_delivery(db, func() { worker_mark_dead(db, [rows[0]], profile_id, 0, "mapped payload exceeds 512 KiB or record is malformed", "") })
 		return {"profile": profile_id, "status": "dead", "records": 1}
 	}
 	payload := selected["payload"]
 	if encoding == "protobuf" && type(payload) != "bytes" {
-		worker_mark_dead(db, delivery_rows, profile_id, 0, "protobuf encoder did not return bytes", "")
+		worker_finish_delivery(db, func() { worker_mark_dead(db, delivery_rows, profile_id, 0, "protobuf encoder did not return bytes", "") })
 		return {"profile": profile_id, "status": "dead", "records": len(delivery_rows), "payload_type": type(payload)}
 	}
 	if compression == "gzip" {
 		if type(payload) == "string" { payload = decode_base64(encode_base64(payload)) }
 		try { payload = gzip_compress(payload) } except err {
-			worker_mark_dead(db, delivery_rows, profile_id, 0, "gzip compression failed", "")
+			worker_finish_delivery(db, func() { worker_mark_dead(db, delivery_rows, profile_id, 0, "gzip compression failed", "") })
 			return {"profile": profile_id, "status": "dead", "records": len(delivery_rows)}
 		}
 	}
@@ -273,27 +288,28 @@ func worker_send_profile(db, profile) {
 					partial = worker_int(worker_get(partial_success, "rejectedSpans", 0), 0, 0, 1000000) > 0
 				} except err {} }
 				if partial {
-					worker_mark_dead(db, delivery_rows, profile_id, status, "OTLP partial success did not identify rejected records", "")
+					worker_finish_delivery(db, func() { worker_mark_dead(db, delivery_rows, profile_id, status, "OTLP partial success did not identify rejected records", "") })
 					return {"profile": profile_id, "status": "dead", "records": len(delivery_rows)}
 				}
-				worker_mark_sent(db, delivery_rows, profile_id, status)
+				worker_finish_delivery(db, func() { worker_mark_sent(db, delivery_rows, profile_id, status) })
 				return {"profile": profile_id, "status": "sent", "records": len(delivery_rows)}
 			}
 			if status == 401 || status == 403 {
-				worker_mark_retry(db, delivery_rows, profile_id, status, "destination authentication rejected", "", max_attempts, true)
+				worker_finish_delivery(db, func() { worker_mark_retry(db, delivery_rows, profile_id, status, "destination authentication rejected", "", max_attempts, true) })
 				return {"profile": profile_id, "status": "paused", "records": len(delivery_rows)}
 			}
 			if status == 408 || status == 429 || status >= 500 {
-				worker_mark_retry(db, delivery_rows, profile_id, status, "retryable destination response", worker_header(headers, "Retry-After"), max_attempts, false)
+				worker_finish_delivery(db, func() { worker_mark_retry(db, delivery_rows, profile_id, status, "retryable destination response", worker_header(headers, "Retry-After"), max_attempts, false) })
 				return {"profile": profile_id, "status": "retry", "records": len(delivery_rows)}
 			}
 			payload_hash_input := payload
 			if type(payload) == "bytes" { payload_hash_input = encode_base64(payload) }
-			worker_mark_dead(db, delivery_rows, profile_id, status, "permanent destination rejection", sha256(payload_hash_input))
+			payload_hash := sha256(payload_hash_input)
+			worker_finish_delivery(db, func() { worker_mark_dead(db, delivery_rows, profile_id, status, "permanent destination rejection", payload_hash) })
 			return {"profile": profile_id, "status": "dead", "records": len(delivery_rows)}
 		}
 		case Err(error): {
-			worker_mark_retry(db, delivery_rows, profile_id, 0, "network error: " + to_string(error), "", max_attempts, false)
+			worker_finish_delivery(db, func() { worker_mark_retry(db, delivery_rows, profile_id, 0, "network error: " + to_string(error), "", max_attempts, false) })
 			return {"profile": profile_id, "status": "retry", "records": len(delivery_rows)}
 		}
 	}
@@ -307,7 +323,16 @@ func worker_once(db, profiles) {
 
 db_path := worker_env("WDG_DB_PATH", "data/watchdog.db")
 config_path := worker_env("WDG_EXPORTERS_CONFIG_PATH", "watchdog_exporters.json")
+# A separate SQLite file coordinates workers without holding a write lock
+# on telemetry during network I/O. Process exit releases the sidecar lock.
 db := db_connect("sqlite", db_path)
+worker_lock := null
+if db_path != ":memory:" {
+	worker_lock = db_connect("sqlite", path_absolute(db_path) + ".watchdog-export.lock")
+	db_query(worker_lock, "PRAGMA busy_timeout=0", [])
+	db_execute(worker_lock, "BEGIN IMMEDIATE", [])
+}
+db_query(db, "PRAGMA busy_timeout=5000", [])
 watchdog_ensure_schema(db)
 profiles := watchdog_delivery_load_profiles(config_path)
 argv := args()
@@ -321,4 +346,9 @@ if watch_mode {
 	}
 } else {
 	print(to_json({"contract_version": "watchdog.exporter.v1", "results": worker_once(db, profiles)}))
+}
+
+if worker_lock != null {
+	db_execute(worker_lock, "ROLLBACK", [])
+	db_close(worker_lock)
 }
