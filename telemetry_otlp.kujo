@@ -73,14 +73,26 @@ func otlp_add_attribute(attributes, key, value) {
 
 func otlp_timestamp_nano(value) {
 	text := otlp_text(value, 80)
-	if len(text) >= 19 {
-		base := substring(text, 0, 19)
-		try {
-			seconds := parse_date(base, "YYYY-MM-DDTHH:mm:ss")
-			return to_string(seconds * 1000000000)
-		} except err {}
-	}
-	return to_string(current_timestamp() * 1000000)
+	if len(text) < 20 { return "0" }
+	nanos := 0
+	whole_second := text
+	try {
+		if substring(text, 19, 20) == "." {
+			suffix := 20
+			while suffix < len(text) && contains("0123456789", substring(text, suffix, suffix + 1)) {
+				suffix = suffix + 1
+			}
+			if suffix == 20 || suffix == len(text) { return "0" }
+			fraction := substring(substring(text, 20, suffix) + "000000000", 0, 9)
+			nanos = parse_int(fraction)
+			whole_second = substring(text, 0, 19) + substring(text, suffix, len(text))
+		}
+		# Parse the timestamp with its offset, then add fractional digits as
+		# an integer to avoid rounding against an epoch-sized float.
+		seconds := parse_int(to_string(parse_datetime(whole_second)))
+		if seconds < 0 || seconds > 9223372036 || (seconds == 9223372036 && nanos > 854775807) { return "0" }
+		return to_string(seconds * 1000000000 + nanos)
+	} except err { return "0" }
 }
 
 func otlp_status(value) {
@@ -197,8 +209,10 @@ func otlp_record_span(record, profile) {
 	record_type := otlp_text(otlp_get(record, "record_type", ""), 20)
 	if span_id == "" { span_id = substring(sha256("watchdog:" + trace_id + ":" + otlp_text(otlp_get(record, "record_id", ""), 160)), 0, 16) }
 	parent_span_id := otlp_text(otlp_get(record, "parent_span_id", ""), 16)
-	started_at := otlp_get(record, "started_at", otlp_get(record, "observed_at", null))
-	ended_at := otlp_get(record, "ended_at", started_at)
+	started_at := otlp_get(record, "started_at", null)
+	if type(started_at) == "null" { started_at = otlp_get(record, "observed_at", null) }
+	ended_at := otlp_get(record, "ended_at", null)
+	if type(ended_at) == "null" { ended_at = started_at }
 	name := otlp_text(otlp_get(record, "name", ""), 160)
 	if name == "" { name = "watchdog." + record_type }
 	span := {

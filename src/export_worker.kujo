@@ -103,9 +103,9 @@ func worker_expire_queue(db, profile_id, max_queue_age_seconds) {
 	db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'dropped', last_error = 'queue age exceeded', updated_at_ms = ? WHERE profile_id = ? AND status IN ('pending','retry') AND created_at_ms < ?", [now_ms, profile_id, cutoff_ms])
 }
 
-func worker_mark_sent(db, delivery_rows, profile_id) {
+func worker_mark_sent(db, delivery_rows, profile_id, http_status) {
 	now_ms := current_timestamp()
-	for row in delivery_rows { db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'sent', attempts = attempts + 1, last_http_status = 200, last_error = '', updated_at_ms = ? WHERE id = ?", [now_ms, row["delivery_id"]]) }
+	for row in delivery_rows { db_execute(db, "UPDATE telemetry_export_deliveries SET status = 'sent', attempts = attempts + 1, last_http_status = ?, last_error = '', updated_at_ms = ? WHERE id = ?", [http_status, now_ms, row["delivery_id"]]) }
 	worker_mark_state(db, profile_id, "ready", true, "")
 }
 
@@ -137,6 +137,56 @@ func worker_mark_dead(db, delivery_rows, profile_id, http_status, reason, payloa
 
 func worker_due_rows(db, profile_id, limit_value) {
 	return db_query(db, "SELECT d.id AS delivery_id, d.record_dbid, d.attempts, r.canonical_json FROM telemetry_export_deliveries d JOIN telemetry_records_v2 r ON r.id = d.record_dbid JOIN telemetry_export_profile_state s ON s.profile_id = d.profile_id WHERE d.profile_id = ? AND d.status IN ('pending','retry') AND d.next_attempt_ms <= ? AND s.status <> 'paused' ORDER BY d.id ASC LIMIT ?", [profile_id, current_timestamp(), limit_value])
+}
+
+func worker_encode(records, mapping_profile, encoding) {
+	mapped := watchdog_otlp_map(records, mapping_profile)
+	if encoding == "protobuf" { return watchdog_otlp_protobuf_encode(mapped) }
+	return to_json(mapped)
+}
+
+func worker_parse_record(row) {
+	try { return parse_json(row["canonical_json"]) } except err { return null }
+}
+
+func worker_select_payload(rows, mapping_profile, encoding) {
+	max_bytes := 524288
+	input_bytes := 0
+	for row in rows { input_bytes = input_bytes + byte_length(row["canonical_json"]) }
+
+	# Prove the wire size once for small batches. Near the cap, keep the
+	# existing greedy selection so a large record does not block smaller ones.
+	if input_bytes <= max_bytes {
+		all_records := []
+		parsed_rows := []
+		for row in rows {
+			parsed := worker_parse_record(row)
+			if type(parsed) == "dict" {
+				all_records = push(all_records, parsed)
+				parsed_rows = push(parsed_rows, row)
+			}
+		}
+		if len(all_records) > 0 {
+			payload := worker_encode(all_records, mapping_profile, encoding)
+			if byte_length(payload) <= max_bytes { return {"rows": parsed_rows, "payload": payload} }
+		}
+	}
+
+	records := []
+	delivery_rows := []
+	payload := ""
+	for row in rows {
+		parsed := worker_parse_record(row)
+		if type(parsed) != "dict" { continue }
+		candidate := push(records, parsed)
+		encoded := worker_encode(candidate, mapping_profile, encoding)
+		if byte_length(encoded) <= max_bytes {
+			records = candidate
+			delivery_rows = push(delivery_rows, row)
+			payload = encoded
+		}
+	}
+	return {"rows": delivery_rows, "payload": payload}
 }
 
 func worker_send_profile(db, profile) {
@@ -179,29 +229,14 @@ func worker_send_profile(db, profile) {
 	worker_bound_history(db, profile_id, max_dead_letters, history_age_seconds)
 	rows := worker_due_rows(db, profile_id, batch_limit)
 	if len(rows) == 0 { return {"profile": profile_id, "status": "idle", "records": 0} }
-	records := []
-	delivery_rows := []
-	for row in rows {
-		parsed := null
-		try { parsed = parse_json(row["canonical_json"]) } except err { parsed = null }
-		if type(parsed) == "dict" {
-			candidate := push(records, parsed)
-			candidate_map := watchdog_otlp_map(candidate, to_string(worker_get(profile, "mapping_profile", "otel.genai.v1")))
-			candidate_payload := to_json(candidate_map)
-			if encoding == "protobuf" { candidate_payload = watchdog_otlp_protobuf_encode(candidate_map) }
-			if len(candidate_payload) <= 524288 {
-				records = candidate
-				delivery_rows = push(delivery_rows, row)
-			}
-		}
-	}
-	if len(records) == 0 {
+	mapping_profile := to_string(worker_get(profile, "mapping_profile", "otel.genai.v1"))
+	selected := worker_select_payload(rows, mapping_profile, encoding)
+	delivery_rows := selected["rows"]
+	if len(delivery_rows) == 0 {
 		worker_mark_dead(db, [rows[0]], profile_id, 0, "mapped payload exceeds 512 KiB or record is malformed", "")
 		return {"profile": profile_id, "status": "dead", "records": 1}
 	}
-	mapped_payload := watchdog_otlp_map(records, to_string(worker_get(profile, "mapping_profile", "otel.genai.v1")))
-	payload := to_json(mapped_payload)
-	if encoding == "protobuf" { payload = watchdog_otlp_protobuf_encode(mapped_payload) }
+	payload := selected["payload"]
 	if encoding == "protobuf" && type(payload) != "bytes" {
 		worker_mark_dead(db, delivery_rows, profile_id, 0, "protobuf encoder did not return bytes", "")
 		return {"profile": profile_id, "status": "dead", "records": len(delivery_rows), "payload_type": type(payload)}
@@ -241,7 +276,7 @@ func worker_send_profile(db, profile) {
 					worker_mark_retry(db, delivery_rows, profile_id, status, "OTLP partial success did not identify rejected records", "", max_attempts, false)
 					return {"profile": profile_id, "status": "retry", "records": len(delivery_rows)}
 				}
-				worker_mark_sent(db, delivery_rows, profile_id)
+				worker_mark_sent(db, delivery_rows, profile_id, status)
 				return {"profile": profile_id, "status": "sent", "records": len(delivery_rows)}
 			}
 			if status == 401 || status == 403 {

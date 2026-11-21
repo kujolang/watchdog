@@ -29,7 +29,7 @@ function createCollector(port, status, protobuf = false) {
 			const body = Buffer.concat(chunks);
 			received.push({method: req.method, url: req.url, headers: req.headers, body});
 			res.writeHead(status, {'Content-Type': protobuf ? 'application/x-protobuf' : 'application/json', ...(status === 429 ? {'Retry-After': '1'} : {})});
-			res.end(status === 200 ? (protobuf ? Buffer.alloc(0) : '{}') : JSON.stringify({error: 'rate limited'}));
+			res.end(status >= 200 && status < 300 ? (protobuf ? Buffer.alloc(0) : '{}') : JSON.stringify({error: 'rate limited'}));
 		});
 	});
 	return new Promise((resolve, reject) => {
@@ -96,7 +96,7 @@ async function run() {
 	let retryCollector;
 	let protobufCollector;
 	try {
-		successCollector = await createCollector(successPort, 200);
+		successCollector = await createCollector(successPort, 202);
 		retryCollector = await createCollector(retryPort, 429);
 		protobufCollector = await createCollector(protobufPort, 200, true);
 		fs.writeFileSync(configPath, JSON.stringify({schema_version: 'watchdog.exporters.v1', exporters: [
@@ -141,7 +141,7 @@ async function run() {
 		assert.match(workerOutput, /"profile":"expired"[^}]*"status":"idle"/);
 		assert.strictEqual(successCollector.received.length, 7, 'destination-profile delivery count drift');
 		assert.strictEqual(retryCollector.received.length, 1, 'retry collector delivery count drift');
-		assert.strictEqual(protobufCollector.received.length, 1, 'protobuf collector delivery count drift');
+		assert.strictEqual(protobufCollector.received.length, 1, 'protobuf collector delivery count drift: ' + workerOutput);
 		const delivered = successCollector.received.find((item) => item.url === '/v1/traces');
 		assert.strictEqual(delivered.method, 'POST');
 		assert.strictEqual(delivered.url, '/v1/traces');
@@ -183,6 +183,34 @@ async function run() {
 			for (const canary of ['export-content-canary', 'exporter-secret-canary', 'datadog-secret-canary', 'honeycomb-secret-canary']) assert.ok(!bytes.includes(Buffer.from(canary)), `${path.basename(candidate)} retained ${canary}`);
 		}
 		assert.ok(rows.some((row) => row.profile_id === 'expired' && row.status === 'dropped' && row.records === 4));
+
+		const boundDb = new DatabaseSync(dbPath);
+		try {
+			assert.strictEqual(boundDb.prepare("SELECT DISTINCT last_http_status FROM telemetry_export_deliveries WHERE profile_id = 'success'").get().last_http_status, 202);
+			const profile = JSON.parse(fs.readFileSync(configPath, 'utf8')).exporters.find(entry => entry.id === 'success');
+			fs.writeFileSync(configPath, JSON.stringify({exporters: [profile]}));
+			const batchId = boundDb.prepare('SELECT batch_dbid FROM telemetry_records_v2 LIMIT 1').get().batch_dbid;
+			const insertRecord = boundDb.prepare("INSERT INTO telemetry_records_v2 (batch_dbid, producer_name, record_id, record_type, trace_id, observed_at, canonical_json, created_at) VALUES (?, 'fixture', ?, 'span', ?, ?, ?, ?)");
+			const enqueue = boundDb.prepare("INSERT INTO telemetry_export_deliveries (profile_id, record_dbid, status, created_at_ms, updated_at_ms) VALUES ('success', ?, 'pending', ?, ?)");
+			for (let index = 0; index < 2; index++) {
+				const record = structuredClone(batch.records[index]);
+				record.record_id = `bound-${index}`;
+				record.span_id = String(index + 6).padStart(16, '0');
+				record.attributes = Object.fromEntries(Array.from({length: 36}, (_, key) => [`watchdog.fixture.${key}`, 'é'.repeat(4000)]));
+				const insert = insertRecord.run(batchId, record.record_id, record.trace_id, record.observed_at, JSON.stringify(record), String(Date.now()));
+				enqueue.run(insert.lastInsertRowid, Date.now(), Date.now());
+			}
+		} finally { boundDb.close(); }
+		const previousCount = successCollector.received.length;
+		await runWorker();
+		await runWorker();
+		const bounded = successCollector.received.slice(previousCount);
+		assert.strictEqual(bounded.length, 2, 'large multibyte records must be delivered in separate batches');
+		assert.ok(bounded.every(item => item.body.length <= 512 * 1024), 'export wire bytes exceeded the batch cap');
+		assert.deepStrictEqual(bounded.map(item => {
+			const [span] = JSON.parse(item.body).resourceSpans[0].scopeSpans[0].spans;
+			return span.attributes.find(attribute => attribute.key === 'watchdog.record.id').value.stringValue;
+		}), ['bound-0', 'bound-1']);
 	} catch (error) {
 		if (watchdog) error.stack += `\nWatchdog output:\n${watchdog.output().slice(-4000)}`;
 		throw error;

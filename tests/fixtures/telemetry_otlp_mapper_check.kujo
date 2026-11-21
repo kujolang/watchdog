@@ -9,6 +9,10 @@ orphan_event := parse_json(to_json(owned_event))
 orphan_event["record_id"] = "fixture:event:orphan"
 orphan_event["span_id"] = "fedcba9876543210"
 orphan_event["name"] = "watchdog.orphan.event"
+model_record["started_at"] = "2026-09-01T14:00:01.123456789+02:00"
+model_record["ended_at"] = "2026-09-01T07:00:01.250-05:00"
+owned_event["observed_at"] = "2026-09-01T12:00:01.125Z"
+orphan_event["observed_at"] = "2026-09-01T12:00:01.3Z"
 batch["records"] = [model_record, owned_event, orphan_event]
 mapped := watchdog_otlp_map(batch["records"], "openinference.v1")
 encoded := to_json(mapped)
@@ -29,5 +33,10 @@ assert(contains(encoded, "3.1.4"), "source instrumentation version was not expor
 assert(len(spans) == 2, "owned event was duplicated as a synthetic operation")
 assert(len(spans[0]["events"]) == 1 && spans[0]["events"][0]["name"] == "watchdog.operation.completed", "owned event did not attach to its span")
 assert(contains(to_json(spans[1]), "watchdog.event.synthetic_projection"), "unrepresentable orphan event was not marked synthetic")
+
+assert(spans[0]["startTimeUnixNano"] == "1788264001123456789", "offset or nanosecond precision was lost")
+assert(spans[0]["endTimeUnixNano"] == "1788264001250000000", "negative offset was lost")
+assert(spans[0]["events"][0]["timeUnixNano"] == "1788264001125000000", "event timestamp was rounded")
+assert(spans[1]["startTimeUnixNano"] == "1788264001300000000" && spans[1]["endTimeUnixNano"] == spans[1]["startTimeUnixNano"], "synthetic span must use its event time")
 
 print("telemetry_otlp_mapper_check: PASS")
