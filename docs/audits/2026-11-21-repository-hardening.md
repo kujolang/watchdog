@@ -66,6 +66,10 @@ The wall time includes process startup, mapping, serialization, loopback HTTP an
 
 P1 carry-forward from October includes the advisory buffered-proxy latency budgets and coordinated leases for multi-process exporter workers. The worker remains an at-least-once delivery process. Production validation continues to use an independent edge rate limiter because caller-provided identity hints are not a trust boundary. Proxy transport and connected-source cross-process CAS were outside these fixes. Local verification used loopback fixtures and the existing Agents SDK and RunLedger integration contracts. Provider egress, remote collectors and a live deployment were outside the audit.
 
+## Repeat-run verification
+
+The local authentication and rate-limit matrix exposed a test isolation fault. Its rate-limit fixture reused SQLite files under `tmp/`, so running it again within the configured window could start with a depleted bucket. The fixture now creates and removes a private per-run directory and probes `/readyz` before exercising rate limiting. Two consecutive runs of `WDG_API_AUTH_MODE=off WDG_RATE_LIMIT_MODE=basic WDG_RATE_LIMIT_MAX_REQUESTS=5 WDG_RATE_LIMIT_WINDOW_SECS=2 node tests/rate_limit_controls_check.js` passed with the same release runtime.
+
 ## Verification receipt
 
 - `KUJO_BIN=/tmp/watchdog-release-runtime.9rBoun/kujo AGENTS_SDK_PATH="$PWD/../agents-sdk" WDG_VERIFICATION_DIR="$PWD/tmp/hardening-20261121/final-main" npm test` passed all 76 checks, including Agents SDK. The three opt-in proxy budgeting checks remained advisory and missed their targets.

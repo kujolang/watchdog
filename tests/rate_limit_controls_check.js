@@ -1,21 +1,17 @@
 const assert = require('assert');
 const fs = require('fs');
 const http = require('http');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
-const TMP_DIR = path.join(ROOT, 'tmp');
 const { resolveKujoBinOrThrow } = require('./_kujo_bin');
 const KUJO_BIN = resolveKujoBinOrThrow(__filename);
 const API_TOKEN = 'rate-limit-api-token';
 
 function delay(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function ensureTmpDir() {
-	if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
 }
 
 function httpRequest(port, method, pathname, headers = {}, body = '') {
@@ -101,7 +97,7 @@ async function startWatchdog(port, dbPath, cfgPath, envExtras) {
 
 	for (const startupDeadline = performance.now() + 30_000; performance.now() < startupDeadline;) {
 		try {
-			const probe = await httpRequest(port, 'GET', '/api/stats', { 'X-Watchdog-Token': API_TOKEN });
+			const probe = await httpRequest(port, 'GET', '/readyz');
 			if (probe.status === 200) return { child, outputRef: () => output };
 		} catch (err) {
 			if (child.exitCode != null) break;
@@ -120,10 +116,10 @@ async function stopWatchdog(child) {
 	if (child.exitCode == null) child.kill('SIGKILL');
 }
 
-async function runRateLimitOnScenario(upstreamPort) {
+async function runRateLimitOnScenario(upstreamPort, tempDir) {
 	const port = 7751;
-	const dbPath = path.join(TMP_DIR, 'rate-limit-on.db');
-	const cfgPath = path.join(TMP_DIR, 'rate-limit-on-config.json');
+	const dbPath = path.join(tempDir, 'rate-limit-on.db');
+	const cfgPath = path.join(tempDir, 'rate-limit-on-config.json');
 	writeProxyConfig(cfgPath, upstreamPort);
 
 	const wd = await startWatchdog(port, dbPath, cfgPath, {
@@ -177,10 +173,10 @@ async function runRateLimitOnScenario(upstreamPort) {
 	}
 }
 
-async function runRateLimitResetScenario(upstreamPort) {
+async function runRateLimitResetScenario(upstreamPort, tempDir) {
 	const port = 7753;
-	const dbPath = path.join(TMP_DIR, 'rate-limit-reset.db');
-	const cfgPath = path.join(TMP_DIR, 'rate-limit-reset-config.json');
+	const dbPath = path.join(tempDir, 'rate-limit-reset.db');
+	const cfgPath = path.join(tempDir, 'rate-limit-reset-config.json');
 	writeProxyConfig(cfgPath, upstreamPort);
 
 	const wd = await startWatchdog(port, dbPath, cfgPath, {
@@ -204,10 +200,10 @@ async function runRateLimitResetScenario(upstreamPort) {
 	}
 }
 
-async function runRateLimitOffScenario(upstreamPort) {
+async function runRateLimitOffScenario(upstreamPort, tempDir) {
 	const port = 7752;
-	const dbPath = path.join(TMP_DIR, 'rate-limit-off.db');
-	const cfgPath = path.join(TMP_DIR, 'rate-limit-off-config.json');
+	const dbPath = path.join(tempDir, 'rate-limit-off.db');
+	const cfgPath = path.join(tempDir, 'rate-limit-off-config.json');
 	writeProxyConfig(cfgPath, upstreamPort);
 
 	const wd = await startWatchdog(port, dbPath, cfgPath, {
@@ -227,18 +223,19 @@ async function runRateLimitOffScenario(upstreamPort) {
 }
 
 async function run() {
-
-	ensureTmpDir();
+	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-rate-limit-'));
 	const upstreamPort = 8841;
-	const stub = await startStub(upstreamPort);
 
+	let stub;
 	try {
-		await runRateLimitOnScenario(upstreamPort);
-		await runRateLimitResetScenario(upstreamPort);
-		await runRateLimitOffScenario(upstreamPort);
+		stub = await startStub(upstreamPort);
+		await runRateLimitOnScenario(upstreamPort, tempDir);
+		await runRateLimitResetScenario(upstreamPort, tempDir);
+		await runRateLimitOffScenario(upstreamPort, tempDir);
 		console.log('rate_limit_controls_check: PASS');
 	} finally {
 		await stopNodeServer(stub);
+		fs.rmSync(tempDir, {recursive: true, force: true});
 	}
 }
 
