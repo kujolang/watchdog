@@ -42,6 +42,9 @@ assert(providerCatalog.models['gpt-6-sol'].cache_write_input_rate_per_million ==
 assert(providerCatalog.models['gpt-6.1-sol'].cached_input_rate_per_million === 0.1, 'GPT-6.1 Sol cached-input pricing should come from OpenAI');
 assert(providerCatalog.models['gpt-6.1-terra'].cached_input_rate_per_million === 0.05, 'GPT-6.1 Terra cached-input pricing should come from OpenAI');
 assert(providerCatalog.models['gpt-6.1-terra'].output_rate_per_million === 5, 'GPT-6.1 Terra output pricing should come from OpenAI');
+assert(providerCatalog.models['gpt-6.2-astra'].input_rate_per_million === 8, 'GPT-6.2 Astra pricing should come from OpenAI');
+assert(providerCatalog.models['gpt-6.2-astra'].cache_write_input_rate_per_million === 10, 'GPT-6.2 Astra cache-write pricing should come from OpenAI');
+assert(providerCatalog.models['gpt-6.2-sol'].cached_input_rate_per_million === 0.1, 'GPT-6.2 Sol cached-input pricing should come from OpenAI');
 assert(providerCatalog.models['gpt-6-luna'].output_rate_per_million === 0.5, 'GPT-6 Luna output pricing should come from OpenAI');
 assert(providerCatalog.models['gpt-5.6-sol'].cache_write_input_rate_per_million === 5, 'Current promotional Codex model cache-write pricing should come from OpenAI');
 assert(providerCatalog.models['gpt-daybreak-blue-latest'].priced_model === 'gpt-5.6-sol', 'Daybreak Blue should use its documented GPT-5.6 Sol alias basis');
@@ -50,6 +53,9 @@ assert(providerCatalog.models['claude-sonnet-5.5'].cache_write_input_rate_per_mi
 assert(providerCatalog.models['claude-sonnet-5.5'].cached_input_rate_per_million === 0.1, 'Claude Sonnet 5.5 should use Anthropic current five-percent cache-read rate');
 assert(providerCatalog.models['claude-haiku-5.5'].input_rate_per_million === 0.1, 'Claude Haiku 5.5 short-context pricing should come from Anthropic');
 assert(providerCatalog.models['claude-opus-5.5'].cached_input_rate_per_million === 0.2, 'Claude Opus 5.5 cache-read pricing should come from Anthropic');
+assert(providerCatalog.models['claude-fable-5.2'].input_rate_per_million === 8, 'Claude Fable 5.2 pricing should come from Anthropic');
+assert(providerCatalog.models['claude-fable-5.2'].cached_input_rate_per_million === 0.2, 'Claude Fable 5.2 cache-read pricing should come from Anthropic');
+assert(providerCatalog.aliases['claude-fable-5-2'].target_model_id === 'claude-fable-5.2', 'Official Anthropic API IDs should resolve to the priced model');
 assert(providerCatalog.models['gemini-3.5-flash'].output_rate_per_million === 9, 'Current Gemini 3.5 Flash output pricing should come from Google');
 assert(providerCatalog.models['gemini-3.5-flash-lite'].cached_input_rate_per_million === 0.03, 'Current Gemini 3.5 Flash-Lite cache pricing should come from Google');
 assert(providerCatalog.models['deepseek-v3.1-pro'].has_pricing === false, 'Direct DeepSeek models without current public rates should stay explicitly unknown');
@@ -60,8 +66,14 @@ assert(providerCatalog.models['deepseek-v4.1-flash'].cached_input_rate_per_milli
 assert(providerCatalog.models['grok-4.6'].cached_input_rate_per_million === 0.5, 'Active xAI OAuth inventory should use public xAI direct-API equivalent pricing');
 assert(providerCatalog.models['tencent/hy3:free'].has_pricing === false, 'Removed OpenRouter suggestions should become explicit unknowns instead of generic paid fallbacks');
 assert(providerCatalog.models['anthropic/claude-opus-4.8-fast'].has_pricing === false, 'Removed OpenRouter fast routes should remain explicit unknowns rather than borrowing direct-provider pricing');
+assert(providerCatalog.models['nvidia/nemotron-3-super-120b-a12b:free'].has_pricing === false, 'Removed OpenRouter free routes should remain explicit unknowns rather than borrowing paid-route pricing');
+assert(providerCatalog.models['gpt-reserve'].has_pricing === false, 'Codex inventory models without public API rates should remain explicit unknowns');
 assert(providerCatalog.models['stealth/ox-alpha'].has_pricing === false, 'Unconfirmed Hermes free suggestions should become explicit unknowns instead of invented zero prices');
 assert(providerCatalog.models['stealth/missingno'].has_pricing === false, 'Hermes-only models without a public token rate should be explicit unknowns');
+assert(providerCatalog.models['stepfun/step-3.7-flash:free'].has_pricing === true, 'Current Nous free models with public zero token rates should be catalog priced');
+assert(providerCatalog.models['stepfun/step-3.7-flash:free'].pricing_source === 'nous-public-catalog:2026-11-22:zero-token-rate', 'Nous zero-rate pricing should retain dated public provenance');
+assert(providerCatalog.models['reflection/beam-1.0-501b-a23b:free'].has_pricing === false, 'Stale Hermes suggestions absent from the current public catalog should be explicit unknowns');
+assert(providerCatalog.models['stealth/crouton-alpha'].has_pricing === false, 'Removed Hermes suggestions should not retain stale free pricing');
 assert(providerCatalog.models['inclusionai/ling-3.0-flash-fin:free'].has_pricing === false, 'Removed Hermes routes should become explicit unknowns instead of generic paid fallbacks');
 assert(providerCatalog.models['meituan/longcat-2.5-preview:free'].has_pricing === false, 'Unlisted Hermes suggestions should become explicit unknowns instead of generic paid fallbacks');
 assert(providerCatalog.models['kimi-k3'].cache_write_input_rate_per_million === 3, 'Direct Kimi K3 pricing should include Moonshot cache-write rates');
@@ -73,8 +85,8 @@ assert(providerCatalog.models['glm-5.3'].input_rate_per_million === 1.4, 'GLM 5.
 assert(providerCatalog.models['glm-5.3-flash'].output_rate_per_million === 0.5, 'GLM 5.3 Flash pricing should come from Z.AI');
 assert(providerCatalog.models['ollama-cloud/gemma4'].cached_input_rate_per_million === 0.05, 'Ollama Cloud Gemma 4 should use Ollama public cache pricing');
 assert(providerCatalog.aliases['ollama-cloud/nemotron-3-nano:30b'].target_model_id === 'ollama-cloud/nemotron-3-nano', 'Ollama model variants should resolve to their published cloud rate');
-assert(providerCatalog.models['ollama-cloud/qwen3.5:397b'].output_rate_per_million === 3.6, 'Ollama Cloud Qwen 3.5 397B should use Ollama public output pricing');
-assert(providerCatalog.aliases['ollama-cloud/qwen3.5:397b'].pricing_source === 'ollama-cloud-pricing:2026-10-25', 'Ollama Cloud Qwen 3.5 397B should retain current Ollama provenance');
+assert(providerCatalog.models['ollama-cloud/qwen3.5:397b'].has_pricing === false, 'Ollama Cloud models absent from the current public pricing table should be explicit unknowns');
+assert(providerCatalog.aliases['ollama-cloud/qwen3.5:397b'].pricing_source === 'ollama-cloud-pricing:2026-11-22:not-listed-in-current-table', 'Removed Ollama Cloud prices should retain dated unknown provenance');
 assert(catalog.catalog_id === 'openrouter-public-catalog:' + new Date(catalog.refreshed_at).toISOString().slice(0, 10), 'Catalog snapshot should be versioned with the UTC refresh date');
 assert(catalog.models['openai/gpt-5.4'].input_rate_per_million === 2.5, 'GPT-5.4 prompt pricing should come from the catalog');
 assert(catalog.models['anthropic/claude-sonnet-5'].cache_write_input_rate_per_million === 2.5, 'Claude Sonnet 5 cache write pricing should come from the catalog');

@@ -46,16 +46,38 @@ assert.equal(terra61.cached_input_rate_per_million, 0.05);
 assert.equal(terra61.cache_write_input_rate_per_million, 1.25);
 assert.equal(terra61.output_rate_per_million, 5);
 
+const astra62 = resolvePricing('gpt-6.2-astra', { providerCatalog, openrouterCatalog });
+assert.equal(astra62.pricing_kind, 'catalog');
+assert.equal(astra62.input_rate_per_million, 8);
+assert.equal(astra62.cached_input_rate_per_million, 0.4);
+assert.equal(astra62.cache_write_input_rate_per_million, 10);
+assert.equal(astra62.output_rate_per_million, 40);
+
+const sol62 = resolvePricing('gpt-6.2-sol', { providerCatalog, openrouterCatalog });
+assert.equal(sol62.pricing_kind, 'catalog');
+assert.equal(sol62.input_rate_per_million, 2);
+assert.equal(sol62.cached_input_rate_per_million, 0.1);
+assert.equal(sol62.cache_write_input_rate_per_million, 2.5);
+assert.equal(sol62.output_rate_per_million, 10);
+
 const opus5 = resolvePricing('anthropic/claude-opus-5', { providerCatalog, openrouterCatalog });
 assert.equal(opus5.pricing_kind, 'catalog');
 assert.equal(opus5.input_rate_per_million, 5);
 assert.equal(opus5.output_rate_per_million, 25);
 assert.equal(opus5.cache_write_input_rate_per_million, 6.25);
 
+const directFable52 = resolvePricing('claude-fable-5-2', { providerCatalog, openrouterCatalog });
+assert.equal(directFable52.pricing_kind, 'catalog');
+assert.equal(directFable52.priced_model, 'claude-fable-5.2');
+assert.equal(directFable52.input_rate_per_million, 8);
+assert.equal(directFable52.cached_input_rate_per_million, 0.2);
+assert.equal(directFable52.cache_write_input_rate_per_million, 10);
+assert.equal(directFable52.output_rate_per_million, 40);
+
 const glm52 = resolvePricing('z-ai/glm-5.2', { providerCatalog, openrouterCatalog });
-assert.equal(glm52.input_rate_per_million, 0.006);
-assert.equal(glm52.output_rate_per_million, 6.8);
-assert.equal(glm52.cached_input_rate_per_million, 0.005);
+assert.equal(glm52.input_rate_per_million, 0.62);
+assert.equal(glm52.output_rate_per_million, 2.42);
+assert.equal(glm52.cached_input_rate_per_million, 0.14);
 
 const alias = resolvePricing('~anthropic/claude-haiku-latest', { providerCatalog, openrouterCatalog });
 assert.equal(alias.pricing_kind, 'catalog');
@@ -90,6 +112,10 @@ assert.equal(grok46.output_rate_per_million, 6);
 const codexSpark = resolvePricing('gpt-5.3-codex-spark', { providerCatalog, openrouterCatalog });
 assert.equal(codexSpark.pricing_kind, 'unknown');
 assert.match(codexSpark.pricing_source, /not-supported-in-public-api-model-cache$/);
+
+const codexReserve = resolvePricing('gpt-reserve', { providerCatalog, openrouterCatalog });
+assert.equal(codexReserve.pricing_kind, 'unknown');
+assert.match(codexReserve.pricing_source, /not-listed-on-public-pricing-page$/);
 
 const deepSeekChat = resolvePricing('deepseek-chat', { providerCatalog, openrouterCatalog });
 assert.equal(deepSeekChat.pricing_kind, 'catalog');
@@ -128,11 +154,12 @@ assert.equal(ollamaGemma4.priced_model, 'ollama-cloud/gemma4');
 assert.equal(ollamaGemma4.cached_input_rate_per_million, 0.05);
 
 const ollamaQwen35 = resolvePricing('qwen3.5:397b', { providerCatalog, openrouterCatalog });
-assert.equal(ollamaQwen35.pricing_kind, 'catalog');
+assert.equal(ollamaQwen35.pricing_kind, 'unknown');
 assert.equal(ollamaQwen35.priced_model, 'ollama-cloud/qwen3.5:397b');
-assert.equal(ollamaQwen35.input_rate_per_million, 0.6);
+assert.match(ollamaQwen35.pricing_source, /not-listed-in-current-table$/);
+assert.equal(ollamaQwen35.input_rate_per_million, 0);
 assert.equal(ollamaQwen35.cached_input_rate_per_million, 0);
-assert.equal(ollamaQwen35.output_rate_per_million, 3.6);
+assert.equal(ollamaQwen35.output_rate_per_million, 0);
 
 const ollamaEquivalent = resolvePricing('kimi-k2.6', { providerCatalog, openrouterCatalog });
 assert.equal(ollamaEquivalent.pricing_kind, 'catalog');
@@ -179,5 +206,19 @@ assert.equal(unknown.output_rate_per_million, 0);
 const hermesMissingNo = resolvePricing('stealth/missingno', { providerCatalog, openrouterCatalog });
 assert.equal(hermesMissingNo.pricing_kind, 'unknown');
 assert.match(hermesMissingNo.pricing_source, /no-public-token-rate$/);
+
+const retiredOpenRouterFree = resolvePricing('nvidia/nemotron-3-super-120b-a12b:free', { providerCatalog, openrouterCatalog });
+assert.equal(retiredOpenRouterFree.pricing_kind, 'unknown');
+assert.match(retiredOpenRouterFree.pricing_source, /not-listed-in-current-catalog$/);
+
+const hermesStepfun = resolvePricing('stepfun/step-3.7-flash:free', { providerCatalog, openrouterCatalog });
+assert.equal(hermesStepfun.pricing_kind, 'catalog');
+assert.equal(hermesStepfun.input_rate_per_million, 0);
+assert.equal(hermesStepfun.output_rate_per_million, 0);
+assert.match(hermesStepfun.pricing_source, /^nous-public-catalog:/);
+
+const retiredHermesBeam = resolvePricing('reflection/beam-1.0-501b-a23b:free', { providerCatalog, openrouterCatalog });
+assert.equal(retiredHermesBeam.pricing_kind, 'unknown');
+assert.match(retiredHermesBeam.pricing_source, /not-listed-in-current-catalog$/);
 
 console.log('openrouter_pricing_catalog_check: PASS');

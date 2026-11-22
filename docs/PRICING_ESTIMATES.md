@@ -21,9 +21,10 @@ node scripts/refresh_openrouter_pricing_catalog.js
 
 This fetches `https://openrouter.ai/api/v1/models`, applies the checked-in alias overrides from [`config/openrouter_pricing_aliases.json`](../config/openrouter_pricing_aliases.json), and rewrites the versioned catalog snapshot.
 
-The November 1, 2026 snapshot contains 452 models. It adds six newly advertised
-routes, including GPT-6.1 Terra, Particle 1, and Ternary Bonsai 2 9B, removes
-twenty-one routes no longer advertised by the catalog, and preserves the current
+The November 22, 2026 snapshot contains 476 models. Relative to the November 8
+snapshot, it adds thirty-three newly advertised routes, including GPT-6.2 Astra,
+GPT-6.2 Sol, Claude Fable 5.2, Gemini 4 variants, and Kimi K3.1 Pro batch, removes
+eighteen routes no longer advertised by the catalog, and preserves current
 route-specific prices exactly as returned by OpenRouter.
 These are OpenRouter route estimates, not direct-provider prices.
 
@@ -56,9 +57,10 @@ Common `pricing_source` patterns:
 - `ollama-cloud-equivalent:*`
 - `deepseek-pricing:2026-09-20:*`
 - `openai-api-pricing:2026-08-23:standard-short-context`
-- `openai-api-pricing:2026-08-30:promotional-through-at-least-2026-11-21:standard-short-context`
+- `openai-api-pricing:2026-11-22:promotional-through-2026-11-30:standard-short-context`
 - `openai-api-pricing:2026-09-27:standard-short-context`
 - `openai-api-pricing:2026-10-04:standard-short-context`
+- `openai-api-pricing:2026-11-22:standard-short-context`
 - `anthropic-pricing:2026-09-27:standard-assume-5m-cache-write`
 - `anthropic-pricing:2026-10-11:standard-assume-5m-cache-write`
 - `xai-api-pricing:2026-08-30:standard-short-context`
@@ -66,6 +68,7 @@ Common `pricing_source` patterns:
 - `openrouter-public-catalog:2026-10-25`
 - `openrouter-public-catalog:2026-11-01`
 - `openrouter-public-catalog:2026-11-08`
+- `openrouter-public-catalog:2026-11-22`
 - `watchdog-fallback-estimate:v1`
 
 ## Reprice historical records
@@ -122,10 +125,10 @@ Apply the same command with `--apply` once the dry-run output looks correct.
 
 ## Provider catalog coverage
 
-The local provider catalog is intentionally versioned and explicit. As of November 1, 2026 it includes:
+The local provider catalog is intentionally versioned and explicit. As of November 22, 2026 it includes:
 
-- direct OpenAI text-token models used by AI Chat such as `gpt-4.1`, `gpt-4.1-mini`, and `o4-mini`, plus current Codex/API inventory models `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini`; GPT-6.1 Sol uses OpenAI's current $2 input, $10 output, $0.10 cache-read, and $2.50 cache-write standard short-context rates, while GPT-6.1 Terra uses $1 input, $5 output, $0.05 cache-read, and $1.25 cache-write rates; `gpt-5.6-sol` and the `gpt-daybreak-blue-latest` equivalent retain their documented promotional rates, and non-public-API `gpt-5.3-codex-spark` remains explicitly `unknown`
-- direct Anthropic models such as `claude-sonnet-5`, `claude-sonnet-5.5`, `claude-opus-5.5`, `claude-opus-4.8`, `claude-haiku-5.5`, and `claude-haiku-4.5`; Sonnet 5.5 uses Anthropic's current $2 input, $10 output, $0.10 cache-read, and five-minute $2.50 cache-write rates per million tokens, while Haiku 5.5 uses the published short-context tier through 100,000 prompt tokens
+- direct OpenAI text-token models used by AI Chat such as `gpt-4.1`, `gpt-4.1-mini`, and `o4-mini`, plus current Codex/API inventory models `gpt-6.2-astra`, `gpt-6.2-sol`, `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini`; GPT-6.2 Astra uses OpenAI's current $8 input, $40 output, $0.40 cache-read, and $10 30-minute cache-write standard short-context rates, while GPT-6.2 Sol uses $2/$10/$0.10/$2.50; `gpt-5.6-sol` and the `gpt-daybreak-blue-latest` equivalent retain their documented promotional rates, and non-public-API `gpt-5.3-codex-spark` remains explicitly `unknown`
+- direct Anthropic models such as `claude-fable-5.2`, `claude-sonnet-5`, `claude-sonnet-5.5`, `claude-opus-5.5`, `claude-opus-4.8`, `claude-haiku-5.5`, and `claude-haiku-4.5`; Fable 5.2 uses Anthropic's current $8 input, $40 output, $0.20 cache-read, and five-minute $10 cache-write rates, while official hyphenated API IDs resolve through explicit aliases and Haiku 5.5 uses the published short-context tier through 100,000 prompt tokens
 - direct Google Gemini models such as `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, and `gemini-3.8-flash`; the Gemini 3.8 Flash row records its introductory rate through December 31, 2026
 - direct Moonshot Kimi models such as `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.6`, and `kimi-k2.5`; Kimi K3 includes Moonshot's separately published cache-write rate
 - direct Z.AI, MiniMax, and DeepSeek model IDs already surfaced by AI Chat; DeepSeek's current `deepseek-flash` and `deepseek-v4.1-flash` IDs plus the legacy `deepseek-chat`, `deepseek-reasoner`, and `deepseek-v4-flash` IDs resolve to the current V4.1 Flash pricing basis. Because DeepSeek varies rates by UTC schedule and Watchdog does not store a pricing-time tier, these rows use the documented peak rates ($0.30 cache-miss input, $0.006 cache-hit input, and $1.20 output per million tokens); `deepseek-v4-pro` likewise uses its peak $1.32/$0.044/$3.96 rates rather than understating requests made during peak hours
@@ -143,16 +146,29 @@ Moonshot also publishes a $3 cache-write rate for its direct API. Watchdog keeps
 the Ollama route's source distinct because Ollama's table does not list a
 separate cache-write charge.
 
-Ollama now publishes a public per-model token price table. Watchdog uses
-dated `ollama-cloud-pricing:*` provenance for exact listed routes. Older
+Ollama now publishes a public per-model token price table. Watchdog uses dated
+`ollama-cloud-pricing:*` provenance for exact listed routes. Older
 `ollama-cloud-equivalent:*` entries remain only where an exact upstream mapping
-is documented but Ollama's table does not list that route.
+is documented. When a previously listed Ollama route disappears from the
+current table and no current exact equivalent is documented, Watchdog now keeps
+the route explicitly `unknown` instead of applying the older rate to new telemetry.
 
-The current AI Chat Ollama Cloud inventory now has exact published coverage for
-`kimi-k3:cloud`, `gpt-oss:120b`, `gpt-oss:20b`, `mistral-large-3:675b`,
-`gemma4:31b`, `nemotron-3-ultra`, `nemotron-3-nano:30b`, `nemotron-3-super`,
-and `qwen3.5:397b`. Ollama now publishes Qwen 3.5 397B at $0.60 input and
-$3.60 output per million tokens without a separate cached-input rate.
+The current AI Chat Ollama Cloud inventory retains exact published coverage for
+`kimi-k3:cloud`, `gpt-oss:120b`, `gpt-oss:20b`, `gemma4:31b`,
+`nemotron-3-ultra`, and `nemotron-3-super`. The November 22 public pricing table
+no longer lists `mistral-large-3:675b`, `nemotron-3-nano:30b`, or
+`qwen3.5:397b`, so those consumer suggestions are explicit `unknown` values for
+new telemetry rather than stale catalog estimates.
+
+Nous Portal's public model catalog and recommendation endpoint now provide
+explicit zero token rates for `upstage/solar-mini4:free`,
+`meituan/longcat-2.5:free`, `stepfun/step-3.7-flash:free`,
+`qwen/qwen4-max:free`, and `tencent/hy4-flash:free`. Watchdog records those as
+zero-rate catalog entries with dated Nous provenance. AI Chat's checked-in
+Hermes snapshot still includes `reflection/beam-1.0-501b-a23b:free` and
+`stealth/crouton-alpha`, which are absent from the current public catalog; they
+remain explicit `unknown` values rather than inheriting a paid route or stale
+free label.
 
 AI Chat's Hermes/Nous Portal suggestions are explicitly `unknown` when their
 provider-specific IDs do not have a stable, exact mapping in the current public
@@ -161,15 +177,19 @@ consumer app, Watchdog does not infer a zero token rate from a stale suggestion
 alone. Removed or unlisted OpenRouter suggestions such as `tencent/hy3:free`,
 `poolside/laguna-m1:free`, `inclusionai/ling-3.0-flash-fin:free`,
 `meituan/longcat-2.5-preview:free`, `anthropic/claude-opus-4.8-fast`, and
-`openrouter/owl-alpha` and the Hermes-only `stealth/missingno` are also explicit
+`openrouter/owl-alpha`, `nvidia/nemotron-3-super-120b-a12b:free`, and the Hermes-only `stealth/missingno` are also explicit
 unknowns rather than generic paid fallbacks. The Anthropic fast suggestion is not mapped to direct Fast mode
 pricing because OpenRouter no longer advertises that route and its routing and
 billing semantics cannot be assumed from the name alone.
 
+The Codex model cache currently includes `gpt-reserve`, but OpenAI does not list
+that identifier on its public API pricing page. Watchdog therefore records it as
+explicitly `unknown` rather than applying the generic fallback estimate.
+
 ## Limitations
 
 - Catalog pricing is still an estimate, not an invoice.
-- Some direct-provider features still cannot be priced exactly from token counts alone. Examples include OpenAI audio-minute billing, Anthropic cache-write TTL selection, and provider pages that publish prompt-length breakpoints Watchdog's static snapshot cannot yet encode. The GPT-5.4, GPT-5.5, GPT-5.6, GPT-6, GPT-6.1, and xAI Grok rows therefore use standard short-context rates; requests above a provider's documented long-context threshold can cost more than Watchdog estimates.
+- Some direct-provider features still cannot be priced exactly from token counts alone. Examples include OpenAI audio-minute billing, Anthropic cache-write TTL selection, and provider pages that publish prompt-length breakpoints Watchdog's static snapshot cannot yet encode. The GPT-5.4, GPT-5.5, GPT-5.6, GPT-6, GPT-6.1, GPT-6.2, and xAI Grok rows therefore use standard short-context rates; requests above a provider's documented long-context threshold can cost more than Watchdog estimates.
 - Pricing lookup currently receives only the model ID, not the selected upstream profile. When a plain Ollama Cloud model ID exactly collides with a direct-provider ID but the two providers charge different rates, Watchdog uses the direct-provider row. For example, plain `minimax-m3` uses MiniMax's current $0.30/$0.06/$1.20 promotional short-context rates rather than Ollama Cloud's $0.60/$0.12/$2.40 rates. Provider-qualified and non-colliding Ollama aliases retain Ollama provenance.
 - Gemini 3.8 Flash's introductory direct rate is documented through December 31, 2026. Refresh the direct provider catalog after that date before treating the current $0.75/$3.75 row as authoritative for new telemetry.
 - OpenRouter routing, workspace discounts, negotiated rates, and future price changes may differ from the snapshot Watchdog used at ingest time.
