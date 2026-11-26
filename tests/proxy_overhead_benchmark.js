@@ -66,10 +66,11 @@ function processStats(pid) {
   const parts = result.stdout.trim().split(/\s+/); return {rssKiB: Number(parts[0] || 0), cpuTime: parts.slice(1).join(' ')};
 }
 async function sample(port, pathname, stream) {
-  const totals = [], ttfts = []; const body = JSON.stringify({model: 'fixture', stream, messages: [{role: 'user', content: 'x'}]});
-  for (let i = 0; i < SAMPLES; i++) { const result = await request(port, pathname, body); assert.strictEqual(result.status, 200); totals.push(result.totalMs); ttfts.push(result.ttftMs); }
+  const totals = [], ttfts = [], transferTimes = []; let bodyBytes = 0; const body = JSON.stringify({model: 'fixture', stream, messages: [{role: 'user', content: 'x'}]});
+  for (let i = 0; i < SAMPLES; i++) { const result = await request(port, pathname, body); assert.strictEqual(result.status, 200); totals.push(result.totalMs); ttfts.push(result.ttftMs); transferTimes.push(result.totalMs - result.ttftMs); bodyBytes += result.bytes; }
   return {p50_ms: percentile(totals, 50), p95_ms: percentile(totals, 95), p99_ms: percentile(totals, 99),
-    ttft_p50_ms: percentile(ttfts, 50), ttft_p95_ms: percentile(ttfts, 95), ttft_p99_ms: percentile(ttfts, 99)};
+    ttft_p50_ms: percentile(ttfts, 50), ttft_p95_ms: percentile(ttfts, 95), ttft_p99_ms: percentile(ttfts, 99),
+    after_first_byte_p50_ms: percentile(transferTimes, 50), body_bytes: bodyBytes};
 }
 async function run() {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-overhead-'));
@@ -87,6 +88,8 @@ async function run() {
     const direct = {nonstream: await sample(upstreamPort, '/v1/chat/completions', false), stream: await sample(upstreamPort, '/v1/chat/completions', true)};
     const proxied = {nonstream: await sample(watchdogPort, '/proxy/v1/chat/completions', false), stream: await sample(watchdogPort, '/proxy/v1/chat/completions', true)};
     const exporterOutage = await sample(outagePort, '/proxy/v1/chat/completions', false);
+    assert.strictEqual(direct.nonstream.body_bytes, proxied.nonstream.body_bytes, 'non-streaming byte totals must match');
+    assert.strictEqual(direct.stream.body_bytes, proxied.stream.body_bytes, 'streaming byte totals must match');
     const rssAfter = processStats(wd.child.pid);
     const overhead = {nonstream_p50_ms: proxied.nonstream.p50_ms - direct.nonstream.p50_ms,
       nonstream_p95_ms: proxied.nonstream.p95_ms - direct.nonstream.p95_ms,
@@ -96,7 +99,11 @@ async function run() {
     const report = {samples: SAMPLES, direct, proxied, exporter_outage: exporterOutage, overhead, cpu: {before: rssBefore.cpuTime, after: rssAfter.cpuTime},
       rss_delta_bytes: Math.max(0, rssAfter.rssKiB - rssBefore.rssKiB) * 1024,
       db_bytes_per_event: Math.max(0, fs.statSync(dbPath).size - baselineBytes) / (SAMPLES * 2),
-      streaming_transport: 'buffered', budgets: {nonstream_pass: overhead.nonstream_p50_ms <= 3 && overhead.nonstream_p95_ms <= 10 && overhead.nonstream_p99_ms <= 25,
+      // The fixture intentionally sends two 35 ms gaps. A buffered response
+      // delivers the first byte and the rest together, including those events.
+      streaming_transport: proxied.stream.after_first_byte_p50_ms >= 35 ? 'incremental' : 'buffered',
+      exporter_outage_mode: 'configured_unreachable_destination',
+      budgets: {nonstream_pass: overhead.nonstream_p50_ms <= 3 && overhead.nonstream_p95_ms <= 10 && overhead.nonstream_p99_ms <= 25,
         stream_ttft_pass: overhead.stream_ttft_p95_ms <= 10, exporter_isolation_pass: overhead.exporter_outage_p95_delta_ms <= 2}};
     console.log('proxy_overhead_benchmark=' + JSON.stringify(report));
     if (process.env.WDG_REQUIRE_PROXY_BUDGET === 'true') assert(report.budgets.nonstream_pass, 'nonstream proxy overhead exceeded budget');
