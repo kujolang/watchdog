@@ -425,6 +425,19 @@ async function run() {
 
 		} finally { failures.close(); }
 
+
+		const secondRound = await httpPost('/api/telemetry/requests', {
+			source_app: 'contract-client', request_id: 'request-contract-002', session_id: 'session-contract', status: 'error',
+		});
+		assert.strictEqual(secondRound.status, 200, 'a second round should join the existing workflow session');
+		await assertEndpoint('/api/insights', data => {
+			const transition = data.workflow_sequences.find(row => row.from_step === 'thread_started' && row.to_step === 'command_execution');
+			assert.ok(transition, 'insights should include consecutive workflow steps');
+			assert.strictEqual(transition.transition_count, 1, 'a second request must not multiply the recorded transition');
+			assert.strictEqual(transition.failed_session_count, 1);
+			assert.strictEqual(transition.successful_session_count, 1);
+		});
+
 		console.log('watchdog_api_route_suite: PASS');
 	} finally {
 		await stopServer(server);

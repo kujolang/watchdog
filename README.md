@@ -557,7 +557,7 @@ application. Named proxy profile changes are saved to the existing proxy
 configuration and apply to new requests without restarting Watchdog. In-flight
 requests retain the profile snapshot they started with. See [Connected Sources](docs/CONNECTED_SOURCES.md).
 
-`/api/insights` reports observed legacy telemetry: runs are grouped by task ID, workflow ID, or session ID; a success signal means no request error was recorded; retry signals are inferred from retry-named trace events; and its token-volume section does not measure context capacity. The Canonical Evidence dashboard tab uses explicit terminal events, typed relations, nullable timing, versioned context limits, and distinct cost kinds instead.
+`/api/insights` reports observed legacy telemetry: runs are grouped by task ID, workflow ID, or session ID; a success signal means no request error was recorded; retry signals are inferred from retry-named trace events; and its token-volume section shows the most recent 72 observed hourly buckets. Workflow transitions count recorded step pairs independently of request rounds. Token volume does not measure context capacity. The Canonical Evidence dashboard tab uses explicit terminal events, typed relations, nullable timing, versioned context limits, and distinct cost kinds instead.
 
 List endpoints now support optional query parameters for pagination and filtering:
 
