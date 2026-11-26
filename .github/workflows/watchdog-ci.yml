@@ -7,22 +7,28 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   full-regression:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout watchdog repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
       - name: Checkout Kujo runtime repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          persist-credentials: false
           repository: kujolang/kujo
           ref: 44af277848173664f72ca85f2a1b3b98d634ecdd # Kujo v1.6.0
           path: kujo-runtime
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable action
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -50,6 +56,7 @@ jobs:
       - name: Checkout RunLedger for runtime measurement integration
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          persist-credentials: false
           repository: kujolang/runledger
           ref: 88fb37c81567bb94e1e341037514fe37cbafa76f
           path: runledger-fixture
@@ -70,16 +77,19 @@ jobs:
     steps:
       - name: Checkout watchdog repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
       - name: Checkout Kujo runtime repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          persist-credentials: false
           repository: kujolang/kujo
           ref: 44af277848173664f72ca85f2a1b3b98d634ecdd # Kujo v1.6.0
           path: kujo-runtime
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable action
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
