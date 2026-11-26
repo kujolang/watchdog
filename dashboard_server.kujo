@@ -3162,7 +3162,7 @@ func valid_traceparent(raw_value) {
 	text := to_lower(trim(to_string(raw_value)))
 	parts := split(text, "-")
 	if len(parts) != 4 { return false }
-	if len(parts[0]) != 2 || parts[0] == "ff" { return false }
+	if parts[0] == "ff" || !regex_match(parts[0], "^[0-9a-f]{2}$") { return false }
 	if watchdog_telemetry_v2_is_hex_id(parts[1], 32) == false { return false }
 	if watchdog_telemetry_v2_is_hex_id(parts[2], 16) == false { return false }
 	if len(parts[3]) != 2 { return false }
@@ -3339,8 +3339,8 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		}
 	}
 
+	# Query values belong on the wire only. Diagnostics record the route and profile.
 	upstream_url := string_dict_get(cfg, "upstream_base_url", DEFAULT_UPSTREAM_BASE_URL) + path_suffix + query_suffix
-	forwarded_path := path_suffix + query_suffix
 
 	if !path_validation["ok"] {
 		session_id_hint := resolve_session_id(req, null)
@@ -3356,18 +3356,17 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, upstream_profile, "", "", "error", 0, 0, 0, 0.0, latency_ms, "", "unsafe_proxy_path", error_message, "", "")
 		insert_tool_call_row(request_dbid, session_id_hint, "proxy_forward", {
 			"method": method,
-			"path": forwarded_path,
-			"upstream_profile": upstream_profile,
-			"upstream_url": upstream_url
+			"path": path_suffix,
+			"upstream_profile": upstream_profile
 		}, {
 			"error": error_message
 		}, "error", latency_ms)
 		insert_agent_step_row(session_id_hint, agent_id_hint, "proxy_failed", "Rejected unsafe proxy path or query.", {
-			"path": forwarded_path,
+			"path": path_suffix,
 			"error": error_message
 		})
 		insert_audit_event("proxy_path_rejected", resolve_audit_actor_key(req, "proxy"), "denied", {
-			"path": forwarded_path,
+			"path": path_suffix,
 			"reason": error_message
 		})
 		return api_error(400, error_message)
@@ -3388,14 +3387,13 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, upstream_profile, "", "", "error", 0, 0, 0, 0.0, latency_ms, "", "payload_too_large", error_message, "", "")
 		insert_tool_call_row(request_dbid, session_id_hint, "proxy_forward", {
 			"method": method,
-			"path": forwarded_path,
-			"upstream_profile": upstream_profile,
-			"upstream_url": upstream_url
+			"path": path_suffix,
+			"upstream_profile": upstream_profile
 		}, {
 			"error": error_message
 		}, "error", latency_ms)
 		insert_agent_step_row(session_id_hint, agent_id_hint, "proxy_failed", "Proxy request body exceeded configured max bytes.", {
-			"path": forwarded_path,
+			"path": path_suffix,
 			"max_proxy_body_bytes": MAX_PROXY_BODY_BYTES,
 			"request_body_bytes": request_body_bytes
 		})
@@ -3432,14 +3430,13 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 			request_dbid := insert_request_row(session_id_hint, user_id_hint, tenant_id_hint, project_id_hint, workflow_id_hint, task_id_hint, correlation_id_hint, upstream_profile, "", "", "error", 0, 0, 0, 0.0, latency_ms, "", error_code, error_message, "", "")
 			insert_tool_call_row(request_dbid, session_id_hint, "proxy_forward", {
 				"method": method,
-				"path": forwarded_path,
-				"upstream_profile": upstream_profile,
-				"upstream_url": upstream_url
+				"path": path_suffix,
+				"upstream_profile": upstream_profile
 			}, {
 				"error": error_message
 			}, "error", latency_ms)
 			insert_agent_step_row(session_id_hint, agent_id_hint, "proxy_failed", "Proxy request JSON parsing failed.", {
-				"path": forwarded_path,
+				"path": path_suffix,
 				"error": error_message
 			})
 			return api_error(status_code, error_message)
@@ -3469,12 +3466,11 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 		if decoder_kind == "chat_completions" && safe_dict_get(payload_obj, "stream", false) == true { stream_requested = true }
 	}
 
-	insert_agent_step_row(session_id, agent_id, "proxy_received", "Received proxy request for " + forwarded_path, {
+	insert_agent_step_row(session_id, agent_id, "proxy_received", "Received proxy request for " + path_suffix, {
 		"method": method,
 		"decoder": decoder_kind,
 		"request_body_bytes": request_body_bytes,
 		"upstream_profile": upstream_profile,
-		"upstream_url": upstream_url,
 		"auth_mode": cfg["auth_mode"]
 	})
 
@@ -3487,7 +3483,7 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 			latency_ms := current_timestamp() - started_ms
 			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "proxy_auth_missing", "Proxy auth_mode=override but no API key is configured.", prompt_summary, "")
 			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 500, started_ms, current_timestamp(), {}, proxy_observability)
-			insert_agent_step_row(session_id, agent_id, "proxy_failed", "Proxy override mode is missing an upstream API key.", {"upstream_url": upstream_url})
+			insert_agent_step_row(session_id, agent_id, "proxy_failed", "Proxy override mode is missing an upstream API key.", {"upstream_profile": upstream_profile})
 			return api_error(500, "Proxy auth_mode=override requires WDG_UPSTREAM_API_KEY or WDG_UPSTREAM_API_KEY_ENV")
 		}
 		headers_out["Authorization"] := "Bearer " + override_key
@@ -3518,7 +3514,8 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 
 	request_options := {
 		"method": method,
-		"timeout": PROXY_TIMEOUT_SECS * 1.0
+		"timeout": PROXY_TIMEOUT_SECS * 1.0,
+		"redirects": "none"
 	}
 	request_options["_headers"] := headers_out
 	if len(request_body) > 0 {
@@ -3526,7 +3523,6 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 	}
 
 	insert_agent_step_row(session_id, agent_id, "proxy_forwarded", "Forwarded request to upstream.", {
-		"upstream_url": upstream_url,
 		"upstream_profile": upstream_profile,
 		"method": method,
 		"auth_mode": cfg["auth_mode"]
@@ -3565,6 +3561,7 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 				newline_bytes := decode_base64("Cg==")
 				newline_at := index_of(stream_state["buffer"], newline_bytes)
 				while newline_at >= 0 {
+					if newline_at > 65536 { stream_state["parse_error"] = "SSE line exceeds 65536 bytes"; return false }
 					line_bytes := slice(stream_state["buffer"], 0, newline_at)
 					stream_state["buffer"] = slice(stream_state["buffer"], newline_at + 1, len(stream_state["buffer"]))
 					line_text := ""
@@ -3638,8 +3635,8 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 				cost_usd := watchdog_estimate_cost(final_model, usage["input_tokens"] * 1.0, usage["output_tokens"] * 1.0)
 				request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, final_model, stream_state["request_id"], status_label, usage["input_tokens"], usage["output_tokens"], usage["total_tokens"], cost_usd, latency_ms, stream_state["finish_reason"], error_code, error_message, prompt_summary, stream_state["response_summary"])
 				insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, final_model, status_label, status_code, started_ms, ended_ms, usage, proxy_observability)
-				insert_tool_call_row(request_dbid, session_id, "proxy_forward", {"method": method, "path": forwarded_path, "upstream_profile": upstream_profile, "upstream_url": upstream_url}, {"status_code": status_code, "status": status_label, "error_code": error_code}, status_label, latency_ms)
-				insert_agent_step_row(session_id, agent_id, "proxy_completed", "Completed incremental proxy request.", {"status_code": status_code, "status": status_label, "model": final_model, "latency_ms": latency_ms, "decoder": decoder_kind, "request_body_bytes": request_body_bytes, "response_body_bytes": stream_state["total_bytes"], "path": forwarded_path})
+				insert_tool_call_row(request_dbid, session_id, "proxy_forward", {"method": method, "path": path_suffix, "upstream_profile": upstream_profile}, {"status_code": status_code, "status": status_label, "error_code": error_code}, status_label, latency_ms)
+				insert_agent_step_row(session_id, agent_id, "proxy_completed", "Completed incremental proxy request.", {"status_code": status_code, "status": status_label, "model": final_model, "latency_ms": latency_ms, "decoder": decoder_kind, "request_body_bytes": request_body_bytes, "response_body_bytes": stream_state["total_bytes"], "path": path_suffix})
 			}
 			return true
 		})
@@ -3650,9 +3647,9 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 			}
 			case Err(stream_err): {
 				latency_ms := current_timestamp() - started_ms
-				request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "network_error", to_string(stream_err), prompt_summary, "")
+				request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "network_error", "Upstream streaming transport failed.", prompt_summary, "")
 				insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 502, started_ms, current_timestamp(), {}, proxy_observability)
-				return api_error(502, "Upstream streaming request failed: " + to_string(stream_err))
+				return api_error(502, "Upstream streaming transport failed.")
 			}
 			case other_stream_result: {
 				return api_error(502, "Unexpected upstream streaming transport result: " + type(other_stream_result))
@@ -3727,9 +3724,8 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
-				"path": forwarded_path,
-				"upstream_profile": upstream_profile,
-				"upstream_url": upstream_url
+				"path": path_suffix,
+				"upstream_profile": upstream_profile
 			}, {
 				"status_code": status_code,
 				"status": status_label,
@@ -3744,28 +3740,27 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 				"decoder": decoder_kind,
 				"request_body_bytes": request_body_bytes,
 				"response_body_bytes": utf8_byte_length(body_text),
-				"path": forwarded_path
+				"path": path_suffix
 			})
 
 			return forward_response(status_code, body_text, content_type, resp_headers)
 		}
 		case Err(err): {
 			latency_ms := current_timestamp() - started_ms
-			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "network_error", to_string(err), prompt_summary, "")
+			request_dbid := insert_request_row(session_id, user_id, tenant_id, project_id, workflow_id, task_id, correlation_id, upstream_profile, model_name, "", "error", 0, 0, 0, 0.0, latency_ms, "", "network_error", "Upstream transport failed.", prompt_summary, "")
 			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 502, started_ms, current_timestamp(), {}, proxy_observability)
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
-				"path": forwarded_path,
-				"upstream_profile": upstream_profile,
-				"upstream_url": upstream_url
+				"path": path_suffix,
+				"upstream_profile": upstream_profile
 			}, {
-				"error": to_string(err)
+				"error": "Upstream transport failed."
 			}, "error", latency_ms)
 			insert_agent_step_row(session_id, agent_id, "proxy_failed", "Proxy network error.", {
-				"error": to_string(err),
-				"path": forwarded_path
+				"error": "Upstream transport failed.",
+				"path": path_suffix
 			})
-			return api_error(502, "Upstream request failed: " + to_string(err))
+			return api_error(502, "Upstream transport failed.")
 		}
 		case other: {
 			latency_ms := current_timestamp() - started_ms
@@ -3773,15 +3768,14 @@ func proxy_forward_with_config(req, resource, action, cfg, upstream_profile) {
 			insert_proxy_model_trace(trace_id, parent_span_id, request_dbid, session_id, upstream_profile, model_name, "error", 502, started_ms, current_timestamp(), {}, proxy_observability)
 			insert_tool_call_row(request_dbid, session_id, "proxy_forward", {
 				"method": method,
-				"path": forwarded_path,
-				"upstream_profile": upstream_profile,
-				"upstream_url": upstream_url
+				"path": path_suffix,
+				"upstream_profile": upstream_profile
 			}, {
 				"error": "Unexpected http_request result type: " + type(other)
 			}, "error", latency_ms)
 			insert_agent_step_row(session_id, agent_id, "proxy_failed", "Proxy transport error.", {
 				"error": "Unexpected http_request result type: " + type(other),
-				"path": forwarded_path
+				"path": path_suffix
 			})
 			return api_error(502, "Unexpected upstream transport result")
 		}

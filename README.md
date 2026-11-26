@@ -245,6 +245,10 @@ retrieve endpoints, while suspicious path/query text such as path traversal,
 embedded URL schemes, fragments, and query delimiters in path segments is
 rejected before any upstream request is made.
 
+Configure the final upstream base URL. Watchdog returns the upstream 3xx
+status without following redirects. Forwarded query values and upstream URLs
+stay out of proxy telemetry. Lifecycle records retain the route and profile.
+
 ---
 
 ## Auth modes

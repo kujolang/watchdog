@@ -457,6 +457,8 @@ async function runPassthroughScenario(stubPort, received) {
 
 		const steps = await getApiData(watchdogPort, '/api/agent-steps?session_id=sess_proxy_stub_pass&page_size=200');
 		assert.ok(Array.isArray(steps) && steps.length >= 13, 'agent step log should include lifecycle steps');
+		assert.ok(!JSON.stringify([toolCalls, steps, requests]).includes('model_123'), 'forwarded query values must stay out of persisted telemetry');
+		assert.ok(toolCalls.some(row => JSON.parse(row.tool_args).path === '/models'), 'proxy telemetry should keep the route');
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_received'));
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_forwarded'));
 		assert.ok(steps.some(step => String(step.step_type) === 'proxy_completed'));
